@@ -58,7 +58,7 @@ for p in valid_points:
 # -------------------------------------------------------------------------
 # 4) Choose which gradient indices you want to overlay
 # -------------------------------------------------------------------------
-grad_indices = [3]  # e.g. if your TangentPoints have multiple gradients
+grad_indices = [0, 3]  # e.g. if your TangentPoints have multiple gradients
 
 # -------------------------------------------------------------------------
 # 5) Build data structures for each grad index in a dictionary 'systems'
@@ -85,12 +85,12 @@ for i, g_idx in enumerate(grad_indices):
                               ymin:ymax:complex(grid_res)]
 
     # Interpolate onto the grid
-    grid_u = griddata(positions_gi, vectors_gi[:, 0], (grid_x, grid_y), method='linear')
-    grid_v = griddata(positions_gi, vectors_gi[:, 1], (grid_x, grid_y), method='linear')
+    grid_u = griddata(positions_gi, vectors_gi[:, 0], (grid_x, grid_y), method='nearest')
+    grid_v = griddata(positions_gi, vectors_gi[:, 1], (grid_x, grid_y), method='nearest')
 
-    # Replace NaNs -> 0 for safety
-    grid_u[np.isnan(grid_u)] = 0.0
-    grid_v[np.isnan(grid_v)] = 0.0
+    # # Replace NaNs -> 0 for safety
+    # grid_u[np.isnan(grid_u)] = 0.0
+    # grid_v[np.isnan(grid_v)] = 0.0
 
     # Build a KDTree of your data positions
     kdtree = cKDTree(positions_gi)
@@ -100,21 +100,15 @@ for i, g_idx in enumerate(grad_indices):
     distances, _ = kdtree.query(grid_points_2d, k=1)
 
     # Choose some threshold
-    threshold = 3.0
+    threshold = grid_res * 0.15
 
-    # Define a weight function
-    def weight_func(d, dmax):
-        # linear ramp from 0..dmax
-        w = 1.0 - (d / dmax)
-        w[w < 0.0] = 0.0
-        return w
+    # Reshape distances back to grid
+    dist_grid = distances.reshape(grid_x.shape)
 
-    weights_flat = weight_func(distances, threshold)
-    weights = weights_flat.reshape(grid_u.shape)
-
-    # Multiply velocities by the weight
-    grid_u *= weights
-    grid_v *= weights
+    # Set values outside the threshold to zero
+    mask = (dist_grid > threshold)
+    grid_u[mask] = 0.0
+    grid_v[mask] = 0.0
 
     # Build interpolators
     interp_u = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
