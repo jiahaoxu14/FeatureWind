@@ -17,7 +17,7 @@ import TangentPointSet
 # -------------------------------------------------------------------------
 # 1) Read data from JSON file and extract tmap & labels
 # -------------------------------------------------------------------------
-with open("tangentmaps/tangent.tmap", "r") as f:
+with open("tangentmaps/breast_cancer.tmap", "r") as f:
     data_import = json.loads(f.read())
 
 tmap = data_import['tmap']
@@ -58,7 +58,7 @@ for p in valid_points:
 # -------------------------------------------------------------------------
 # 4) Choose which gradient indices you want to overlay
 # -------------------------------------------------------------------------
-grad_indices = [0, 3]  # e.g. if your TangentPoints have multiple gradients
+grad_indices = [3, 10]  # e.g. if your TangentPoints have multiple gradients
 
 # -------------------------------------------------------------------------
 # 5) Build data structures for each grad index in a dictionary 'systems'
@@ -220,7 +220,7 @@ def update(frame):
         velocity = np.column_stack((U, V))
 
         # Move particles
-        particle_positions += velocity * 0.01  # dt=1
+        particle_positions += velocity * 1  # dt=1
 
         # Shift history
         histories[:, :-1, :] = histories[:, 1:, :]
@@ -275,7 +275,7 @@ def update(frame):
 
                 # (C) Combine alpha for older segments if you like
                 # fade out older tail segments:
-                age_factor = (t + 1) / (tail_gap + 1)
+                # age_factor = (t + 1) / (tail_gap + 1)
                 age_factor = 1
 
                 # base_rgba: (r, g, b, 1)
