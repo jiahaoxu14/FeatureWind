@@ -9,6 +9,7 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.colors import to_rgba
 from scipy.interpolate import griddata, RegularGridInterpolator
 from scipy.spatial import cKDTree
+from scipy.ndimage import maximum_filter, gaussian_filter
 
 import ScalarField
 import TangentPoint
@@ -157,7 +158,24 @@ grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape (grid_res, grid_res)
 # 5b) For coloring: find the "dominant feature index" at each grid cell
 # We'll compute magnitude of each feature in each cell, pick argmax along axis=0
 grid_mag_feats = np.sqrt(grid_u_feats**2 + grid_v_feats**2)  # shape (k, grid_res, grid_res)
-grid_argmax = np.argmax(grid_mag_feats, axis=0)              # shape (grid_res, grid_res)
+
+# grid_mag_feats is shape (k, grid_res, grid_res)
+window_size = 3  # or any odd integer (3, 5, etc.) controlling neighborhood size
+sigma = 1.5  # standard deviation for Gaussian filter
+
+grid_mag_feats_local = np.zeros_like(grid_mag_feats)
+grid_mag_feats_gaussian = np.zeros_like(grid_mag_feats)
+
+for f in range(grid_mag_feats.shape[0]):  # f in [0..k-1]
+    # Apply a maximum filter (local neighborhood of size x size)
+    grid_mag_feats_local[f] = maximum_filter(grid_mag_feats[f], size=window_size)
+    grid_mag_feats_gaussian[f] = gaussian_filter(grid_mag_feats[f], sigma=sigma)
+
+# Now pick the feature with the largest local maximum at each cell
+grid_argmax = np.argmax(grid_mag_feats_gaussian, axis=0)
+
+# Optionally save to CSV
+np.savetxt("grid_argmax_local.csv", grid_argmax, delimiter=",", fmt="%d")
 # This integer grid tells us which feature is dominant at that (x,y).
 
 # 5c) Build interpolators
@@ -183,7 +201,7 @@ feature_rgba = [to_rgba(c) for c in feature_colors]
 # -------------------------------------------------------------------------
 # 6) Create single system with combined velocity
 # -------------------------------------------------------------------------
-num_particles = 2500
+num_particles = 3000
 particle_positions = np.column_stack((
     np.random.uniform(xmin, xmax, size=num_particles),
     np.random.uniform(ymin, ymax, size=num_particles)
@@ -221,7 +239,27 @@ ax.set_ylabel("Y")
 ax.axis('equal')
 
 # Plot underlying data points once
-ax.scatter(all_positions[:,0], all_positions[:,1], c='black', s=5, label='Data Points')
+# ax.scatter(all_positions[:,0], all_positions[:,1], c='black', s=5, label='Data Points')
+# Collect all labels from valid_points
+unique_labels = sorted(set(p.tmap_label for p in valid_points))
+print("Unique labels:", unique_labels)
+
+# Define multiple distinct markers (expand this list if you need more)
+markers = ["o", "s", "D", "^", "v", "<", ">"]
+
+for i, lab in enumerate(unique_labels):
+    # Extract positions belonging to this label
+    positions_lab = np.array([p.position for p in valid_points if p.tmap_label == lab])
+    marker_style = markers[i % len(markers)]
+
+    ax.scatter(
+        positions_lab[:, 0],
+        positions_lab[:, 1],
+        marker=marker_style,
+        color="gray",
+        s=10,
+        label=f"Label {lab}"
+    )
 
 # Add single line collection
 ax.add_collection(lc)
