@@ -123,6 +123,9 @@ for i, g_idx in enumerate(grad_indices):
         np.random.uniform(ymin, ymax, size=num_particles)
     ))
 
+    # particle_positions = positions_gi.copy()
+    # num_particles = len(particle_positions)
+
     # Keep track of trails
     max_lifetime = 400
     tail_gap = 10
@@ -235,6 +238,7 @@ def update(frame):
                     np.random.uniform(xmin, xmax),
                     np.random.uniform(ymin, ymax)
                 ]
+                # particle_positions[i] = positions_gi[np.random.choice(len(positions_gi))]
                 histories[i] = particle_positions[i]
                 particle_lifetimes[i] = 0
 
@@ -247,6 +251,7 @@ def update(frame):
                     np.random.uniform(xmin, xmax),
                     np.random.uniform(ymin, ymax)
                 ]
+                # particle_positions[idx] = positions_gi[np.random.choice(len(positions_gi))]
                 histories[idx] = particle_positions[idx]
                 particle_lifetimes[idx] = 0
 

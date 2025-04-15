@@ -65,7 +65,7 @@ for p in valid_points:
 # -------------------------------------------------------------------------
 # 4) Pick the top k features by average vector magnitude
 # -------------------------------------------------------------------------
-k = 6  # example: pick top 3
+k = 8
 # all_grad_vectors: shape (#points, M, 2)
 # compute average magnitude of each feature across all points
 # => shape (#points, M), then mean over #points => shape (M,)
@@ -85,7 +85,8 @@ positions = all_positions  # shape (#points,2), same for all
 xmin, xmax = positions[:,0].min(), positions[:,0].max()
 ymin, ymax = positions[:,1].min(), positions[:,1].max()
 
-grid_res = 20
+grid_res = (min(abs(xmin), abs(ymin)) * 0.25).astype(int)
+print("Grid resolution:", grid_res)
 grid_x, grid_y = np.mgrid[xmin:xmax:complex(grid_res),
                           ymin:ymax:complex(grid_res)]
 
@@ -98,7 +99,8 @@ distances, _ = kdtree.query(grid_points_2d, k=1)
 dist_grid = distances.reshape(grid_x.shape)
 
 # Choose a distance threshold beyond which we consider data "out of range"
-threshold = 10.0  # Pick a distance that makes sense for your dataset
+threshold = min(abs(xmin), abs(ymin)) * 0.1
+print("Distance threshold:", threshold)
 
 # We'll hold arrays of shape (grid_res, grid_res) for each top feature j
 grid_u_feats = []
@@ -119,6 +121,31 @@ for feat_idx in top_k_indices:
     # Store
     grid_u_feats.append(grid_u)
     grid_v_feats.append(grid_v)
+
+# Store in arrays
+grid_u_feats_all = []
+grid_v_feats_all = []
+for feat_idx in np.argsort(-avg_magnitudes):
+    vectors_j = all_grad_vectors[:, feat_idx, :]  # shape (#points, 2)
+
+    # Interpolate onto the grid
+    grid_u = griddata(positions, vectors_j[:, 0], (grid_x, grid_y), method='nearest')
+    grid_v = griddata(positions, vectors_j[:, 1], (grid_x, grid_y), method='nearest')
+
+    # Mask out cells too far from data
+    mask = dist_grid > threshold
+    grid_u[mask] = 0.0
+    grid_v[mask] = 0.0
+
+    # Store in arrays
+    grid_u_feats_all.append(grid_u)
+    grid_v_feats_all.append(grid_v)
+
+grid_u_feats_all = np.array(grid_u_feats_all)  # shape (M, grid_res, grid_res)
+grid_v_feats_all = np.array(grid_v_feats_all)  # shape (M, grid_res, grid_res)
+
+grid_u_sum_all = np.sum(grid_u_feats_all, axis=0)  # shape (grid_res, grid_res)
+grid_v_sum_all = np.sum(grid_v_feats_all, axis=0)  # shape (grid_res, grid_res)
 
 grid_u_feats = np.array(grid_u_feats)  # shape (k, grid_res, grid_res)
 grid_v_feats = np.array(grid_v_feats)  # shape (k, grid_res, grid_res)
@@ -144,13 +171,19 @@ interp_argmax = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
 
 # Assign a color to each top feature
 base_colors = ['red','blue','green','magenta','orange','cyan']  # pick as many as you need
-feature_colors = [base_colors[i % len(base_colors)] for i in range(k)]
+# Use Tableau 10 color palette
+tableau_colors = [
+    "#4E79A7", "#F28E2B", "#E15759", "#76B7B2",
+    "#59A14F", "#EDC949", "#AF7AA1", "#FF9DA7",
+    "#9C755F", "#BAB0AC"
+]
+feature_colors = [tableau_colors[i % len(tableau_colors)] for i in range(k)]
 feature_rgba = [to_rgba(c) for c in feature_colors]
 
 # -------------------------------------------------------------------------
 # 6) Create single system with combined velocity
 # -------------------------------------------------------------------------
-num_particles = 5000
+num_particles = 2500
 particle_positions = np.column_stack((
     np.random.uniform(xmin, xmax, size=num_particles),
     np.random.uniform(ymin, ymax, size=num_particles)
@@ -223,7 +256,7 @@ def update(frame):
     velocity = np.column_stack((U, V))
 
     # Move particles
-    pp += velocity * 0.2
+    pp += velocity * 0.1
 
     # Shift history
     his[:, :-1, :] = his[:, 1:, :]
