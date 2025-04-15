@@ -43,6 +43,11 @@ all_positions = np.array([p.position for p in valid_points])  # shape: (#points,
 all_grad_vectors = [p.gradient_vectors for p in valid_points]  # list of (#features, 2)
 all_grad_vectors = np.array(all_grad_vectors)                  # shape = (#points, M, 2)
 
+# # Normalize all_grad_vectors so that each vector has unit length
+epsilon = 1e-9  # small constant to avoid division by zero
+norms = np.linalg.norm(all_grad_vectors, axis=2, keepdims=True)  # shape: (#points, M, 1)
+all_grad_vectors = all_grad_vectors / (norms + epsilon)
+
 # -------------------------------------------------------------------------
 # 3) Compute a global scale factor
 # -------------------------------------------------------------------------
@@ -86,7 +91,7 @@ positions = all_positions  # shape (#points,2), same for all
 xmin, xmax = positions[:,0].min(), positions[:,0].max()
 ymin, ymax = positions[:,1].min(), positions[:,1].max()
 
-grid_res = (min(abs(xmin), abs(ymin)) * 0.25).astype(int)
+grid_res = (min(abs(xmin), abs(ymin)) * 0.3).astype(int)
 print("Grid resolution:", grid_res)
 grid_x, grid_y = np.mgrid[xmin:xmax:complex(grid_res),
                           ymin:ymax:complex(grid_res)]
@@ -175,6 +180,7 @@ for f in range(grid_mag_feats.shape[0]):  # f in [0..k-1]
 grid_argmax = np.argmax(grid_mag_feats_gaussian, axis=0)
 
 # Optionally save to CSV
+np.savetxt("grid_argmax.csv", np.argmax(grid_mag_feats, axis=0), delimiter=",", fmt="%d")
 np.savetxt("grid_argmax_local.csv", grid_argmax, delimiter=",", fmt="%d")
 # This integer grid tells us which feature is dominant at that (x,y).
 
@@ -201,7 +207,7 @@ feature_rgba = [to_rgba(c) for c in feature_colors]
 # -------------------------------------------------------------------------
 # 6) Create single system with combined velocity
 # -------------------------------------------------------------------------
-num_particles = 3000
+num_particles = 2000
 particle_positions = np.column_stack((
     np.random.uniform(xmin, xmax, size=num_particles),
     np.random.uniform(ymin, ymax, size=num_particles)
@@ -356,7 +362,9 @@ def update(frame):
 
             # Combine alpha with any additional fade for the tail (if desired)
             # For example, fade older segments with an age factor:
-            age_factor = (t + 1) / (tail_gap + 1)
+            # age_factor = (t + 1) / (tail_gap + 1)
+            age_factor = (tail_gap - t) / (tail_gap + 1)
+            age_factor = 1.0
             # Multiply them
             alpha_final = alpha_part * age_factor
 
