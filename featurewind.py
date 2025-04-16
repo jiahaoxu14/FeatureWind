@@ -70,7 +70,7 @@ def build_grids(positions, grid_res, top_k_indices, avg_magnitudes, all_grad_vec
     dist_grid = distances.reshape(grid_x.shape)
 
     # Choose a distance threshold beyond which we consider data "out of range"
-    threshold = min(abs(xmin), abs(ymin)) * kdtree_scale
+    threshold = max(abs(xmax - xmin), abs(ymax - ymin)) * kdtree_scale
     print("Distance threshold:", threshold)
 
     grid_u_feats = []
@@ -131,12 +131,16 @@ def build_grids(positions, grid_res, top_k_indices, avg_magnitudes, all_grad_vec
     sigma = 1.5  # standard deviation for Gaussian filter
     grid_mag_feats_local = np.zeros_like(grid_mag_feats)
     grid_mag_feats_gaussian = np.zeros_like(grid_mag_feats)
+
+    # Apply a Gaussian filter to smooth the features
     for f in range(grid_mag_feats.shape[0]):  # f in [0..k-1]
         # Apply a maximum filter (local neighborhood of size x size)
         grid_mag_feats_local[f] = maximum_filter(grid_mag_feats[f], size=window_size)
         grid_mag_feats_gaussian[f] = gaussian_filter(grid_mag_feats[f], sigma=sigma)
+        
     # Now pick the feature with the largest local maximum at each cell
     grid_argmax = np.argmax(grid_mag_feats_gaussian, axis=0)
+
     # Optionally save to CSV
     np.savetxt("grid_argmax.csv", np.argmax(grid_mag_feats, axis=0), delimiter=",", fmt="%d")
     np.savetxt("grid_argmax_local.csv", grid_argmax, delimiter=",", fmt="%d")
@@ -364,7 +368,7 @@ def main():
     velocity_scale = 0.1
 
     # Set the grid resolution scale
-    grid_res_scale = 0.3
+    grid_res_scale = 0.15
 
     # Set the KD-tree scale
     kdtree_scale = 0.1
@@ -375,11 +379,13 @@ def main():
     print("Their average magnitudes:", avg_magnitudes[top_k_indices])
     print("Their labels:", [Col_labels[i] for i in top_k_indices])
 
-    # grad_indices = [3]
+    # grad_indices = [0]
     grad_indices = top_k_indices
 
     # Create a grid for interpolation
-    grid_res = (min(abs(xmin), abs(ymin)) * grid_res_scale).astype(int)
+    grid_res = (min(abs(xmax - xmin), abs(ymax - ymin)) * grid_res_scale).astype(int)
+    # grid_res = 10
+    print("Grid resolution:", grid_res)
     feature_colors, interp_u_sum, interp_v_sum, interp_argmax = build_grids(
         all_positions, grid_res, grad_indices, avg_magnitudes, all_grad_vectors, kdtree_scale=kdtree_scale
     )
