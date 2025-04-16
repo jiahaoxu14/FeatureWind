@@ -11,9 +11,7 @@ from scipy.interpolate import griddata, RegularGridInterpolator
 from scipy.spatial import cKDTree
 from scipy.ndimage import maximum_filter, gaussian_filter
 
-import ScalarField
 import TangentPoint
-import TangentPointSet
 
 
 def PreProcessing(tangentmaps):
@@ -192,7 +190,7 @@ def create_particles(num_particles):
 
     return system
 
-def prepare_figure(ax, valid_points, Col_labels, k, top_k_indices, feature_colors, lc):
+def prepare_figure(ax, valid_points, Col_labels, k, top_k_indices, feature_colors, lc, all_positions=None, all_grad_vectors=None):
     xmin, xmax, ymin, ymax = bounding_box
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
@@ -237,6 +235,19 @@ def prepare_figure(ax, valid_points, Col_labels, k, top_k_indices, feature_color
 
     ax.legend(handles=proxy_lines, loc='upper right')
     ax.grid(False)
+
+    # Compute the aggregated arrow for each data point by summing its top-k feature vectors.
+    # Note: all_grad_vectors has shape (#points, M, 2) and top_k_indices holds the selected feature indices.
+    aggregated_vectors = np.sum(all_grad_vectors[:, top_k_indices, :], axis=1)  # shape: (#points, 2)
+
+    # Draw the aggregated arrows using quiver.
+    # You can adjust the scale parameter to get the desired arrow length.
+    ax.quiver(
+        all_positions[:, 0], all_positions[:, 1],
+        aggregated_vectors[:, 0], aggregated_vectors[:, 1],
+        color='gray',  # choose a color that stands out
+        angles='xy', scale_units='xy', scale=2.0, width=0.001, headwidth=2, headlength=5
+    )
 
     return 0
 
@@ -319,11 +330,10 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, feature_col
             segments[seg_idx, 0, :] = his[i, t, :]
             segments[seg_idx, 1, :] = his[i, t + 1, :]
 
-            # Combine alpha with any additional fade for the tail (if desired)
-            # For example, fade older segments with an age factor:
-            # age_factor = (t + 1) / (tail_gap + 1)
-            age_factor = (tail_gap - t) / (tail_gap + 1)
+            # Combine alpha with any additional fade for the tail
+            # age_factor = (tail_gap - t) / (tail_gap + 1)
             age_factor = 1.0
+
             # Multiply them
             alpha_final = alpha_part * age_factor
 
@@ -376,12 +386,11 @@ def main():
 
     # Create the particle system
     system = create_particles(2000)
-    max_lifetime = system['max_lifetime']
     lc = system['linecoll']
 
     # prepare the figure
     fig, ax = plt.subplots(figsize=(8,6))
-    prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors, lc)
+    prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors, lc, all_positions, all_grad_vectors)
 
     # Create the animation
     anim = FuncAnimation(fig, 
