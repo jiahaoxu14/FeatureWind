@@ -246,7 +246,7 @@ def prepare_figure(ax, valid_points, Col_labels, k, top_k_indices, feature_color
         all_positions[:, 0], all_positions[:, 1],
         aggregated_vectors[:, 0], aggregated_vectors[:, 1],
         color='gray',  # choose a color that stands out
-        angles='xy', scale_units='xy', scale=2.0, width=0.001, headwidth=2, headlength=5
+        angles='xy', scale_units='xy', scale=2.0, width=0.001, headwidth=2, headlength=5, alpha=0,
     )
 
     return 0
