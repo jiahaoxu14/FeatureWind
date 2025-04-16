@@ -30,6 +30,7 @@ def PreProcessing(tangentmaps):
     all_positions = np.array([p.position for p in valid_points])  # shape: (#points, 2)
     all_grad_vectors = [p.gradient_vectors for p in valid_points]  # list of (#features, 2)
     all_grad_vectors = np.array(all_grad_vectors)                  # shape = (#points, M, 2)
+
     # Flatten across features to find the global max gradient length
     gradient_lengths = np.linalg.norm(all_grad_vectors.reshape(-1, 2), axis=1)
     max_gradient_length = np.max(gradient_lengths)
@@ -39,6 +40,7 @@ def PreProcessing(tangentmaps):
     desired_fraction = 0.1
     scale_factor = (position_range * desired_fraction) / (max_gradient_length + 1e-9)
     print("Computed scale factor:", scale_factor)
+
     # Update each valid point with the computed scale factor
     for p in valid_points:
         p.update_scale_factor(scale_factor)
@@ -115,6 +117,7 @@ def build_grids(positions, grid_res, top_k_indices, avg_magnitudes, all_grad_vec
     grid_v_feats_all = np.array(grid_v_feats_all)  # shape (M, grid_res, grid_res)
     grid_u_sum_all = np.sum(grid_u_feats_all, axis=0)  # shape (grid_res, grid_res)
     grid_v_sum_all = np.sum(grid_v_feats_all, axis=0)  # shape (grid_res, grid_res)
+
     grid_u_feats = np.array(grid_u_feats)  # shape (k, grid_res, grid_res)
     grid_v_feats = np.array(grid_v_feats)  # shape (k, grid_res, grid_res)
 
@@ -348,7 +351,7 @@ def main():
 
     # Set the velocity scale
     global velocity_scale
-    velocity_scale = 0.2
+    velocity_scale = 0.1
 
     # Set the grid resolution scale
     grid_res_scale = 0.3
@@ -362,10 +365,13 @@ def main():
     print("Their average magnitudes:", avg_magnitudes[top_k_indices])
     print("Their labels:", [Col_labels[i] for i in top_k_indices])
 
+    # grad_indices = [3]
+    grad_indices = top_k_indices
+
     # Create a grid for interpolation
     grid_res = (min(abs(xmin), abs(ymin)) * grid_res_scale).astype(int)
     feature_colors, interp_u_sum, interp_v_sum, interp_argmax = build_grids(
-        all_positions, grid_res, top_k_indices, avg_magnitudes, all_grad_vectors, kdtree_scale=kdtree_scale
+        all_positions, grid_res, grad_indices, avg_magnitudes, all_grad_vectors, kdtree_scale=kdtree_scale
     )
 
     # Create the particle system
@@ -375,7 +381,7 @@ def main():
 
     # prepare the figure
     fig, ax = plt.subplots(figsize=(8,6))
-    prepare_figure(ax, valid_points, Col_labels, k, top_k_indices, feature_colors, lc)
+    prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors, lc)
 
     # Create the animation
     anim = FuncAnimation(fig, 

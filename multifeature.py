@@ -58,7 +58,7 @@ for p in valid_points:
 # -------------------------------------------------------------------------
 # 4) Choose which gradient indices you want to overlay
 # -------------------------------------------------------------------------
-grad_indices = [3, 10]  # e.g. if your TangentPoints have multiple gradients
+grad_indices = [3]  # e.g. if your TangentPoints have multiple gradients
 
 # -------------------------------------------------------------------------
 # 5) Build data structures for each grad index in a dictionary 'systems'
