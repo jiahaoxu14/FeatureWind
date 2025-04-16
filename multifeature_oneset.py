@@ -15,281 +15,237 @@ import ScalarField
 import TangentPoint
 import TangentPointSet
 
-# -------------------------------------------------------------------------
-# 1) Read data from JSON file and extract tmap & labels
-# -------------------------------------------------------------------------
-with open("tangentmaps/breast_cancer.tmap", "r") as f:
-    data_import = json.loads(f.read())
 
-tmap = data_import['tmap']
-Col_labels = data_import['Col_labels']
+def PreProcessing(tangentmaps):
+    with open(tangentmaps, "r") as f:
+        data_import = json.loads(f.read())
 
-# -------------------------------------------------------------------------
-# 2) Create TangentPoint instances
-# -------------------------------------------------------------------------
-points = []
-for tmap_entry in tmap:
-    point = TangentPoint.TangentPoint(tmap_entry, 1.0, Col_labels)
-    points.append(point)
+    tmap = data_import['tmap']
+    Col_labels = data_import['Col_labels']
+    points = []
+    for tmap_entry in tmap:
+        point = TangentPoint.TangentPoint(tmap_entry, 1.0, Col_labels)
+        points.append(point)
+    valid_points = [p for p in points if p.valid]
+    all_positions = np.array([p.position for p in valid_points])  # shape: (#points, 2)
+    all_grad_vectors = [p.gradient_vectors for p in valid_points]  # list of (#features, 2)
+    all_grad_vectors = np.array(all_grad_vectors)                  # shape = (#points, M, 2)
+    # Flatten across features to find the global max gradient length
+    gradient_lengths = np.linalg.norm(all_grad_vectors.reshape(-1, 2), axis=1)
+    max_gradient_length = np.max(gradient_lengths)
+    x_range = np.max(all_positions[:, 0]) - np.min(all_positions[:, 0])
+    y_range = np.max(all_positions[:, 1]) - np.min(all_positions[:, 1])
+    position_range = max(x_range, y_range)
+    desired_fraction = 0.1
+    scale_factor = (position_range * desired_fraction) / (max_gradient_length + 1e-9)
+    print("Computed scale factor:", scale_factor)
+    # Update each valid point with the computed scale factor
+    for p in valid_points:
+        p.update_scale_factor(scale_factor)
+    return valid_points, all_grad_vectors, all_positions, Col_labels
 
-valid_points = [p for p in points if p.valid]
 
-# Extract all positions and all gradient vectors (for computing scale factor)
-all_positions = np.array([p.position for p in valid_points])  # shape: (#points, 2)
+def pick_top_k_features(all_grad_vectors):
+    # Compute average magnitude of each feature across all points
+    feature_magnitudes = np.linalg.norm(all_grad_vectors, axis=2)  # shape (#points, M)
+    avg_magnitudes = feature_magnitudes.mean(axis=0)               # shape (M,)
 
-# Suppose each point p has p.gradient_vectors of length M (one for each feature).
-# Then p.gradient_vectors is shape: (M, 2) for each point.
-# We gather them all into a shape: (#points, M, 2).
-all_grad_vectors = [p.gradient_vectors for p in valid_points]  # list of (#features, 2)
-all_grad_vectors = np.array(all_grad_vectors)                  # shape = (#points, M, 2)
+    # Sort descending, get top k indices
+    top_k_indices = np.argsort(-avg_magnitudes)[:k]
+    return top_k_indices, avg_magnitudes
 
-# # Normalize all_grad_vectors so that each vector has unit length
-epsilon = 1e-9  # small constant to avoid division by zero
-norms = np.linalg.norm(all_grad_vectors, axis=2, keepdims=True)  # shape: (#points, M, 1)
-all_grad_vectors = all_grad_vectors / (norms + epsilon)
+def build_grids(positions, grid_res, top_k_indices, avg_magnitudes, all_grad_vectors, kdtree_scale=0.1):
 
-# -------------------------------------------------------------------------
-# 3) Compute a global scale factor
-# -------------------------------------------------------------------------
-# Flatten across features to find the global max gradient length
-# all_grad_vectors has shape (#points, M, 2). We can reshape to 2D:
-gradient_lengths = np.linalg.norm(all_grad_vectors.reshape(-1, 2), axis=1)
-max_gradient_length = np.max(gradient_lengths)
+    xmin, xmax, ymin, ymax = bounding_box
 
-x_range = np.max(all_positions[:, 0]) - np.min(all_positions[:, 0])
-y_range = np.max(all_positions[:, 1]) - np.min(all_positions[:, 1])
-position_range = max(x_range, y_range)
+    grid_x, grid_y = np.mgrid[xmin:xmax:complex(grid_res),
+                            ymin:ymax:complex(grid_res)]
+    
+    # Build a KD-tree from your known positions
+    kdtree = cKDTree(positions)
 
-desired_fraction = 0.1
-scale_factor = (position_range * desired_fraction) / (max_gradient_length + 1e-9)
-print("Computed scale factor:", scale_factor)
+    # Flatten grid for querying distances
+    grid_points_2d = np.column_stack((grid_x.ravel(), grid_y.ravel()))
+    distances, _ = kdtree.query(grid_points_2d, k=1)
+    dist_grid = distances.reshape(grid_x.shape)
 
-# Update each valid point with the computed scale factor
-for p in valid_points:
-    p.update_scale_factor(scale_factor)
+    # Choose a distance threshold beyond which we consider data "out of range"
+    threshold = min(abs(xmin), abs(ymin)) * kdtree_scale
+    print("Distance threshold:", threshold)
 
-# -------------------------------------------------------------------------
-# 4) Pick the top k features by average vector magnitude
-# -------------------------------------------------------------------------
-k = 8
-# all_grad_vectors: shape (#points, M, 2)
-# compute average magnitude of each feature across all points
-# => shape (#points, M), then mean over #points => shape (M,)
-feature_magnitudes = np.linalg.norm(all_grad_vectors, axis=2)  # shape (#points, M)
-avg_magnitudes = feature_magnitudes.mean(axis=0)               # shape (M,)
+    grid_u_feats = []
+    grid_v_feats = []
+    for feat_idx in top_k_indices:
+        # gather the (x,y) vectors for this feature
+        vectors_j = all_grad_vectors[:, feat_idx, :]  # shape (#points, 2)
 
-# Sort descending, get top k indices
-top_k_indices = np.argsort(-avg_magnitudes)[:k]
-print("Top k feature indices:", top_k_indices)
-print("Their average magnitudes:", avg_magnitudes[top_k_indices])
-print("Their labels:", [Col_labels[i] for i in top_k_indices])
+        # Interpolate onto the grid
+        grid_u = griddata(positions, vectors_j[:,0], (grid_x, grid_y), method='nearest')
+        grid_v = griddata(positions, vectors_j[:,1], (grid_x, grid_y), method='nearest')
 
-# -------------------------------------------------------------------------
-# 5) Build interpolation grids for those top k features
-# -------------------------------------------------------------------------
-positions = all_positions  # shape (#points,2), same for all
-xmin, xmax = positions[:,0].min(), positions[:,0].max()
-ymin, ymax = positions[:,1].min(), positions[:,1].max()
+        # Mask out the grid points that are too far from the data
+        mask = dist_grid > threshold
+        grid_u[mask] = 0.0
+        grid_v[mask] = 0.0
 
-grid_res = (min(abs(xmin), abs(ymin)) * 0.3).astype(int)
-print("Grid resolution:", grid_res)
-grid_x, grid_y = np.mgrid[xmin:xmax:complex(grid_res),
-                          ymin:ymax:complex(grid_res)]
-
-# Build a KD-tree from your known positions
-kdtree = cKDTree(positions)
-
-# Flatten grid for querying distances
-grid_points_2d = np.column_stack((grid_x.ravel(), grid_y.ravel()))
-distances, _ = kdtree.query(grid_points_2d, k=1)
-dist_grid = distances.reshape(grid_x.shape)
-
-# Choose a distance threshold beyond which we consider data "out of range"
-threshold = min(abs(xmin), abs(ymin)) * 0.1
-print("Distance threshold:", threshold)
-
-# We'll hold arrays of shape (grid_res, grid_res) for each top feature j
-grid_u_feats = []
-grid_v_feats = []
-for feat_idx in top_k_indices:
-    # gather the (x,y) vectors for this feature
-    vectors_j = all_grad_vectors[:, feat_idx, :]  # shape (#points, 2)
-
-    # Interpolate onto the grid
-    grid_u = griddata(positions, vectors_j[:,0], (grid_x, grid_y), method='nearest')
-    grid_v = griddata(positions, vectors_j[:,1], (grid_x, grid_y), method='nearest')
-
-    # Mask out the grid points that are too far from the data
-    mask = dist_grid > threshold
-    grid_u[mask] = 0.0
-    grid_v[mask] = 0.0
-
-    # Store
-    grid_u_feats.append(grid_u)
-    grid_v_feats.append(grid_v)
-
-# Store in arrays
-grid_u_feats_all = []
-grid_v_feats_all = []
-for feat_idx in np.argsort(-avg_magnitudes):
-    vectors_j = all_grad_vectors[:, feat_idx, :]  # shape (#points, 2)
-
-    # Interpolate onto the grid
-    grid_u = griddata(positions, vectors_j[:, 0], (grid_x, grid_y), method='nearest')
-    grid_v = griddata(positions, vectors_j[:, 1], (grid_x, grid_y), method='nearest')
-
-    # Mask out cells too far from data
-    mask = dist_grid > threshold
-    grid_u[mask] = 0.0
-    grid_v[mask] = 0.0
+        # Store
+        grid_u_feats.append(grid_u)
+        grid_v_feats.append(grid_v)
 
     # Store in arrays
-    grid_u_feats_all.append(grid_u)
-    grid_v_feats_all.append(grid_v)
+    grid_u_feats_all = []
+    grid_v_feats_all = []
+    for feat_idx in np.argsort(-avg_magnitudes):
+        vectors_j = all_grad_vectors[:, feat_idx, :]  # shape (#points, 2)
 
-grid_u_feats_all = np.array(grid_u_feats_all)  # shape (M, grid_res, grid_res)
-grid_v_feats_all = np.array(grid_v_feats_all)  # shape (M, grid_res, grid_res)
+        # Interpolate onto the grid
+        grid_u = griddata(positions, vectors_j[:, 0], (grid_x, grid_y), method='nearest')
+        grid_v = griddata(positions, vectors_j[:, 1], (grid_x, grid_y), method='nearest')
 
-grid_u_sum_all = np.sum(grid_u_feats_all, axis=0)  # shape (grid_res, grid_res)
-grid_v_sum_all = np.sum(grid_v_feats_all, axis=0)  # shape (grid_res, grid_res)
+        # Mask out cells too far from data
+        mask = dist_grid > threshold
+        grid_u[mask] = 0.0
+        grid_v[mask] = 0.0
 
-grid_u_feats = np.array(grid_u_feats)  # shape (k, grid_res, grid_res)
-grid_v_feats = np.array(grid_v_feats)  # shape (k, grid_res, grid_res)
+        # Store in arrays
+        grid_u_feats_all.append(grid_u)
+        grid_v_feats_all.append(grid_v)
 
-# 5a) Create the **combined** velocity field = sum of the top k features
-grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape (grid_res, grid_res)
-grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape (grid_res, grid_res)
+    grid_u_feats_all = np.array(grid_u_feats_all)  # shape (M, grid_res, grid_res)
+    grid_v_feats_all = np.array(grid_v_feats_all)  # shape (M, grid_res, grid_res)
+    grid_u_sum_all = np.sum(grid_u_feats_all, axis=0)  # shape (grid_res, grid_res)
+    grid_v_sum_all = np.sum(grid_v_feats_all, axis=0)  # shape (grid_res, grid_res)
+    grid_u_feats = np.array(grid_u_feats)  # shape (k, grid_res, grid_res)
+    grid_v_feats = np.array(grid_v_feats)  # shape (k, grid_res, grid_res)
 
-# 5b) For coloring: find the "dominant feature index" at each grid cell
-# We'll compute magnitude of each feature in each cell, pick argmax along axis=0
-grid_mag_feats = np.sqrt(grid_u_feats**2 + grid_v_feats**2)  # shape (k, grid_res, grid_res)
+    # 5a) Create the **combined** velocity field = sum of the top k features
+    grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape (grid_res, grid_res)
+    grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape (grid_res, grid_res)
+    
+    # 5b) For coloring: find the "dominant feature index" at each grid cell
+    # We'll compute magnitude of each feature in each cell, pick argmax along axis=0
+    grid_mag_feats = np.sqrt(grid_u_feats**2 + grid_v_feats**2)  # shape (k, grid_res, grid_res)
+    # grid_mag_feats is shape (k, grid_res, grid_res)
+    window_size = 3  # or any odd integer (3, 5, etc.) controlling neighborhood size
+    sigma = 1.5  # standard deviation for Gaussian filter
+    grid_mag_feats_local = np.zeros_like(grid_mag_feats)
+    grid_mag_feats_gaussian = np.zeros_like(grid_mag_feats)
+    for f in range(grid_mag_feats.shape[0]):  # f in [0..k-1]
+        # Apply a maximum filter (local neighborhood of size x size)
+        grid_mag_feats_local[f] = maximum_filter(grid_mag_feats[f], size=window_size)
+        grid_mag_feats_gaussian[f] = gaussian_filter(grid_mag_feats[f], sigma=sigma)
+    # Now pick the feature with the largest local maximum at each cell
+    grid_argmax = np.argmax(grid_mag_feats_gaussian, axis=0)
+    # Optionally save to CSV
+    np.savetxt("grid_argmax.csv", np.argmax(grid_mag_feats, axis=0), delimiter=",", fmt="%d")
+    np.savetxt("grid_argmax_local.csv", grid_argmax, delimiter=",", fmt="%d")
+    # This integer grid tells us which feature is dominant at that (x,y).
+    # 5c) Build interpolators
+    interp_u_sum = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
+                                        grid_u_sum, bounds_error=False, fill_value=0.0)
+    interp_v_sum = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
+                                        grid_v_sum, bounds_error=False, fill_value=0.0)
+    interp_argmax = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
+                                            grid_argmax, method='nearest',
+                                            bounds_error=False, fill_value=-1)
+    # Assign a color to each top feature
+    base_colors = ['red','blue','green','magenta','orange','cyan']  # pick as many as you need
+    # Use Tableau 10 color palette
+    tableau_colors = [
+        "#4E79A7", "#F28E2B", "#E15759", "#76B7B2",
+        "#59A14F", "#EDC949", "#AF7AA1", "#FF9DA7",
+        "#9C755F", "#BAB0AC"
+    ]
+    feature_colors = [tableau_colors[i % len(tableau_colors)] for i in range(k)]
+    feature_rgba = [to_rgba(c) for c in feature_colors]
 
-# grid_mag_feats is shape (k, grid_res, grid_res)
-window_size = 3  # or any odd integer (3, 5, etc.) controlling neighborhood size
-sigma = 1.5  # standard deviation for Gaussian filter
+    return feature_colors, interp_u_sum, interp_v_sum, interp_argmax
 
-grid_mag_feats_local = np.zeros_like(grid_mag_feats)
-grid_mag_feats_gaussian = np.zeros_like(grid_mag_feats)
+def create_particles(num_particles):
+    xmin, xmax, ymin, ymax = bounding_box
+    particle_positions = np.column_stack((
+        np.random.uniform(xmin, xmax, size=num_particles),
+        np.random.uniform(ymin, ymax, size=num_particles)
+    ))
 
-for f in range(grid_mag_feats.shape[0]):  # f in [0..k-1]
-    # Apply a maximum filter (local neighborhood of size x size)
-    grid_mag_feats_local[f] = maximum_filter(grid_mag_feats[f], size=window_size)
-    grid_mag_feats_gaussian[f] = gaussian_filter(grid_mag_feats[f], sigma=sigma)
+    max_lifetime = 400
+    tail_gap = 10
+    particle_lifetimes = np.zeros(num_particles, dtype=int)
+    histories = np.full((num_particles, tail_gap + 1, 2), np.nan)
+    histories[:, :] = particle_positions[:, None, :]
 
-# Now pick the feature with the largest local maximum at each cell
-grid_argmax = np.argmax(grid_mag_feats_gaussian, axis=0)
+    # A single LineCollection for all particles
+    lc = LineCollection([], linewidths=1.5, zorder=2)
 
-# Optionally save to CSV
-np.savetxt("grid_argmax.csv", np.argmax(grid_mag_feats, axis=0), delimiter=",", fmt="%d")
-np.savetxt("grid_argmax_local.csv", grid_argmax, delimiter=",", fmt="%d")
-# This integer grid tells us which feature is dominant at that (x,y).
+    # We'll store everything in a dict just for cleanliness
+    system = {
+        'particle_positions': particle_positions,
+        'particle_lifetimes': particle_lifetimes,
+        'histories': histories,
+        'tail_gap': tail_gap,
+        'max_lifetime': max_lifetime,
+        'linecoll': lc,
+    }
 
-# 5c) Build interpolators
-interp_u_sum = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
-                                       grid_u_sum, bounds_error=False, fill_value=0.0)
-interp_v_sum = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
-                                       grid_v_sum, bounds_error=False, fill_value=0.0)
-interp_argmax = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
-                                        grid_argmax, method='nearest',
-                                        bounds_error=False, fill_value=-1)
+    return system
 
-# Assign a color to each top feature
-base_colors = ['red','blue','green','magenta','orange','cyan']  # pick as many as you need
-# Use Tableau 10 color palette
-tableau_colors = [
-    "#4E79A7", "#F28E2B", "#E15759", "#76B7B2",
-    "#59A14F", "#EDC949", "#AF7AA1", "#FF9DA7",
-    "#9C755F", "#BAB0AC"
-]
-feature_colors = [tableau_colors[i % len(tableau_colors)] for i in range(k)]
-feature_rgba = [to_rgba(c) for c in feature_colors]
+def prepare_figure(ax, valid_points, Col_labels, k, top_k_indices, feature_colors, lc):
+    xmin, xmax, ymin, ymax = bounding_box
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    ax.set_title(f"Top {k} Features Combined - Single Particle System")
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.axis('equal')
 
-# -------------------------------------------------------------------------
-# 6) Create single system with combined velocity
-# -------------------------------------------------------------------------
-num_particles = 2000
-particle_positions = np.column_stack((
-    np.random.uniform(xmin, xmax, size=num_particles),
-    np.random.uniform(ymin, ymax, size=num_particles)
-))
+    # Plot underlying data points once
+    # ax.scatter(all_positions[:,0], all_positions[:,1], c='black', s=5, label='Data Points')
+    # Collect all labels from valid_points
+    unique_labels = sorted(set(p.tmap_label for p in valid_points))
+    print("Unique labels:", unique_labels)
 
-max_lifetime = 400
-tail_gap = 10
-particle_lifetimes = np.zeros(num_particles, dtype=int)
-histories = np.full((num_particles, tail_gap + 1, 2), np.nan)
-histories[:, :] = particle_positions[:, None, :]
+    # Define multiple distinct markers (expand this list if you need more)
+    markers = ["o", "s", "D", "^", "v", "<", ">"]
 
-# A single LineCollection for all particles
-lc = LineCollection([], linewidths=1.5, zorder=2)
+    for i, lab in enumerate(unique_labels):
+        # Extract positions belonging to this label
+        positions_lab = np.array([p.position for p in valid_points if p.tmap_label == lab])
+        marker_style = markers[i % len(markers)]
 
-# We'll store everything in a dict just for cleanliness
-system = {
-    'particle_positions': particle_positions,
-    'particle_lifetimes': particle_lifetimes,
-    'histories': histories,
-    'tail_gap': tail_gap,
-    'max_lifetime': max_lifetime,
-    'linecoll': lc,
-}
+        ax.scatter(
+            positions_lab[:, 0],
+            positions_lab[:, 1],
+            marker=marker_style,
+            color="gray",
+            s=10,
+            label=f"Label {lab}"
+        )
 
-# -------------------------------------------------------------------------
-# 7) Prepare figure
-# -------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(8,6))
+    # Add single line collection
+    ax.add_collection(lc)
 
-ax.set_xlim(xmin, xmax)
-ax.set_ylim(ymin, ymax)
-ax.set_title(f"Top {k} Features Combined - Single Particle System")
-ax.set_xlabel("X")
-ax.set_ylabel("Y")
-ax.axis('equal')
+    # Build a legend or color swatches
+    proxy_lines = []
+    for j, feat_idx in enumerate(top_k_indices):
+        lbl = f"Feat {feat_idx} - {Col_labels[feat_idx]}"
+        color_j = feature_colors[j]
+        proxy = plt.Line2D([0],[0], linestyle="none", marker="o", color=color_j, label=lbl)
+        proxy_lines.append(proxy)
 
-# Plot underlying data points once
-# ax.scatter(all_positions[:,0], all_positions[:,1], c='black', s=5, label='Data Points')
-# Collect all labels from valid_points
-unique_labels = sorted(set(p.tmap_label for p in valid_points))
-print("Unique labels:", unique_labels)
+    ax.legend(handles=proxy_lines, loc='upper right')
+    ax.grid(False)
 
-# Define multiple distinct markers (expand this list if you need more)
-markers = ["o", "s", "D", "^", "v", "<", ">"]
+    return 0
 
-for i, lab in enumerate(unique_labels):
-    # Extract positions belonging to this label
-    positions_lab = np.array([p.position for p in valid_points if p.tmap_label == lab])
-    marker_style = markers[i % len(markers)]
-
-    ax.scatter(
-        positions_lab[:, 0],
-        positions_lab[:, 1],
-        marker=marker_style,
-        color="gray",
-        s=10,
-        label=f"Label {lab}"
-    )
-
-# Add single line collection
-ax.add_collection(lc)
-
-# Build a legend or color swatches
-proxy_lines = []
-for j, feat_idx in enumerate(top_k_indices):
-    lbl = f"Feat {feat_idx} - {Col_labels[feat_idx]}"
-    color_j = feature_colors[j]
-    proxy = plt.Line2D([0],[0], linestyle="none", marker="o", color=color_j, label=lbl)
-    proxy_lines.append(proxy)
-
-ax.legend(handles=proxy_lines, loc='upper right')
-ax.grid(False)
-
-# -------------------------------------------------------------------------
-# 8) Animation update
-# -------------------------------------------------------------------------
-
-def update(frame):
+def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, feature_colors, k, velocity_scale=0.1):
+    
+    feature_rgba = [to_rgba(c) for c in feature_colors]
+    xmin, xmax, ymin, ymax = bounding_box
     pp = system['particle_positions']
     lt = system['particle_lifetimes']
     his = system['histories']
     lc_ = system['linecoll']
+    max_lifetime = system['max_lifetime']
 
     # Increase lifetime
     lt += 1
@@ -297,10 +253,10 @@ def update(frame):
     # Interpolate velocity
     U = interp_u_sum(pp)
     V = interp_v_sum(pp)
-    velocity = np.column_stack((U, V))
+    velocity = np.column_stack((U, V)) * velocity_scale
 
     # Move particles
-    pp += velocity * 0.1
+    pp += velocity
 
     # Shift history
     his[:, :-1, :] = his[:, 1:, :]
@@ -376,5 +332,57 @@ def update(frame):
 
     return (lc_,)
 
-anim = FuncAnimation(fig, update, frames=1000, interval=30, blit=False)
-plt.show()
+def main():
+    # Load the tangent map data
+    valid_points, all_grad_vectors, all_positions, Col_labels = PreProcessing("tangentmaps/breast_cancer.tmap")
+
+    # Set the number of top features to visualize
+    global k 
+    k = 5
+
+    # Compute the bounding box
+    global bounding_box
+    xmin, xmax = all_positions[:,0].min(), all_positions[:,0].max()
+    ymin, ymax = all_positions[:,1].min(), all_positions[:,1].max()
+    bounding_box = [xmin, xmax, ymin, ymax]
+
+    # Set the velocity scale
+    global velocity_scale
+    velocity_scale = 0.2
+
+    # Set the grid resolution scale
+    grid_res_scale = 0.3
+
+    # Set the KD-tree scale
+    kdtree_scale = 0.1
+
+    # Pick top k features based on average magnitude
+    top_k_indices, avg_magnitudes = pick_top_k_features(all_grad_vectors)
+    print("Top k feature indices:", top_k_indices)
+    print("Their average magnitudes:", avg_magnitudes[top_k_indices])
+    print("Their labels:", [Col_labels[i] for i in top_k_indices])
+
+    # Create a grid for interpolation
+    grid_res = (min(abs(xmin), abs(ymin)) * grid_res_scale).astype(int)
+    feature_colors, interp_u_sum, interp_v_sum, interp_argmax = build_grids(
+        all_positions, grid_res, top_k_indices, avg_magnitudes, all_grad_vectors, kdtree_scale=kdtree_scale
+    )
+
+    # Create the particle system
+    system = create_particles(2000)
+    max_lifetime = system['max_lifetime']
+    lc = system['linecoll']
+
+    # prepare the figure
+    fig, ax = plt.subplots(figsize=(8,6))
+    prepare_figure(ax, valid_points, Col_labels, k, top_k_indices, feature_colors, lc)
+
+    # Create the animation
+    anim = FuncAnimation(fig, 
+                         lambda frame: update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, feature_colors, k, velocity_scale), 
+                         frames=1000, interval=30, blit=False)
+    plt.show()
+
+
+if  __name__ == "__main__":
+    main()
