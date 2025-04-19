@@ -41,119 +41,7 @@ def pick_top_k_features(all_grad_vectors):
     top_k_indices = np.argsort(-avg_magnitudes)[:k]
     return top_k_indices, avg_magnitudes
 
-# def build_grids(positions, grid_res, top_k_indices, avg_magnitudes, all_grad_vectors, kdtree_scale=0.1):
-
-#     xmin, xmax, ymin, ymax = bounding_box
-
-#     grid_x, grid_y = np.mgrid[xmin:xmax:complex(grid_res),
-#                             ymin:ymax:complex(grid_res)]
-    
-#     # Build a KD-tree from your known positions
-#     kdtree = cKDTree(positions)
-
-#     # Flatten grid for querying distances
-#     grid_points_2d = np.column_stack((grid_x.ravel(), grid_y.ravel()))
-#     distances, _ = kdtree.query(grid_points_2d, k=1)
-#     dist_grid = distances.reshape(grid_x.shape)
-
-#     # Choose a distance threshold beyond which we consider data "out of range"
-#     threshold = max(abs(xmax - xmin), abs(ymax - ymin)) * kdtree_scale
-#     print("Distance threshold:", threshold)
-
-#     grid_u_feats = []
-#     grid_v_feats = []
-#     for feat_idx in top_k_indices:
-#         # gather the (x,y) vectors for this feature
-#         vectors_j = all_grad_vectors[:, feat_idx, :]  # shape (#points, 2)
-
-#         # Interpolate onto the grid
-#         grid_u = griddata(positions, vectors_j[:,0], (grid_x, grid_y), method='nearest')
-#         grid_v = griddata(positions, vectors_j[:,1], (grid_x, grid_y), method='nearest')
-
-#         # Mask out the grid points that are too far from the data
-#         mask = dist_grid > threshold
-#         grid_u[mask] = 0.0
-#         grid_v[mask] = 0.0
-
-#         # Store
-#         grid_u_feats.append(grid_u)
-#         grid_v_feats.append(grid_v)
-
-#     # Store in arrays
-#     grid_u_feats_all = []
-#     grid_v_feats_all = []
-#     for feat_idx in np.argsort(-avg_magnitudes):
-#         vectors_j = all_grad_vectors[:, feat_idx, :]  # shape (#points, 2)
-
-#         # Interpolate onto the grid
-#         grid_u = griddata(positions, vectors_j[:, 0], (grid_x, grid_y), method='nearest')
-#         grid_v = griddata(positions, vectors_j[:, 1], (grid_x, grid_y), method='nearest')
-
-#         # Mask out cells too far from data
-#         mask = dist_grid > threshold
-#         grid_u[mask] = 0.0
-#         grid_v[mask] = 0.0
-
-#         # Store in arrays
-#         grid_u_feats_all.append(grid_u)
-#         grid_v_feats_all.append(grid_v)
-
-#     grid_u_feats_all = np.array(grid_u_feats_all)  # shape (M, grid_res, grid_res)
-#     grid_v_feats_all = np.array(grid_v_feats_all)  # shape (M, grid_res, grid_res)
-#     grid_u_sum_all = np.sum(grid_u_feats_all, axis=0)  # shape (grid_res, grid_res)
-#     grid_v_sum_all = np.sum(grid_v_feats_all, axis=0)  # shape (grid_res, grid_res)
-
-#     grid_u_feats = np.array(grid_u_feats)  # shape (k, grid_res, grid_res)
-#     grid_v_feats = np.array(grid_v_feats)  # shape (k, grid_res, grid_res)
-
-#     # 5a) Create the **combined** velocity field = sum of the top k features
-#     grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape (grid_res, grid_res)
-#     grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape (grid_res, grid_res)
-    
-#     # 5b) For coloring: find the "dominant feature index" at each grid cell
-#     # We'll compute magnitude of each feature in each cell, pick argmax along axis=0
-#     grid_mag_feats = np.sqrt(grid_u_feats**2 + grid_v_feats**2)  # shape (k, grid_res, grid_res)
-#     # grid_mag_feats is shape (k, grid_res, grid_res)
-#     window_size = 3  # or any odd integer (3, 5, etc.) controlling neighborhood size
-#     sigma = 1.5  # standard deviation for Gaussian filter
-#     grid_mag_feats_local = np.zeros_like(grid_mag_feats)
-#     grid_mag_feats_gaussian = np.zeros_like(grid_mag_feats)
-
-#     # Apply a Gaussian filter to smooth the features
-#     for f in range(grid_mag_feats.shape[0]):  # f in [0..k-1]
-#         # Apply a maximum filter (local neighborhood of size x size)
-#         grid_mag_feats_local[f] = maximum_filter(grid_mag_feats[f], size=window_size)
-#         grid_mag_feats_gaussian[f] = gaussian_filter(grid_mag_feats[f], sigma=sigma)
-        
-#     # Now pick the feature with the largest local maximum at each cell
-#     grid_argmax = np.argmax(grid_mag_feats_gaussian, axis=0)
-
-#     # Optionally save to CSV
-#     np.savetxt("grid_argmax.csv", np.argmax(grid_mag_feats, axis=0), delimiter=",", fmt="%d")
-#     np.savetxt("grid_argmax_local.csv", grid_argmax, delimiter=",", fmt="%d")
-#     # This integer grid tells us which feature is dominant at that (x,y).
-#     # 5c) Build interpolators
-#     interp_u_sum = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
-#                                         grid_u_sum, bounds_error=False, fill_value=0.0)
-#     interp_v_sum = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
-#                                         grid_v_sum, bounds_error=False, fill_value=0.0)
-#     interp_argmax = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
-#                                             grid_argmax, method='nearest',
-#                                             bounds_error=False, fill_value=-1)
-#     # Assign a color to each top feature
-#     base_colors = ['red','blue','green','magenta','orange','cyan']  # pick as many as you need
-#     # Use Tableau 10 color palette
-#     tableau_colors = [
-#         "#4E79A7", "#F28E2B", "#E15759", "#76B7B2",
-#         "#59A14F", "#EDC949", "#AF7AA1", "#FF9DA7",
-#         "#9C755F", "#BAB0AC"
-#     ]
-#     feature_colors = [tableau_colors[i % len(tableau_colors)] for i in range(k)]
-#     feature_rgba = [to_rgba(c) for c in feature_colors]
-
-#     return feature_colors, interp_u_sum, interp_v_sum, interp_argmax
-
-def build_grids(positions, grid_res, top_k_indices, avg_magnitudes, all_grad_vectors, kdtree_scale=0.1):
+def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_scale=0.1):
     # (1) Setup interpolation grid and distance mask
     xmin, xmax, ymin, ymax = bounding_box
     grid_x, grid_y = np.mgrid[xmin:xmax:complex(grid_res),
@@ -195,8 +83,10 @@ def build_grids(positions, grid_res, top_k_indices, avg_magnitudes, all_grad_vec
     grid_mag_feats_gaussian = np.zeros_like(grid_mag_feats)
     for f in range(grid_mag_feats.shape[0]):
         grid_mag_feats_gaussian[f] = gaussian_filter(grid_mag_feats[f], sigma=sigma)
-    # Pick the feature with the highest (smoothed) magnitude per grid cell.
-    grid_argmax = np.argmax(grid_mag_feats_gaussian, axis=0)
+
+    rel_idx = np.argmax(grid_mag_feats_gaussian, axis=0)
+    grid_argmax = np.take(top_k_indices, rel_idx)
+    # print("Grid test shape:", np.unique(grid_argmax.flatten()))
     
     # Optionally save the dominant feature grid.
     np.savetxt("grid_argmax.csv", np.argmax(grid_mag_feats, axis=0), delimiter=",", fmt="%d")
@@ -229,6 +119,14 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtr
                               ymin:ymax:complex(grid_res)]
     
     num_features = all_grad_vectors.shape[1]
+
+     # Build a KD-tree and determine distance to the nearest data point at each grid cell
+    kdtree = cKDTree(positions)
+    grid_points = np.column_stack((grid_x.ravel(), grid_y.ravel()))
+    distances, _ = kdtree.query(grid_points, k=1)
+    dist_grid = distances.reshape(grid_x.shape)
+    threshold = max(abs(xmax - xmin), abs(ymax - ymin)) * kdtree_scale
+    print("Distance threshold:", threshold)
     
     # (2) For each feature, interpolate the velocity fields onto the grid.
     grid_u_all, grid_v_all = [], []
@@ -236,6 +134,9 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtr
         vectors = all_grad_vectors[:, m, :]  # shape: (#points, 2)
         grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='nearest')
         grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='nearest')
+        mask = dist_grid > threshold
+        grid_u[mask] = 0.0
+        grid_v[mask] = 0.0
         grid_u_all.append(grid_u)
         grid_v_all.append(grid_v)
     grid_u_all = np.array(grid_u_all)  # shape: (M, grid_res, grid_res)
@@ -270,7 +171,7 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtr
     # Optionally save local dominant feature grid to CSV.
     np.savetxt("grid_argmax_local_alternative.csv", grid_argmax_local, delimiter=",", fmt="%d")
     
-    return interp_u_sum_local, interp_v_sum_local, interp_argmax_local
+    return interp_u_sum_local, interp_v_sum_local, interp_argmax_local, grid_argmax_local
 
 def create_particles(num_particles):
     xmin, xmax, ymin, ymax = bounding_box
@@ -300,7 +201,7 @@ def create_particles(num_particles):
 
     return system
 
-def prepare_figure(ax, valid_points, Col_labels, k, top_k_indices, feature_colors, lc, all_positions=None, all_grad_vectors=None):
+def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors, lc, all_positions=None, all_grad_vectors=None):
     xmin, xmax, ymin, ymax = bounding_box
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
@@ -337,7 +238,7 @@ def prepare_figure(ax, valid_points, Col_labels, k, top_k_indices, feature_color
 
     # Build a legend or color swatches
     proxy_lines = []
-    for j, feat_idx in enumerate(top_k_indices):
+    for j, feat_idx in enumerate(grad_indices):
         lbl = f"Feat {feat_idx} - {Col_labels[feat_idx]}"
         color_j = feature_colors[j]
         proxy = plt.Line2D([0],[0], linestyle="none", marker="o", color=color_j, label=lbl)
@@ -348,7 +249,7 @@ def prepare_figure(ax, valid_points, Col_labels, k, top_k_indices, feature_color
 
     # Compute the aggregated arrow for each data point by summing its top-k feature vectors.
     # Note: all_grad_vectors has shape (#points, M, 2) and top_k_indices holds the selected feature indices.
-    aggregated_vectors = np.sum(all_grad_vectors[:, top_k_indices, :], axis=1)  # shape: (#points, 2)
+    aggregated_vectors = np.sum(all_grad_vectors[:, grad_indices, :], axis=1)  # shape: (#points, 2)
 
     # Draw the aggregated arrows using quiver.
     # You can adjust the scale parameter to get the desired arrow length.
@@ -356,14 +257,12 @@ def prepare_figure(ax, valid_points, Col_labels, k, top_k_indices, feature_color
         all_positions[:, 0], all_positions[:, 1],
         aggregated_vectors[:, 0], aggregated_vectors[:, 1],
         color='gray',  # choose a color that stands out
-        angles='xy', scale_units='xy', scale=2.0, width=0.001, headwidth=2, headlength=5, alpha=1.0,
+        angles='xy', scale_units='xy', scale=2.0, width=0.001, headwidth=2, headlength=5, alpha=0,
     )
 
     return 0
 
-def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, feature_colors, k, velocity_scale=0.1):
-    
-    feature_rgba = [to_rgba(c) for c in feature_colors]
+def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale=0.1):
     xmin, xmax, ymin, ymax = bounding_box
     pp = system['particle_positions']
     lt = system['particle_lifetimes']
@@ -425,15 +324,16 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, feature_col
 
     for i in range(n_active):
         this_feat_id = feat_ids[i]
-        # If outside domain => pick a default color
-        if this_feat_id < 0 or this_feat_id >= k:
-            # e.g. black with a nominal alpha
+        # Look up the real feature index in our mapping. If not present, assign a default (black).
+        if this_feat_id not in real_feature_rgba:
             r, g, b, _ = (0, 0, 0, 1)
             alpha_part = 0.3
         else:
-            r, g, b, _ = feature_rgba[this_feat_id]
-            # Scale alpha by speed (change factor as desired)
+            r, g, b, _ = real_feature_rgba[this_feat_id]
             alpha_part = speeds[i] / max_speed
+
+        # print("Particle", i, "Feature ID:", this_feat_id, "Color:", (r, g, b), "Alpha part:", alpha_part)
+        # test = feature_rgba[this_feat_id]
 
         for t in range(tail_gap):
             seg_idx = i * tail_gap + t
@@ -461,7 +361,8 @@ def main():
 
     # Set the number of top features to visualize
     global k 
-    k = len(Col_labels)
+    # k = len(Col_labels)
+    k = 5
 
     # Compute the bounding box
     global bounding_box
@@ -479,6 +380,9 @@ def main():
     # Set the KD-tree scale
     kdtree_scale = 0.1
 
+    # feature colors
+    global real_feature_rgba
+
     # Pick top k features based on average magnitude
     top_k_indices, avg_magnitudes = pick_top_k_features(all_grad_vectors)
     print("Top k feature indices:", top_k_indices)
@@ -487,6 +391,20 @@ def main():
 
     # grad_indices = [0]
     grad_indices = top_k_indices
+
+    # Create a grid for interpolation
+    grid_res = (min(abs(xmax - xmin), abs(ymax - ymin)) * grid_res_scale).astype(int)
+    # grid_res = 10
+    print("Grid resolution:", grid_res)
+
+    interp_u_sum, interp_v_sum, interp_argmax = build_grids(
+        all_positions, grid_res, grad_indices, all_grad_vectors, kdtree_scale=kdtree_scale
+    )
+
+    # interp_u_sum, interp_v_sum, interp_argmax, grid_argmax_local = build_grids_alternative(
+    #     all_positions, grid_res, all_grad_vectors, k_local=len(grad_indices), kdtree_scale=kdtree_scale
+    # )
+    # grad_indices = np.unique(grid_argmax_local)
 
     # Define feature colors using a Tableau-like palette.
     tableau_colors = [
@@ -497,13 +415,9 @@ def main():
     # Use as many colors as there are top features.
     feature_colors = [tableau_colors[i % len(tableau_colors)] for i in range(len(grad_indices))]
 
-    # Create a grid for interpolation
-    grid_res = (min(abs(xmax - xmin), abs(ymax - ymin)) * grid_res_scale).astype(int)
-    # grid_res = 10
-    print("Grid resolution:", grid_res)
-    interp_u_sum, interp_v_sum, interp_argmax = build_grids(
-        all_positions, grid_res, grad_indices, avg_magnitudes, all_grad_vectors, kdtree_scale=kdtree_scale
-    )
+    # In main() (or after you pick top_k_indices), build a mapping for real indices to RGBA.
+    real_feature_rgba = {feat_idx: to_rgba(feature_colors[i])
+                        for i, feat_idx in enumerate(grad_indices)}
 
     # Create the particle system
     system = create_particles(2000)
@@ -515,7 +429,7 @@ def main():
 
     # Create the animation
     anim = FuncAnimation(fig, 
-                         lambda frame: update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, feature_colors, k, velocity_scale), 
+                         lambda frame: update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale), 
                          frames=1000, interval=30, blit=False)
     plt.show()
 
