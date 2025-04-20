@@ -79,7 +79,7 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_sca
     # (3) Determine the dominant feature at each grid cell (using Gaussian smoothing)
     # Compute the magnitude of each feature on the grid.
     grid_mag_feats = np.sqrt(grid_u_feats**2 + grid_v_feats**2)  # shape: (k, grid_res, grid_res)
-    sigma = 1.5  # standard deviation for smoothing
+    sigma = 1.0  # standard deviation for smoothing
     grid_mag_feats_gaussian = np.zeros_like(grid_mag_feats)
     for f in range(grid_mag_feats.shape[0]):
         grid_mag_feats_gaussian[f] = gaussian_filter(grid_mag_feats[f], sigma=sigma)
@@ -217,7 +217,7 @@ def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors
     print("Unique labels:", unique_labels)
 
     # Define multiple distinct markers (expand this list if you need more)
-    markers = ["o", "s", "D", "^", "v", "<", ">"]
+    markers = ["o", "s", "^", "D", "v", "<", ">"]
 
     for i, lab in enumerate(unique_labels):
         # Extract positions belonging to this label
@@ -257,7 +257,7 @@ def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors
         all_positions[:, 0], all_positions[:, 1],
         aggregated_vectors[:, 0], aggregated_vectors[:, 1],
         color='gray',  # choose a color that stands out
-        angles='xy', scale_units='xy', scale=2.0, width=0.001, headwidth=2, headlength=5, alpha=0,
+        angles='xy', scale_units='xy', scale=2.0, width=0.001, headwidth=2, headlength=5, alpha=1.0,
     )
 
     return 0
@@ -377,9 +377,6 @@ def main():
     # Set the grid resolution scale
     grid_res_scale = 0.15
 
-    # Set the KD-tree scale
-    kdtree_scale = 0.1
-
     # feature colors
     global real_feature_rgba
 
@@ -394,8 +391,11 @@ def main():
 
     # Create a grid for interpolation
     grid_res = (min(abs(xmax - xmin), abs(ymax - ymin)) * grid_res_scale).astype(int)
-    # grid_res = 10
+    grid_res = 15
     print("Grid resolution:", grid_res)
+
+    # Set the KD-tree scale
+    kdtree_scale = 0.01 * grid_res
 
     interp_u_sum, interp_v_sum, interp_argmax = build_grids(
         all_positions, grid_res, grad_indices, all_grad_vectors, kdtree_scale=kdtree_scale
