@@ -86,7 +86,7 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_sca
 
     rel_idx = np.argmax(grid_mag_feats_gaussian, axis=0)
     grid_argmax = np.take(top_k_indices, rel_idx)
-    # print("Grid test shape:", np.unique(grid_argmax.flatten()))
+    print("Grid argmax shape:", grid_argmax.shape)
     
     # Optionally save the dominant feature grid.
     np.savetxt("grid_argmax.csv", np.argmax(grid_mag_feats, axis=0), delimiter=",", fmt="%d")
@@ -101,7 +101,7 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_sca
                                              grid_argmax, method='nearest',
                                              bounds_error=False, fill_value=-1)
     
-    return interp_u_sum, interp_v_sum, interp_argmax
+    return interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats
 
 def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtree_scale=0.1):
     """
@@ -205,10 +205,12 @@ def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors
     xmin, xmax, ymin, ymax = bounding_box
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
-    ax.set_title(f"Top {k} Features Combined - Single Particle System")
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
+    # ax.set_title(f"Top {k} Features Combined - Single Particle System")
+    # ax.set_xlabel("X")
+    # ax.set_ylabel("Y")
     ax.axis('equal')
+    plt.xticks([])
+    plt.yticks([])
 
     # Plot underlying data points once
     # ax.scatter(all_positions[:,0], all_positions[:,1], c='black', s=5, label='Data Points')
@@ -229,8 +231,10 @@ def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors
             positions_lab[:, 1],
             marker=marker_style,
             color="gray",
+            # color="white",
             s=10,
-            label=f"Label {lab}"
+            label=f"Label {lab}",
+            zorder=4
         )
 
     # Add single line collection
@@ -251,13 +255,24 @@ def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors
     # Note: all_grad_vectors has shape (#points, M, 2) and top_k_indices holds the selected feature indices.
     aggregated_vectors = np.sum(all_grad_vectors[:, grad_indices, :], axis=1)  # shape: (#points, 2)
 
+    # for i, feat_idx in enumerate(grad_indices):
+    #     # Extract the color for this feature
+    #     color_i = feature_colors[i]
+    #     # Draw the individual arrows using quiver.
+    #     ax.quiver(
+    #         all_positions[:, 0], all_positions[:, 1],
+    #         all_grad_vectors[:, feat_idx, 0], all_grad_vectors[:, feat_idx, 1],
+    #         color=color_i,  # choose a color that stands out
+    #         angles='xy', scale_units='xy', scale=0.5, width=0.002, headwidth=2, headlength=3, alpha=1,
+    #     )
+
     # Draw the aggregated arrows using quiver.
     # You can adjust the scale parameter to get the desired arrow length.
     ax.quiver(
         all_positions[:, 0], all_positions[:, 1],
         aggregated_vectors[:, 0], aggregated_vectors[:, 1],
-        color='gray',  # choose a color that stands out
-        angles='xy', scale_units='xy', scale=2.0, width=0.001, headwidth=2, headlength=5, alpha=1.0,
+        color='#AF7AA1',  # choose a color that stands out
+        angles='xy', scale_units='xy', scale=2, width=0.003, headwidth=2, headlength=3, alpha=0.0,
     )
 
     return 0
@@ -320,7 +335,7 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
     max_speed = speeds.max() + 1e-9  # avoid division by zero
 
     # Find dominant feature index for each particle
-    feat_ids = interp_argmax(pp).astype(int)  # each is in [0..k-1] or -1
+    feat_ids = interp_argmax(pp)  # each is in [0..k-1] or -1
 
     for i in range(n_active):
         this_feat_id = feat_ids[i]
@@ -331,9 +346,6 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
         else:
             r, g, b, _ = real_feature_rgba[this_feat_id]
             alpha_part = speeds[i] / max_speed
-
-        # print("Particle", i, "Feature ID:", this_feat_id, "Color:", (r, g, b), "Alpha part:", alpha_part)
-        # test = feature_rgba[this_feat_id]
 
         for t in range(tail_gap):
             seg_idx = i * tail_gap + t
@@ -355,14 +367,107 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
 
     return (lc_,)
 
+# def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale=0.1):
+    xmin, xmax, ymin, ymax = bounding_box
+    pp = system['particle_positions']
+    lt = system['particle_lifetimes']
+    his = system['histories']
+    lc_ = system['linecoll']
+    max_lifetime = system['max_lifetime']
+
+    # Increase lifetime.
+    lt += 1
+
+    # Interpolate velocity.
+    U = interp_u_sum(pp)
+    V = interp_v_sum(pp)
+    velocity = np.column_stack((U, V)) * velocity_scale
+
+    # Move particles.
+    pp += velocity
+
+    # Shift history.
+    his[:, :-1, :] = his[:, 1:, :]
+    his[:, -1, :] = pp
+
+    # Reinitialize out-of-bounds or over-age particles.
+    for i in range(len(pp)):
+        x, y = pp[i]
+        if (x < xmin or x > xmax or y < ymin or y > ymax or lt[i] > max_lifetime):
+            pp[i] = [np.random.uniform(xmin, xmax), np.random.uniform(ymin, ymax)]
+            his[i] = pp[i]
+            lt[i] = 0
+
+    # Randomly reinitialize some fraction.
+    num_to_reinit = int(0.05 * len(pp))
+    if num_to_reinit > 0:
+        idxs = np.random.choice(len(pp), num_to_reinit, replace=False)
+        for idx in idxs:
+            pp[idx] = [np.random.uniform(xmin, xmax), np.random.uniform(ymin, ymax)]
+            his[idx] = pp[idx]
+            lt[idx] = 0
+
+    # Build line segments (particle trails).
+    n_active = len(pp)
+    tail_gap = system['tail_gap']
+    segments = np.zeros((n_active * tail_gap, 2, 2))
+    colors_rgba = np.zeros((n_active * tail_gap, 4))
+
+    # Compute speeds for alpha fade.
+    speeds = np.linalg.norm(velocity, axis=1)
+    max_speed = speeds.max() + 1e-9  # avoid division by zero
+
+    # Find dominant feature index for each particle.
+    feat_ids = interp_argmax(pp)  # each is in [0..k-1] or -1
+
+    for i in range(n_active):
+        this_feat_id = feat_ids[i]
+        if this_feat_id not in real_feature_rgba:
+            r, g, b, _ = (0, 0, 0, 1)
+            alpha_part = 0.3
+        else:
+            r, g, b, _ = real_feature_rgba[this_feat_id]
+            alpha_part = speeds[i] / max_speed
+
+        for t in range(tail_gap):
+            seg_idx = i * tail_gap + t
+            segments[seg_idx, 0, :] = his[i, t, :]
+            segments[seg_idx, 1, :] = his[i, t + 1, :]
+            age_factor = 1.0  # adjust if you want additional fading along the tail
+            alpha_final = alpha_part * age_factor
+            colors_rgba[seg_idx] = [r, g, b, alpha_final]
+
+    # Update the line collection.
+    lc_.set_segments(segments)
+    lc_.set_colors(colors_rgba)
+
+    # --- Draw arrow heads for each particle's latest segment ---
+    # Remove previous arrow patches, if any.
+    if 'arrow_patches' in system:
+        for patch in system['arrow_patches']:
+            patch.remove()
+    system['arrow_patches'] = []
+    # Draw an arrow for each particle using its last segment (from second last to last point).
+    for i in range(n_active):
+        start = his[i, -2, :]   # tail of the last segment
+        end = his[i, -1, :]     # current particle position
+        dx, dy = end - start
+        # You can adjust head_width and head_length as needed.
+        arrow = lc_.axes.arrow(start[0], start[1], dx, dy,
+                               head_width=0.1, head_length=0.15,
+                               fc='k', ec='k', zorder=7)
+        system['arrow_patches'].append(arrow)
+
+    return (lc_,)
+
 def main():
     # Load the tangent map data
-    valid_points, all_grad_vectors, all_positions, Col_labels = PreProcessing("tangentmaps/breast_cancer.tmap")
+    valid_points, all_grad_vectors, all_positions, Col_labels = PreProcessing("tangentmaps/tworings.tmap")
 
     # Set the number of top features to visualize
     global k 
-    # k = len(Col_labels)
-    k = 5
+    k = len(Col_labels)
+    # k = 5
 
     # Compute the bounding box
     global bounding_box
@@ -372,7 +477,7 @@ def main():
 
     # Set the velocity scale
     global velocity_scale
-    velocity_scale = 0.1
+    velocity_scale = 0.01
 
     # Set the grid resolution scale
     grid_res_scale = 0.15
@@ -391,13 +496,14 @@ def main():
 
     # Create a grid for interpolation
     grid_res = (min(abs(xmax - xmin), abs(ymax - ymin)) * grid_res_scale).astype(int)
-    grid_res = 15
+    grid_res = 20
     print("Grid resolution:", grid_res)
 
     # Set the KD-tree scale
-    kdtree_scale = 0.01 * grid_res
+    # kdtree_scale = 0.01 * grid_res
+    kdtree_scale = 0.03
 
-    interp_u_sum, interp_v_sum, interp_argmax = build_grids(
+    interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats = build_grids(
         all_positions, grid_res, grad_indices, all_grad_vectors, kdtree_scale=kdtree_scale
     )
 
@@ -405,6 +511,10 @@ def main():
     #     all_positions, grid_res, all_grad_vectors, k_local=len(grad_indices), kdtree_scale=kdtree_scale
     # )
     # grad_indices = np.unique(grid_argmax_local)
+
+    # Create the combined (summed) velocity field for the top-k features.
+    grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (grid_res, grid_res)
+    grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (grid_res, grid_res)
 
     # Define feature colors using a Tableau-like palette.
     tableau_colors = [
@@ -420,17 +530,100 @@ def main():
                         for i, feat_idx in enumerate(grad_indices)}
 
     # Create the particle system
-    system = create_particles(2000)
+    num_particles = 2000
+    system = create_particles(num_particles)
     lc = system['linecoll']
 
     # prepare the figure
     fig, ax = plt.subplots(figsize=(8,6))
     prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors, lc, all_positions, all_grad_vectors)
+    
+    # # Draw grid lines from the grid arrays
+    # n_rows, n_cols = grid_x.shape
+    # print("Grid shape:", grid_x.shape)
+    # for col in range(n_cols):
+    #     ax.plot(grid_x[:, col], grid_y[:, col], color='gray', linestyle='--', linewidth=0.5)
+    # for row in range(n_rows):
+    #     ax.plot(grid_x[row, :], grid_y[row, :], color='gray', linestyle='--', linewidth=0.5)
 
-    # Create the animation
+    # cell_centers = np.empty((n_rows-1, n_cols-1, 2))
+    # for i in range(n_rows - 1):
+    #     for j in range(n_cols - 1):
+    #         # For each cell, you can choose the center as the mean of the 4 corner coordinates.
+    #         cx = (grid_x[i, j] + grid_x[i+1, j+1]) / 2.0
+    #         cy = (grid_y[i, j] + grid_y[i+1, j+1]) / 2.0
+    #         cell_centers[i, j, :] = [cx, cy]
+
+    # grid_argmax = interp_argmax(cell_centers.reshape(-1, 2)).reshape(n_rows-1, n_cols-1).astype(int)
+
+    # # grid_argmax is of shape (n_rows, n_cols) corresponding to the grid points.
+    # # Create a fine mesh grid (increase res_fine for higher resolution Voronoi)
+    # res_fine = 100  # for example
+    # xx, yy = np.meshgrid(np.linspace(xmin, xmax, res_fine),
+    #                     np.linspace(ymin, ymax, res_fine))
+
+    # # Use grid points directly as seeds for the Voronoi diagram.
+    # # points_seeds has shape (n_rows*n_cols, 2) from grid_x and grid_y.
+    # points_seeds = np.column_stack((grid_x.ravel(), grid_y.ravel()))
+    # # Here, interp_argmax returns the dominant feature for any queried coordinate.
+    # # Use it on the grid points (the seeds) to get a seed_feature per grid point.
+    # seed_features = interp_argmax(points_seeds).astype(int)  # shape: (n_rows*n_cols,)
+    # print("Seed features shape:", seed_features.shape)
+
+    # # Create a fine mesh grid (increase res_fine for higher resolution Voronoi)
+    # xx, yy = np.meshgrid(np.linspace(xmin, xmax, res_fine),
+    #                     np.linspace(ymin, ymax, res_fine))
+
+    # # Build a KD-tree from the grid points and query for the nearest seed for every point in the fine mesh.
+    # tree = cKDTree(points_seeds)
+    # _, seed_idx = tree.query(np.c_[xx.ravel(), yy.ravel()])
+    # seed_idx = seed_idx.reshape(xx.shape)
+    # print("Seed indices shape:", seed_idx.shape)
+
+    # # Construct the Voronoi color image: for each fine-grid pixel assign the color of the nearest seed.
+    # voronoi_color = np.zeros((res_fine, res_fine, 4))
+    # for i in range(res_fine):
+    #     for j in range(res_fine):
+    #         feat = seed_features[seed_idx[i, j]]
+    #         # Lookup the color for this feature from the real_feature_rgba mapping.
+    #         voronoi_color[i, j, :] = real_feature_rgba.get(feat, (0, 0, 0, 1))
+
+    # Overlay the Voronoi background.
+    # ax.imshow(voronoi_color, extent=(xmin, xmax, ymin, ymax), origin='lower',
+    #         interpolation='none', alpha=0.5)
+    
+    # Overlay grid vectors on the figure.
+    # for i in grad_indices:
+    #     # Extract the color for this feature
+    #     color_i = feature_colors[i]
+    #     # Draw the individual arrows using quiver.
+    #     ax.quiver(
+    #         grid_x, grid_y,
+    #         grid_u_feats[i], grid_v_feats[i],
+    #         color=color_i,  # choose a color that stands out
+    #         angles='xy', scale_units='xy', scale=0.5, width=0.003, headwidth=2, headlength=3, alpha=0.8,
+    #     )
+    # ax.quiver(
+    #     grid_x, grid_y,
+    #     grid_u_sum, grid_v_sum,
+    #     color="black", angles='xy', scale_units='xy', scale=0.5, width=0.003, headwidth=2, headlength=3, alpha=0.8
+    # )
+
+    for frame in range(5):
+        # Update the system state for this frame.
+        update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale)
+        # Save the current state of the figure.
+        fig.savefig(f"frame_{frame}.png", dpi=300)
+
+    # # Create the animation
     anim = FuncAnimation(fig, 
                          lambda frame: update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale), 
                          frames=1000, interval=30, blit=False)
+
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    # Save the figure as a PNG file with 300 dpi.
+    fig.savefig("featurewind_figure.png", dpi=300)
     plt.show()
 
 
