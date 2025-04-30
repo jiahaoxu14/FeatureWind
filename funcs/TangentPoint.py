@@ -27,6 +27,7 @@ class TangentPoint:
         # Start processing
         self.position = np.array(tmap['range'][:2])  # Shape: (2,)
         self.tmap_label = tmap['class']
+        self.domain = tmap['domain'] if 'domain' in tmap else None
         
         # Extract gradient (tangent) vectors and feature names
         self.gradient_vectors = np.array(tmap['tangent']).T  # Shape: (N, 2)

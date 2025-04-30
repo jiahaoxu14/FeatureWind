@@ -171,7 +171,7 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtr
     # Optionally save local dominant feature grid to CSV.
     np.savetxt("grid_argmax_local_alternative.csv", grid_argmax_local, delimiter=",", fmt="%d")
     
-    return interp_u_sum_local, interp_v_sum_local, interp_argmax_local, grid_argmax_local
+    return interp_u_sum_local, interp_v_sum_local, interp_argmax_local, grid_argmax_local, grid_x, grid_y
 
 def create_particles(num_particles):
     xmin, xmax, ymin, ymax = bounding_box
@@ -212,6 +212,10 @@ def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors
     plt.xticks([])
     plt.yticks([])
 
+    feature_idx = 2
+    domain_values = np.array([p.domain[feature_idx] for p in valid_points])
+    domain_min, domain_max = domain_values.min(), domain_values.max()
+
     # Plot underlying data points once
     # ax.scatter(all_positions[:,0], all_positions[:,1], c='black', s=5, label='Data Points')
     # Collect all labels from valid_points
@@ -222,20 +226,30 @@ def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors
     markers = ["o", "s", "^", "D", "v", "<", ">"]
 
     for i, lab in enumerate(unique_labels):
-        # Extract positions belonging to this label
-        positions_lab = np.array([p.position for p in valid_points if p.tmap_label == lab])
+        indices = [j for j, p in enumerate(valid_points) if p.tmap_label == lab]
+        positions_lab = np.array([valid_points[j].position for j in indices])
+        # alphas = (np.array([valid_points[j].domain[0] for j in indices]) - domain_min) / (domain_max - domain_min + 1e-9)
+        normalized = (np.array([valid_points[j].domain[feature_idx] for j in indices]) - domain_min) / (domain_max - domain_min + 1e-9)
+        alphas = 0.2 + normalized * 0.8
+        # positions_lab = np.array([p.position for p in valid_points if p.tmap_label == lab])
         marker_style = markers[i % len(markers)]
+        # colors_lab = [[78/255, 121/255, 167/255, a] for a in alphas]
+        # colors_lab = [[225/255, 87/255, 89/255, a] for a in alphas]
+        # colors_lab = [[242/255, 142/255, 43/255, a] for a in alphas]
+        # "#4E79A7", "#F28E2B", "#E15759"
 
         ax.scatter(
             positions_lab[:, 0],
             positions_lab[:, 1],
             marker=marker_style,
             color="gray",
+            # color = colors_lab,
             # color="white",
             s=10,
             label=f"Label {lab}",
             zorder=4
         )
+        
 
     # Add single line collection
     ax.add_collection(lc)
@@ -255,25 +269,25 @@ def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors
     # Note: all_grad_vectors has shape (#points, M, 2) and top_k_indices holds the selected feature indices.
     aggregated_vectors = np.sum(all_grad_vectors[:, grad_indices, :], axis=1)  # shape: (#points, 2)
 
-    # for i, feat_idx in enumerate(grad_indices):
-    #     # Extract the color for this feature
-    #     color_i = feature_colors[i]
-    #     # Draw the individual arrows using quiver.
-    #     ax.quiver(
-    #         all_positions[:, 0], all_positions[:, 1],
-    #         all_grad_vectors[:, feat_idx, 0], all_grad_vectors[:, feat_idx, 1],
-    #         color=color_i,  # choose a color that stands out
-    #         angles='xy', scale_units='xy', scale=0.5, width=0.002, headwidth=2, headlength=3, alpha=1,
-    #     )
+    for i, feat_idx in enumerate(grad_indices):
+        # Extract the color for this feature
+        color_i = feature_colors[i]
+        # Draw the individual arrows using quiver.
+        ax.quiver(
+            all_positions[:, 0], all_positions[:, 1],
+            all_grad_vectors[:, feat_idx, 0], all_grad_vectors[:, feat_idx, 1],
+            color=color_i,  # choose a color that stands out
+            angles='xy', scale_units='xy', scale=3, width=0.002, headwidth=2, headlength=3, alpha=1,
+        )
 
     # Draw the aggregated arrows using quiver.
     # You can adjust the scale parameter to get the desired arrow length.
-    ax.quiver(
-        all_positions[:, 0], all_positions[:, 1],
-        aggregated_vectors[:, 0], aggregated_vectors[:, 1],
-        color='#AF7AA1',  # choose a color that stands out
-        angles='xy', scale_units='xy', scale=2, width=0.003, headwidth=2, headlength=3, alpha=0.0,
-    )
+    # ax.quiver(
+    #     all_positions[:, 0], all_positions[:, 1],
+    #     aggregated_vectors[:, 0], aggregated_vectors[:, 1],
+    #     color='black',  # choose a color that stands out
+    #     angles='xy', scale_units='xy', scale=2, width=0.003, headwidth=2, headlength=3, alpha=1.0,
+    # )
 
     return 0
 
@@ -353,11 +367,13 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
             segments[seg_idx, 1, :] = his[i, t + 1, :]
 
             # Combine alpha with any additional fade for the tail
-            # age_factor = (tail_gap - t) / (tail_gap + 1)
-            age_factor = 1.0
+            # age_factor = 1.0 - (t / tail_gap)
+            age_factor = (t+1) / tail_gap
+            # age_factor = 1.0
 
             # Multiply them
-            alpha_final = alpha_part * age_factor
+            alpha_min = 0.15
+            alpha_final = max(alpha_min, alpha_part * age_factor)
 
             # Assign the final RGBA
             colors_rgba[seg_idx] = [r, g, b, alpha_final]
@@ -367,107 +383,15 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
 
     return (lc_,)
 
-# def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale=0.1):
-    xmin, xmax, ymin, ymax = bounding_box
-    pp = system['particle_positions']
-    lt = system['particle_lifetimes']
-    his = system['histories']
-    lc_ = system['linecoll']
-    max_lifetime = system['max_lifetime']
-
-    # Increase lifetime.
-    lt += 1
-
-    # Interpolate velocity.
-    U = interp_u_sum(pp)
-    V = interp_v_sum(pp)
-    velocity = np.column_stack((U, V)) * velocity_scale
-
-    # Move particles.
-    pp += velocity
-
-    # Shift history.
-    his[:, :-1, :] = his[:, 1:, :]
-    his[:, -1, :] = pp
-
-    # Reinitialize out-of-bounds or over-age particles.
-    for i in range(len(pp)):
-        x, y = pp[i]
-        if (x < xmin or x > xmax or y < ymin or y > ymax or lt[i] > max_lifetime):
-            pp[i] = [np.random.uniform(xmin, xmax), np.random.uniform(ymin, ymax)]
-            his[i] = pp[i]
-            lt[i] = 0
-
-    # Randomly reinitialize some fraction.
-    num_to_reinit = int(0.05 * len(pp))
-    if num_to_reinit > 0:
-        idxs = np.random.choice(len(pp), num_to_reinit, replace=False)
-        for idx in idxs:
-            pp[idx] = [np.random.uniform(xmin, xmax), np.random.uniform(ymin, ymax)]
-            his[idx] = pp[idx]
-            lt[idx] = 0
-
-    # Build line segments (particle trails).
-    n_active = len(pp)
-    tail_gap = system['tail_gap']
-    segments = np.zeros((n_active * tail_gap, 2, 2))
-    colors_rgba = np.zeros((n_active * tail_gap, 4))
-
-    # Compute speeds for alpha fade.
-    speeds = np.linalg.norm(velocity, axis=1)
-    max_speed = speeds.max() + 1e-9  # avoid division by zero
-
-    # Find dominant feature index for each particle.
-    feat_ids = interp_argmax(pp)  # each is in [0..k-1] or -1
-
-    for i in range(n_active):
-        this_feat_id = feat_ids[i]
-        if this_feat_id not in real_feature_rgba:
-            r, g, b, _ = (0, 0, 0, 1)
-            alpha_part = 0.3
-        else:
-            r, g, b, _ = real_feature_rgba[this_feat_id]
-            alpha_part = speeds[i] / max_speed
-
-        for t in range(tail_gap):
-            seg_idx = i * tail_gap + t
-            segments[seg_idx, 0, :] = his[i, t, :]
-            segments[seg_idx, 1, :] = his[i, t + 1, :]
-            age_factor = 1.0  # adjust if you want additional fading along the tail
-            alpha_final = alpha_part * age_factor
-            colors_rgba[seg_idx] = [r, g, b, alpha_final]
-
-    # Update the line collection.
-    lc_.set_segments(segments)
-    lc_.set_colors(colors_rgba)
-
-    # --- Draw arrow heads for each particle's latest segment ---
-    # Remove previous arrow patches, if any.
-    if 'arrow_patches' in system:
-        for patch in system['arrow_patches']:
-            patch.remove()
-    system['arrow_patches'] = []
-    # Draw an arrow for each particle using its last segment (from second last to last point).
-    for i in range(n_active):
-        start = his[i, -2, :]   # tail of the last segment
-        end = his[i, -1, :]     # current particle position
-        dx, dy = end - start
-        # You can adjust head_width and head_length as needed.
-        arrow = lc_.axes.arrow(start[0], start[1], dx, dy,
-                               head_width=0.1, head_length=0.15,
-                               fc='k', ec='k', zorder=7)
-        system['arrow_patches'].append(arrow)
-
-    return (lc_,)
 
 def main():
     # Load the tangent map data
-    valid_points, all_grad_vectors, all_positions, Col_labels = PreProcessing("tangentmaps/tworings.tmap")
+    valid_points, all_grad_vectors, all_positions, Col_labels = PreProcessing("tangentmaps/onehelix.tmap")
 
     # Set the number of top features to visualize
     global k 
     k = len(Col_labels)
-    # k = 5
+    # k = 6
 
     # Compute the bounding box
     global bounding_box
@@ -477,7 +401,7 @@ def main():
 
     # Set the velocity scale
     global velocity_scale
-    velocity_scale = 0.01
+    velocity_scale = 0.04
 
     # Set the grid resolution scale
     grid_res_scale = 0.15
@@ -491,12 +415,12 @@ def main():
     print("Their average magnitudes:", avg_magnitudes[top_k_indices])
     print("Their labels:", [Col_labels[i] for i in top_k_indices])
 
-    # grad_indices = [0]
+    # grad_indices = [2]
     grad_indices = top_k_indices
 
     # Create a grid for interpolation
     grid_res = (min(abs(xmax - xmin), abs(ymax - ymin)) * grid_res_scale).astype(int)
-    grid_res = 20
+    grid_res = 30
     print("Grid resolution:", grid_res)
 
     # Set the KD-tree scale
@@ -507,7 +431,7 @@ def main():
         all_positions, grid_res, grad_indices, all_grad_vectors, kdtree_scale=kdtree_scale
     )
 
-    # interp_u_sum, interp_v_sum, interp_argmax, grid_argmax_local = build_grids_alternative(
+    # interp_u_sum, interp_v_sum, interp_argmax, grid_argmax_local, grid_x, grid_y = build_grids_alternative(
     #     all_positions, grid_res, all_grad_vectors, k_local=len(grad_indices), kdtree_scale=kdtree_scale
     # )
     # grad_indices = np.unique(grid_argmax_local)
@@ -530,7 +454,7 @@ def main():
                         for i, feat_idx in enumerate(grad_indices)}
 
     # Create the particle system
-    num_particles = 2000
+    num_particles = 4500
     system = create_particles(num_particles)
     lc = system['linecoll']
 
@@ -588,11 +512,11 @@ def main():
     #         # Lookup the color for this feature from the real_feature_rgba mapping.
     #         voronoi_color[i, j, :] = real_feature_rgba.get(feat, (0, 0, 0, 1))
 
-    # Overlay the Voronoi background.
+    # # Overlay the Voronoi background.
     # ax.imshow(voronoi_color, extent=(xmin, xmax, ymin, ymax), origin='lower',
     #         interpolation='none', alpha=0.5)
     
-    # Overlay grid vectors on the figure.
+    # # Overlay grid vectors on the figure.
     # for i in grad_indices:
     #     # Extract the color for this feature
     #     color_i = feature_colors[i]
@@ -601,7 +525,7 @@ def main():
     #         grid_x, grid_y,
     #         grid_u_feats[i], grid_v_feats[i],
     #         color=color_i,  # choose a color that stands out
-    #         angles='xy', scale_units='xy', scale=0.5, width=0.003, headwidth=2, headlength=3, alpha=0.8,
+    #         angles='xy', scale_units='xy', scale=1, width=0.003, headwidth=2, headlength=3, alpha=0.8,
     #     )
     # ax.quiver(
     #     grid_x, grid_y,
@@ -609,19 +533,20 @@ def main():
     #     color="black", angles='xy', scale_units='xy', scale=0.5, width=0.003, headwidth=2, headlength=3, alpha=0.8
     # )
 
-    for frame in range(5):
-        # Update the system state for this frame.
-        update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale)
-        # Save the current state of the figure.
-        fig.savefig(f"frame_{frame}.png", dpi=300)
-
-    # # Create the animation
-    anim = FuncAnimation(fig, 
-                         lambda frame: update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale), 
-                         frames=1000, interval=30, blit=False)
-
     for spine in ax.spines.values():
         spine.set_visible(False)
+
+    # for frame in range(5):
+    #     # Update the system state for this frame.
+    #     update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale)
+    #     # Save the current state of the figure.
+    #     fig.savefig(f"frame_{frame}.png", dpi=300)
+
+    # # Create the animation
+    # anim = FuncAnimation(fig, 
+    #                      lambda frame: update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale), 
+    #                      frames=1000, interval=30, blit=False)
+
     # Save the figure as a PNG file with 300 dpi.
     fig.savefig("featurewind_figure.png", dpi=300)
     plt.show()
