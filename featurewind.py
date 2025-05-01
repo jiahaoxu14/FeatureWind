@@ -269,16 +269,16 @@ def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors
     # Note: all_grad_vectors has shape (#points, M, 2) and top_k_indices holds the selected feature indices.
     aggregated_vectors = np.sum(all_grad_vectors[:, grad_indices, :], axis=1)  # shape: (#points, 2)
 
-    for i, feat_idx in enumerate(grad_indices):
-        # Extract the color for this feature
-        color_i = feature_colors[i]
-        # Draw the individual arrows using quiver.
-        ax.quiver(
-            all_positions[:, 0], all_positions[:, 1],
-            all_grad_vectors[:, feat_idx, 0], all_grad_vectors[:, feat_idx, 1],
-            color=color_i,  # choose a color that stands out
-            angles='xy', scale_units='xy', scale=3, width=0.002, headwidth=2, headlength=3, alpha=1,
-        )
+    # for i, feat_idx in enumerate(grad_indices):
+    #     # Extract the color for this feature
+    #     color_i = feature_colors[i]
+    #     # Draw the individual arrows using quiver.
+    #     ax.quiver(
+    #         all_positions[:, 0], all_positions[:, 1],
+    #         all_grad_vectors[:, feat_idx, 0], all_grad_vectors[:, feat_idx, 1],
+    #         color=color_i,  # choose a color that stands out
+    #         angles='xy', scale_units='xy', scale=3, width=0.002, headwidth=2, headlength=3, alpha=1,
+    #     )
 
     # Draw the aggregated arrows using quiver.
     # You can adjust the scale parameter to get the desired arrow length.
@@ -391,7 +391,7 @@ def main():
     # Set the number of top features to visualize
     global k 
     k = len(Col_labels)
-    # k = 6
+    # k = 5
 
     # Compute the bounding box
     global bounding_box
@@ -420,7 +420,7 @@ def main():
 
     # Create a grid for interpolation
     grid_res = (min(abs(xmax - xmin), abs(ymax - ymin)) * grid_res_scale).astype(int)
-    grid_res = 30
+    grid_res = 15
     print("Grid resolution:", grid_res)
 
     # Set the KD-tree scale
@@ -454,7 +454,7 @@ def main():
                         for i, feat_idx in enumerate(grad_indices)}
 
     # Create the particle system
-    num_particles = 4500
+    num_particles = 2500
     system = create_particles(num_particles)
     lc = system['linecoll']
 
@@ -536,16 +536,16 @@ def main():
     for spine in ax.spines.values():
         spine.set_visible(False)
 
-    # for frame in range(5):
-    #     # Update the system state for this frame.
-    #     update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale)
-    #     # Save the current state of the figure.
-    #     fig.savefig(f"frame_{frame}.png", dpi=300)
+    for frame in range(5):
+        # Update the system state for this frame.
+        update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale)
+        # Save the current state of the figure.
+        fig.savefig(f"frame_{frame}.png", dpi=300)
 
-    # # Create the animation
-    # anim = FuncAnimation(fig, 
-    #                      lambda frame: update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale), 
-    #                      frames=1000, interval=30, blit=False)
+    # Create the animation
+    anim = FuncAnimation(fig, 
+                         lambda frame: update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale), 
+                         frames=1000, interval=30, blit=False)
 
     # Save the figure as a PNG file with 300 dpi.
     fig.savefig("featurewind_figure.png", dpi=300)
