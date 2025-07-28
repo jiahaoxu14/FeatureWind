@@ -1,6 +1,3 @@
-import sys
-sys.path.insert(1, 'funcs')
-
 import json
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,7 +9,7 @@ from scipy.spatial import cKDTree
 from scipy.ndimage import gaussian_filter
 from typing import Optional
 
-import TangentPoint
+from .TangentPoint import TangentPoint
 
 TABLEAU_COLORS = ["#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC949", "#AF7AA1", "#FF9DA7", "#9C755F", "#BAB0AC"]
 
@@ -52,7 +49,7 @@ class FeatureWind:
         
         tmap = data['tmap']
         Col_labels = data['Col_labels']
-        points = [TangentPoint.TangentPoint(entry, 1.0, Col_labels) for entry in tmap]
+        points = [TangentPoint(entry, 1.0, Col_labels) for entry in tmap]
         self.valid_points = [p for p in points if p.valid]
         self.all_positions = np.array([p.position for p in self.valid_points])
         self.all_grad_vectors = np.array([p.gradient_vectors for p in self.valid_points])
@@ -264,12 +261,29 @@ class FeatureWind:
     
 
 if __name__ == "__main__":
-    fw = FeatureWind("tangentmaps/tworings.tmap", 
+    import os
+    # Get paths relative to repository root
+    repo_root = os.path.join(os.path.dirname(__file__), '..', '..')
+    tangent_map_path = os.path.join(repo_root, 'tangentmaps', 'tworings.tmap')
+    output_dir = os.path.join(repo_root, 'output')
+    
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
+    fw = FeatureWind(tangent_map_path, 
                      number_of_features=3, 
                      kdtree_scale=0.03, 
                      velocity_scale=0.01,
                      grid_size=20,
                      number_of_particles=2000,
                      figure_size=(10, 8))
-    anim = fw.animate(frames=1000, interval=30)
+    
+    # Run animation (optionally save to output directory)
+    save_video = False  # Set to True to save animation
+    if save_video:
+        save_path = os.path.join(output_dir, "feature_wind_demo.mp4")
+        anim = fw.animate(frames=100, interval=30, save=True, save_path=save_path)
+    else:
+        anim = fw.animate(frames=1000, interval=30)
+    
     plt.show()

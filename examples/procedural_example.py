@@ -1,5 +1,6 @@
 import sys
-sys.path.insert(1, 'funcs')
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import json
 import numpy as np
@@ -11,7 +12,7 @@ from scipy.interpolate import griddata, RegularGridInterpolator
 from scipy.spatial import cKDTree
 from scipy.ndimage import maximum_filter, gaussian_filter
 
-import TangentPoint
+from featurewind.TangentPoint import TangentPoint
 
 
 def PreProcessing(tangentmaps):
@@ -22,7 +23,7 @@ def PreProcessing(tangentmaps):
     Col_labels = data_import['Col_labels']
     points = []
     for tmap_entry in tmap:
-        point = TangentPoint.TangentPoint(tmap_entry, 1.0, Col_labels)
+        point = TangentPoint(tmap_entry, 1.0, Col_labels)
         points.append(point)
     valid_points = [p for p in points if p.valid]
     all_positions = np.array([p.position for p in valid_points])  # shape: (#points, 2)
@@ -41,7 +42,7 @@ def pick_top_k_features(all_grad_vectors):
     top_k_indices = np.argsort(-avg_magnitudes)[:k]
     return top_k_indices, avg_magnitudes
 
-def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_scale=0.1):
+def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_scale=0.1, output_dir="."):
     # (1) Setup interpolation grid and distance mask
     xmin, xmax, ymin, ymax = bounding_box
     grid_x, grid_y = np.mgrid[xmin:xmax:complex(grid_res),
@@ -89,8 +90,8 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_sca
     print("Grid argmax shape:", grid_argmax.shape)
     
     # Optionally save the dominant feature grid.
-    np.savetxt("grid_argmax.csv", np.argmax(grid_mag_feats, axis=0), delimiter=",", fmt="%d")
-    np.savetxt("grid_argmax_local.csv", grid_argmax, delimiter=",", fmt="%d")
+    np.savetxt(os.path.join(output_dir, "grid_argmax.csv"), np.argmax(grid_mag_feats, axis=0), delimiter=",", fmt="%d")
+    np.savetxt(os.path.join(output_dir, "grid_argmax_local.csv"), grid_argmax, delimiter=",", fmt="%d")
     
     # (4) Build grid interpolators from the computed fields.
     interp_u_sum = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
@@ -103,7 +104,7 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_sca
     
     return interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats
 
-def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtree_scale=0.1):
+def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtree_scale=0.1, output_dir="."):
     """
     Alternative grid builder:
       - Divides space with grid_res.
@@ -169,7 +170,7 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtr
                                                   bounds_error=False, fill_value=-1)
     
     # Optionally save local dominant feature grid to CSV.
-    np.savetxt("grid_argmax_local_alternative.csv", grid_argmax_local, delimiter=",", fmt="%d")
+    np.savetxt(os.path.join(output_dir, "grid_argmax_local_alternative.csv"), grid_argmax_local, delimiter=",", fmt="%d")
     
     return interp_u_sum_local, interp_v_sum_local, interp_argmax_local, grid_argmax_local, grid_x, grid_y
 
@@ -385,8 +386,16 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
 
 
 def main():
+    # Setup paths relative to repository root
+    repo_root = os.path.join(os.path.dirname(__file__), '..')
+    tangent_map_path = os.path.join(repo_root, 'tangentmaps', 'onehelix.tmap')
+    output_dir = os.path.join(repo_root, 'output')
+    
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
     # Load the tangent map data
-    valid_points, all_grad_vectors, all_positions, Col_labels = PreProcessing("tangentmaps/onehelix.tmap")
+    valid_points, all_grad_vectors, all_positions, Col_labels = PreProcessing(tangent_map_path)
 
     # Set the number of top features to visualize
     global k 
@@ -428,7 +437,7 @@ def main():
     kdtree_scale = 0.03
 
     interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats = build_grids(
-        all_positions, grid_res, grad_indices, all_grad_vectors, kdtree_scale=kdtree_scale
+        all_positions, grid_res, grad_indices, all_grad_vectors, kdtree_scale=kdtree_scale, output_dir=output_dir
     )
 
     # interp_u_sum, interp_v_sum, interp_argmax, grid_argmax_local, grid_x, grid_y = build_grids_alternative(
@@ -540,7 +549,7 @@ def main():
         # Update the system state for this frame.
         update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale)
         # Save the current state of the figure.
-        fig.savefig(f"frame_{frame}.png", dpi=300)
+        fig.savefig(os.path.join(output_dir, f"frame_{frame}.png"), dpi=300)
 
     # Create the animation
     anim = FuncAnimation(fig, 
@@ -548,7 +557,7 @@ def main():
                          frames=1000, interval=30, blit=False)
 
     # Save the figure as a PNG file with 300 dpi.
-    fig.savefig("featurewind_figure.png", dpi=300)
+    fig.savefig(os.path.join(output_dir, "featurewind_figure.png"), dpi=300)
     plt.show()
 
 
