@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import to_rgba
+from matplotlib.patches import Rectangle
+from matplotlib.widgets import Slider
 from scipy.interpolate import griddata, RegularGridInterpolator
 from scipy.spatial import cKDTree
 from scipy.ndimage import maximum_filter, gaussian_filter
@@ -209,9 +211,9 @@ def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors
     # ax.set_title(f"Top {k} Features Combined - Single Particle System")
     # ax.set_xlabel("X")
     # ax.set_ylabel("Y")
-    ax.axis('equal')
-    plt.xticks([])
-    plt.yticks([])
+    ax.set_aspect('equal')
+    ax.set_xticks([])
+    ax.set_yticks([])
 
     feature_idx = 2
     domain_values = np.array([p.domain[feature_idx] for p in valid_points])
@@ -402,10 +404,34 @@ def main():
     k = len(Col_labels)
     # k = 5
 
-    # Compute the bounding box
+    # Compute the bounding box and make it square
     global bounding_box
     xmin, xmax = all_positions[:,0].min(), all_positions[:,0].max()
     ymin, ymax = all_positions[:,1].min(), all_positions[:,1].max()
+    
+    # Add some padding
+    x_padding = (xmax - xmin) * 0.05
+    y_padding = (ymax - ymin) * 0.05
+    xmin -= x_padding
+    xmax += x_padding
+    ymin -= y_padding
+    ymax += y_padding
+    
+    # Make the bounding box square by expanding the smaller dimension
+    x_range = xmax - xmin
+    y_range = ymax - ymin
+    
+    if x_range > y_range:
+        # Expand y range to match x range
+        y_center = (ymin + ymax) / 2
+        ymin = y_center - x_range / 2
+        ymax = y_center + x_range / 2
+    else:
+        # Expand x range to match y range
+        x_center = (xmin + xmax) / 2
+        xmin = x_center - y_range / 2
+        xmax = x_center + y_range / 2
+    
     bounding_box = [xmin, xmax, ymin, ymax]
 
     # Set the velocity scale
@@ -467,9 +493,119 @@ def main():
     system = create_particles(num_particles)
     lc = system['linecoll']
 
-    # prepare the figure
-    fig, ax = plt.subplots(figsize=(8,6))
-    prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors, lc, all_positions, all_grad_vectors)
+    # prepare the figure with 2 subplots and space for controls
+    fig = plt.figure(figsize=(12, 8))
+    
+    # Create main subplots
+    ax1 = plt.subplot2grid((20, 2), (0, 0), rowspan=18)
+    ax2 = plt.subplot2grid((20, 2), (0, 1), rowspan=18)
+    
+    # Make both subplots square
+    ax1.set_aspect('equal')
+    ax2.set_aspect('equal')
+    
+    # Prepare the first subplot with the main visualization
+    prepare_figure(ax1, valid_points, Col_labels, k, grad_indices, feature_colors, lc, all_positions, all_grad_vectors)
+    ax1.set_title('Feature Wind Map', fontsize=12, pad=10)
+    
+    # Prepare the second subplot (additional canvas)
+    xmin, xmax, ymin, ymax = bounding_box
+    ax2.set_xlim(xmin, xmax)
+    ax2.set_ylim(ymin, ymax)
+    ax2.set_xticks([])
+    ax2.set_yticks([])
+    ax2.grid(False)
+    for spine in ax2.spines.values():
+        spine.set_visible(False)
+    
+    # Add some content to the second canvas - show the velocity field as a heatmap
+    grid_magnitude = np.sqrt(grid_u_sum**2 + grid_v_sum**2)
+    im = ax2.imshow(grid_magnitude, extent=[xmin, xmax, ymin, ymax], 
+                    origin='lower', cmap='viridis', alpha=0.7)
+    ax2.set_title('Wind Vane', fontsize=12, pad=10)
+    
+    # Add brush functionality
+    brush_center = [(xmin + xmax) / 2, (ymin + ymax) / 2]
+    brush_size = (xmax - xmin) * 0.1
+    
+    # Create brush square
+    brush_rect = Rectangle((brush_center[0] - brush_size/2, brush_center[1] - brush_size/2), 
+                          brush_size, brush_size, fill=False, 
+                          edgecolor='red', linewidth=2, alpha=0.7)
+    ax1.add_patch(brush_rect)
+    
+    # Create slider for brush size - smaller and more compact
+    ax_slider = plt.subplot2grid((20, 2), (19, 0), colspan=1)
+    ax_slider.set_position([0.1, 0.02, 0.35, 0.03])  # [left, bottom, width, height]
+    slider = Slider(ax_slider, 'Brush Size', 0.01, 0.3, valinit=brush_size/(xmax-xmin),
+                   facecolor='lightblue', alpha=0.7)
+    
+    # Brush interaction variables
+    brush_data = {
+        'center': brush_center,
+        'size': brush_size,
+        'rect': brush_rect,
+        'selected_points': [],
+        'dragging': False,
+        'offset': [0, 0]
+    }
+    
+    def update_brush_size(val):
+        new_size = val * (xmax - xmin)
+        brush_data['size'] = new_size
+        center = brush_data['center']
+        brush_data['rect'].set_xy((center[0] - new_size/2, center[1] - new_size/2))
+        brush_data['rect'].set_width(new_size)
+        brush_data['rect'].set_height(new_size)
+        update_selection()
+        fig.canvas.draw_idle()
+    
+    def update_selection():
+        center = brush_data['center']
+        size = brush_data['size']
+        # Find selected points within brush square
+        in_x = (all_positions[:, 0] >= center[0] - size/2) & (all_positions[:, 0] <= center[0] + size/2)
+        in_y = (all_positions[:, 1] >= center[1] - size/2) & (all_positions[:, 1] <= center[1] + size/2)
+        brush_data['selected_points'] = np.where(in_x & in_y)[0]
+        print(f"Selected {len(brush_data['selected_points'])} points")
+    
+    def on_press(event):
+        if event.inaxes == ax1:
+            center = brush_data['center']
+            size = brush_data['size']
+            # Check if click is inside brush
+            if (abs(event.xdata - center[0]) <= size/2 and 
+                abs(event.ydata - center[1]) <= size/2):
+                brush_data['dragging'] = True
+                brush_data['offset'] = [event.xdata - center[0], event.ydata - center[1]]
+            else:
+                # Move brush to click location
+                brush_data['center'] = [event.xdata, event.ydata]
+                brush_data['rect'].set_xy((event.xdata - size/2, event.ydata - size/2))
+                update_selection()
+                fig.canvas.draw_idle()
+    
+    def on_release(event):
+        brush_data['dragging'] = False
+    
+    def on_motion(event):
+        if brush_data['dragging'] and event.inaxes == ax1:
+            size = brush_data['size']
+            new_center = [event.xdata - brush_data['offset'][0], 
+                         event.ydata - brush_data['offset'][1]]
+            brush_data['center'] = new_center
+            brush_data['rect'].set_xy((new_center[0] - size/2, new_center[1] - size/2))
+            update_selection()
+            fig.canvas.draw_idle()
+    
+    # Connect events
+    slider.on_changed(update_brush_size)
+    fig.canvas.mpl_connect('button_press_event', on_press)
+    fig.canvas.mpl_connect('button_release_event', on_release)
+    fig.canvas.mpl_connect('motion_notify_event', on_motion)
+    
+    # Initial selection
+    update_selection()
     
     # # Draw grid lines from the grid arrays
     # n_rows, n_cols = grid_x.shape
@@ -542,7 +678,7 @@ def main():
     #     color="black", angles='xy', scale_units='xy', scale=0.5, width=0.003, headwidth=2, headlength=3, alpha=0.8
     # )
 
-    for spine in ax.spines.values():
+    for spine in ax1.spines.values():
         spine.set_visible(False)
 
     for frame in range(5):
