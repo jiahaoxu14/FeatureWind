@@ -11,7 +11,7 @@ from matplotlib.colors import to_rgba
 from matplotlib.patches import Rectangle
 from matplotlib.widgets import Slider
 from scipy.interpolate import griddata, RegularGridInterpolator
-from scipy.spatial import cKDTree
+from scipy.spatial import cKDTree, ConvexHull
 from scipy.ndimage import maximum_filter, gaussian_filter
 
 from featurewind.TangentPoint import TangentPoint
@@ -257,15 +257,7 @@ def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors
     # Add single line collection
     ax.add_collection(lc)
 
-    # Build a legend or color swatches
-    proxy_lines = []
-    for j, feat_idx in enumerate(grad_indices):
-        lbl = f"Feat {feat_idx} - {Col_labels[feat_idx]}"
-        color_j = feature_colors[j]
-        proxy = plt.Line2D([0],[0], linestyle="none", marker="o", color=color_j, label=lbl)
-        proxy_lines.append(proxy)
-
-    ax.legend(handles=proxy_lines, loc='upper right')
+    # Note: Legend moved to separate location - see main() function
     ax.grid(False)
 
     # Compute the aggregated arrow for each data point by summing its top-k feature vectors.
@@ -390,7 +382,7 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
 def main():
     # Setup paths relative to repository root
     repo_root = os.path.join(os.path.dirname(__file__), '..')
-    tangent_map_path = os.path.join(repo_root, 'tangentmaps', 'onehelix.tmap')
+    tangent_map_path = os.path.join(repo_root, 'tangentmaps', 'breast_cancer.tmap')
     output_dir = os.path.join(repo_root, 'output')
     
     # Ensure output directory exists
@@ -518,10 +510,7 @@ def main():
     for spine in ax2.spines.values():
         spine.set_visible(False)
     
-    # Add some content to the second canvas - show the velocity field as a heatmap
-    grid_magnitude = np.sqrt(grid_u_sum**2 + grid_v_sum**2)
-    im = ax2.imshow(grid_magnitude, extent=[xmin, xmax, ymin, ymax], 
-                    origin='lower', cmap='viridis', alpha=0.7)
+    # Prepare the second subplot (Wind Vane) - no background
     ax2.set_title('Wind Vane', fontsize=12, pad=10)
     
     # Add brush functionality
@@ -539,6 +528,10 @@ def main():
     ax_slider.set_position([0.1, 0.02, 0.35, 0.03])  # [left, bottom, width, height]
     slider = Slider(ax_slider, 'Brush Size', 0.01, 0.3, valinit=brush_size/(xmax-xmin),
                    facecolor='lightblue', alpha=0.7)
+    
+    # Initialize aggregate point visualization elements
+    aggregate_point_marker = None
+    aggregate_arrows = []
     
     # Brush interaction variables
     brush_data = {
@@ -560,6 +553,169 @@ def main():
         update_selection()
         fig.canvas.draw_idle()
     
+    def update_aggregate_visualization():
+        nonlocal aggregate_point_marker, aggregate_arrows
+        
+        # Clear previous aggregate visualization
+        if aggregate_point_marker:
+            try:
+                aggregate_point_marker.remove()
+            except (ValueError, AttributeError):
+                pass  # Already removed or doesn't exist
+            aggregate_point_marker = None
+        
+        for arrow in aggregate_arrows:
+            try:
+                arrow.remove()
+            except (ValueError, AttributeError):
+                pass  # Already removed or doesn't exist
+        aggregate_arrows.clear()
+        
+        selected_indices = brush_data['selected_points']
+        if len(selected_indices) == 0:
+            fig.canvas.draw_idle()
+            return
+            
+        # Calculate aggregate gradient vectors (sum across selected points for each feature)
+        selected_gradients = all_grad_vectors[selected_indices]  # shape: (n_selected, n_features, 2)
+        aggregate_gradients = np.sum(selected_gradients, axis=0)  # shape: (n_features, 2)
+        
+        # Place aggregate point at center of Wind Vane
+        center_x, center_y = (xmin + xmax) / 2, (ymin + ymax) / 2
+        
+        # Draw aggregate point marker in Wind Vane (always at center)
+        aggregate_point_marker = ax2.scatter(center_x, center_y, 
+                                           s=100, c='black', marker='o', 
+                                           zorder=10, label='Aggregate Point')
+        
+        # Draw gradient vector arrows for each feature
+        # Calculate dynamic scaling to use 90% of canvas
+        non_zero_vectors = []
+        vector_magnitudes = []
+        
+        for feat_idx in range(len(Col_labels)):
+            if np.linalg.norm(aggregate_gradients[feat_idx]) > 0:
+                non_zero_vectors.append((feat_idx, aggregate_gradients[feat_idx]))
+                vector_magnitudes.append(np.linalg.norm(aggregate_gradients[feat_idx]))
+        
+        if vector_magnitudes:
+            # Find the longest vector
+            max_magnitude = max(vector_magnitudes)
+            # Scale so longest vector takes up 45% of canvas radius (90% diameter coverage)
+            canvas_size = min(xmax - xmin, ymax - ymin)
+            target_length = canvas_size * 0.45
+            dynamic_scale = max_magnitude / target_length
+            
+            # Calculate all endpoint positions for convex hull
+            endpoints = []
+            vector_info = []  # Store (feat_idx, gradient_vector, pos_endpoint, neg_endpoint)
+            
+            for feat_idx, gradient_vector in non_zero_vectors:
+                pos_endpoint = np.array([center_x + gradient_vector[0] / dynamic_scale,
+                                       center_y + gradient_vector[1] / dynamic_scale])
+                neg_endpoint = np.array([center_x - gradient_vector[0] / dynamic_scale,
+                                       center_y - gradient_vector[1] / dynamic_scale])
+                
+                endpoints.append(pos_endpoint)
+                endpoints.append(neg_endpoint)
+                vector_info.append((feat_idx, gradient_vector, pos_endpoint, neg_endpoint))
+            
+            # Calculate convex hull
+            endpoints_array = np.array(endpoints)
+            hull = ConvexHull(endpoints_array)
+            hull_points = endpoints_array[hull.vertices]
+            
+            # Draw convex hull
+            from matplotlib.patches import Polygon
+            hull_polygon = Polygon(hull_points, fill=False, edgecolor='black', 
+                                 linewidth=2, alpha=0.7, zorder=7)
+            ax2.add_patch(hull_polygon)
+            aggregate_arrows.append(hull_polygon)
+            
+            # Determine which endpoints are on the convex hull boundary
+            hull_vertices_set = set(hull.vertices)
+            
+            for i, (feat_idx, gradient_vector, pos_endpoint, neg_endpoint) in enumerate(vector_info):
+                # Check if either endpoint is on the convex hull
+                pos_on_hull = (2 * i) in hull_vertices_set
+                neg_on_hull = (2 * i + 1) in hull_vertices_set
+                
+                # Use feature color if vector endpoint is on hull, otherwise gray
+                if feat_idx in grad_indices and (pos_on_hull or neg_on_hull):
+                    color_idx = list(grad_indices).index(feat_idx)
+                    arrow_color = feature_colors[color_idx]
+                else:
+                    arrow_color = 'gray'
+                
+                # Draw positive direction arrow (solid)
+                arrow_pos = ax2.arrow(center_x, center_y,
+                                    gradient_vector[0] / dynamic_scale,
+                                    gradient_vector[1] / dynamic_scale,
+                                    head_width=canvas_size * 0.02, 
+                                    head_length=canvas_size * 0.03,
+                                    fc=arrow_color, ec=arrow_color, 
+                                    alpha=0.8 if pos_on_hull else 0.3, zorder=9,
+                                    length_includes_head=True)
+                aggregate_arrows.append(arrow_pos)
+                
+                # Draw negative direction arrow (solid arrow + dashed overlay)
+                # First draw solid arrow (same style as positive)
+                arrow_neg = ax2.arrow(center_x, center_y,
+                                    -gradient_vector[0] / dynamic_scale,
+                                    -gradient_vector[1] / dynamic_scale,
+                                    head_width=canvas_size * 0.02, 
+                                    head_length=canvas_size * 0.03,
+                                    fc=arrow_color, ec=arrow_color, 
+                                    alpha=0.5 if neg_on_hull else 0.2, zorder=8,
+                                    length_includes_head=True)
+                aggregate_arrows.append(arrow_neg)
+                
+                # Overlay dashed line to create dashed effect
+                neg_end_x = center_x - gradient_vector[0] / dynamic_scale
+                neg_end_y = center_y - gradient_vector[1] / dynamic_scale
+                
+                # Draw white dashed line over the arrow to create gaps
+                dash_line = ax2.plot([center_x, neg_end_x], [center_y, neg_end_y], 
+                                   color='white', linestyle='-', linewidth=3,
+                                   alpha=0.8, zorder=8.5,
+                                   dashes=[5, 5])[0]  # 5 points on, 5 points off
+                aggregate_arrows.append(dash_line)
+                
+                # Add feature name labels for boundary vectors
+                if pos_on_hull or neg_on_hull:
+                    feature_name = Col_labels[feat_idx]
+                    
+                    # Add label for positive vector if it's on hull
+                    if pos_on_hull:
+                        pos_end_x = center_x + gradient_vector[0] / dynamic_scale
+                        pos_end_y = center_y + gradient_vector[1] / dynamic_scale
+                        
+                        # Calculate label offset (slightly beyond arrow tip)
+                        offset_factor = 1.2
+                        label_x = center_x + (gradient_vector[0] / dynamic_scale) * offset_factor
+                        label_y = center_y + (gradient_vector[1] / dynamic_scale) * offset_factor
+                        
+                        pos_label = ax2.text(label_x, label_y, feature_name,
+                                           fontsize=8, ha='center', va='center',
+                                           bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8),
+                                           zorder=10)
+                        aggregate_arrows.append(pos_label)
+                    
+                    # Add label for negative vector if it's on hull
+                    if neg_on_hull:
+                        # Calculate label offset (slightly beyond arrow tip)
+                        offset_factor = 1.2
+                        label_x = center_x - (gradient_vector[0] / dynamic_scale) * offset_factor
+                        label_y = center_y - (gradient_vector[1] / dynamic_scale) * offset_factor
+                        
+                        neg_label = ax2.text(label_x, label_y, f"-{feature_name}",
+                                           fontsize=8, ha='center', va='center',
+                                           bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', alpha=0.8),
+                                           zorder=10)
+                        aggregate_arrows.append(neg_label)
+        
+        fig.canvas.draw_idle()
+    
     def update_selection():
         center = brush_data['center']
         size = brush_data['size']
@@ -568,6 +724,7 @@ def main():
         in_y = (all_positions[:, 1] >= center[1] - size/2) & (all_positions[:, 1] <= center[1] + size/2)
         brush_data['selected_points'] = np.where(in_x & in_y)[0]
         print(f"Selected {len(brush_data['selected_points'])} points")
+        update_aggregate_visualization()
     
     def on_press(event):
         if event.inaxes == ax1:
@@ -606,6 +763,8 @@ def main():
     
     # Initial selection
     update_selection()
+    
+    # Feature colors legend removed per user request
     
     # # Draw grid lines from the grid arrays
     # n_rows, n_cols = grid_x.shape
