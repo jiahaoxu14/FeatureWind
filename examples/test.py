@@ -9,7 +9,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import to_rgba
 from matplotlib.patches import Rectangle, Ellipse
-from matplotlib.widgets import Slider
+from matplotlib.widgets import Slider, RadioButtons, CheckButtons, TextBox
 from scipy.interpolate import griddata, RegularGridInterpolator
 from scipy.spatial import cKDTree, ConvexHull
 from scipy.ndimage import maximum_filter, gaussian_filter
@@ -500,10 +500,11 @@ def main():
     feature_colors = [all_feature_colors[i] for i in grad_indices]
 
     # Build a mapping for ALL features to their colors (for consistent color coding)
-    all_feature_rgba = {feat_idx: to_rgba(all_feature_colors[feat_idx])
-                       for feat_idx in range(len(Col_labels))}
-    
-    # Build mapping for real indices to RGBA (for particle coloring)
+    all_feature_rgba = {
+        feat_idx: to_rgba(all_feature_colors[feat_idx])
+        for feat_idx in range(len(Col_labels))
+    }
+    # Build initial mapping for selected features to RGBA for particle coloring
     real_feature_rgba = {feat_idx: to_rgba(all_feature_colors[feat_idx])
                         for feat_idx in grad_indices}
 
@@ -518,6 +519,40 @@ def main():
     # Create main subplots
     ax1 = plt.subplot2grid((20, 2), (0, 0), rowspan=18)
     ax2 = plt.subplot2grid((20, 2), (0, 1), rowspan=18)
+    # --- feature-selection UI controls ---
+    # TextBox for entering k in Top k mode
+    ax_k = fig.add_axes([0.85, 0.75, 0.12, 0.05])
+    k_text = TextBox(ax_k, 'Top k', initial=str(len(grad_indices)))
+    
+    # callback to update selected features based on Top k only
+    def update_features(text):
+        nonlocal grad_indices, interp_u_sum, interp_v_sum, interp_argmax
+        try:
+            k_val = int(text)
+            grad_indices = list(np.argsort(-avg_magnitudes)[:k_val])
+        except ValueError:
+            pass
+        # Rebuild grids for new top-k selection
+        interp_u_sum, interp_v_sum, interp_argmax, *_ = build_grids(
+            all_positions, grid_res, grad_indices, all_grad_vectors,
+            kdtree_scale=kdtree_scale, output_dir=output_dir)
+        # Update color mappings for particles
+        # Prepare a new list of feature colors for redrawing
+        new_feature_colors = [all_feature_colors[i] for i in grad_indices]
+        # Mutate the real_feature_rgba mapping in place for the particle update
+        real_feature_rgba.clear()
+        for feat_idx in grad_indices:
+            real_feature_rgba[feat_idx] = to_rgba(all_feature_colors[feat_idx])
+        # Redraw main feature wind map
+        ax1.clear()
+        prepare_figure(ax1, valid_points, Col_labels, k, grad_indices,
+                       new_feature_colors, lc, all_positions, all_grad_vectors)
+        # Re-add brush rectangle and refresh selection
+        ax1.add_patch(brush_rect)
+        update_selection()
+        fig.canvas.draw_idle()
+    
+    k_text.on_submit(update_features)
     
     # Make both subplots square
     ax1.set_aspect('equal')
@@ -620,10 +655,13 @@ def main():
         non_zero_vectors = []
         vector_magnitudes = []
         
-        for feat_idx in range(len(Col_labels)):
-            if np.linalg.norm(aggregate_gradients[feat_idx]) > 0:
-                non_zero_vectors.append((feat_idx, aggregate_gradients[feat_idx]))
-                vector_magnitudes.append(np.linalg.norm(aggregate_gradients[feat_idx]))
+        # Only include selected top-k features in wind vane
+        for feat_idx in grad_indices:
+            vec = aggregate_gradients[feat_idx]
+            mag = np.linalg.norm(vec)
+            if mag > 0:
+                non_zero_vectors.append((feat_idx, vec))
+                vector_magnitudes.append(mag)
         
         if vector_magnitudes:
             # Find the longest vector
@@ -696,10 +734,10 @@ def main():
                 angle = np.degrees(np.arctan2(eigenvecs[1, 0], eigenvecs[0, 0]))
                 
                 # Create ellipse centered at Wind Vane center
-                cov_ellipse = Ellipse((center_x, center_y), width, height, 
-                                    angle=angle, fill=False, 
-                                    edgecolor='blue', linewidth=2, 
-                                    alpha=0.6, zorder=6, linestyle='-')
+                cov_ellipse = Ellipse((center_x, center_y), width, height,
+                                    angle=angle, fill=False,
+                                    edgecolor='black', linewidth=2,
+                                    alpha=0.6, zorder=11, linestyle='-')
                 ax2.add_patch(cov_ellipse)
                 aggregate_arrows.append(cov_ellipse)
             
@@ -711,33 +749,39 @@ def main():
                 pos_on_hull = (2 * i) in hull_vertices_set
                 neg_on_hull = (2 * i + 1) in hull_vertices_set
                 
-                # Use black for boundary vectors, gray for interior vectors
-                if pos_on_hull or neg_on_hull:
-                    arrow_color = 'black'
+                # Retrieve the feature's base color from the particle-color map (default black if missing)
+                base_rgba = real_feature_rgba.get(feat_idx, (0.0, 0.0, 0.0, 1.0))
+                # Determine alpha for positive and negative arrows based on hull membership
+                pos_alpha = 0.8 if pos_on_hull else 0.3
+                neg_alpha = 0.5 if neg_on_hull else 0.2
+                # Build RGBA colors for arrows: black if on hull boundary, else gray
+                if pos_on_hull:
+                    pos_color = (0.0, 0.0, 0.0, pos_alpha)
                 else:
-                    arrow_color = 'gray'
+                    pos_color = (0.5, 0.5, 0.5, pos_alpha)
+                if neg_on_hull:
+                    neg_color = (0.0, 0.0, 0.0, neg_alpha)
+                else:
+                    neg_color = (0.5, 0.5, 0.5, neg_alpha)
                 
                 # Draw positive direction arrow (solid)
                 arrow_pos = ax2.arrow(center_x, center_y,
                                     gradient_vector[0] / dynamic_scale,
                                     gradient_vector[1] / dynamic_scale,
-                                    head_width=canvas_size * 0.02, 
+                                    head_width=canvas_size * 0.02,
                                     head_length=canvas_size * 0.03,
-                                    fc=arrow_color, ec=arrow_color, 
-                                    alpha=0.8 if pos_on_hull else 0.3, zorder=9,
-                                    length_includes_head=True)
+                                    fc=pos_color, ec=pos_color,
+                                    length_includes_head=True, zorder=9)
                 aggregate_arrows.append(arrow_pos)
                 
                 # Draw negative direction arrow (solid arrow + dashed overlay)
-                # First draw solid arrow (same style as positive)
                 arrow_neg = ax2.arrow(center_x, center_y,
                                     -gradient_vector[0] / dynamic_scale,
                                     -gradient_vector[1] / dynamic_scale,
-                                    head_width=canvas_size * 0.02, 
+                                    head_width=canvas_size * 0.02,
                                     head_length=canvas_size * 0.03,
-                                    fc=arrow_color, ec=arrow_color, 
-                                    alpha=0.5 if neg_on_hull else 0.2, zorder=8,
-                                    length_includes_head=True)
+                                    fc=neg_color, ec=neg_color,
+                                    length_includes_head=True, zorder=8)
                 aggregate_arrows.append(arrow_neg)
                 
                 # Overlay dashed line to create dashed effect
