@@ -8,11 +8,18 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import to_rgba
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Rectangle, Ellipse
 from matplotlib.widgets import Slider
 from scipy.interpolate import griddata, RegularGridInterpolator
 from scipy.spatial import cKDTree, ConvexHull
 from scipy.ndimage import maximum_filter, gaussian_filter
+
+try:
+    import colorcet as cc
+    COLORCET_AVAILABLE = True
+except ImportError:
+    COLORCET_AVAILABLE = False
+    print("Warning: colorcet not available. Using fallback colors.")
 
 from featurewind.TangentPoint import TangentPoint
 
@@ -467,18 +474,38 @@ def main():
     grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (grid_res, grid_res)
     grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (grid_res, grid_res)
 
-    # Define feature colors using a Tableau-like palette.
-    tableau_colors = [
-        "#4E79A7", "#F28E2B", "#E15759", "#76B7B2",
-        "#59A14F", "#EDC949", "#AF7AA1", "#FF9DA7",
-        "#9C755F", "#BAB0AC"
-    ]
-    # Use as many colors as there are top features.
-    feature_colors = [tableau_colors[i % len(tableau_colors)] for i in range(len(grad_indices))]
+    # Generate distinct colors using ColorCET Glasbey or fallback to Tableau
+    def generate_distinct_colors(n_colors):
+        if COLORCET_AVAILABLE and hasattr(cc, 'glasbey'):
+            # Use ColorCET Glasbey for maximum distinctness
+            if n_colors <= len(cc.glasbey):
+                return [cc.glasbey[i] for i in range(n_colors)]
+            else:
+                # If we need more colors than available, cycle through
+                return [cc.glasbey[i % len(cc.glasbey)] for i in range(n_colors)]
+        else:
+            # Fallback to expanded Tableau-like palette
+            base_colors = [
+                "#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", 
+                "#EDC949", "#AF7AA1", "#FF9DA7", "#9C755F", "#BAB0AC",
+                "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"
+            ]
+            return [base_colors[i % len(base_colors)] for i in range(n_colors)]
+    
+    # Generate colors for ALL features (not just top-k)
+    all_feature_colors = generate_distinct_colors(len(Col_labels))
+    
+    # Extract colors for the selected top features
+    feature_colors = [all_feature_colors[i] for i in grad_indices]
 
-    # In main() (or after you pick top_k_indices), build a mapping for real indices to RGBA.
-    real_feature_rgba = {feat_idx: to_rgba(feature_colors[i])
-                        for i, feat_idx in enumerate(grad_indices)}
+    # Build a mapping for ALL features to their colors (for consistent color coding)
+    all_feature_rgba = {feat_idx: to_rgba(all_feature_colors[feat_idx])
+                       for feat_idx in range(len(Col_labels))}
+    
+    # Build mapping for real indices to RGBA (for particle coloring)
+    real_feature_rgba = {feat_idx: to_rgba(all_feature_colors[feat_idx])
+                        for feat_idx in grad_indices}
 
     # Create the particle system
     num_particles = 2500
@@ -627,10 +654,54 @@ def main():
             
             # Draw convex hull
             from matplotlib.patches import Polygon
-            hull_polygon = Polygon(hull_points, fill=False, edgecolor='black', 
-                                 linewidth=2, alpha=0.7, zorder=7)
+            hull_polygon = Polygon(hull_points, fill=False, edgecolor='black',
+                               linewidth=1, alpha=0.7, zorder=7, linestyle='--')
             ax2.add_patch(hull_polygon)
             aggregate_arrows.append(hull_polygon)
+            
+            # Calculate and draw covariance ellipse
+            # Collect all vector endpoints (scaled the same way as vectors)
+            all_vector_endpoints = []
+            for feat_idx, gradient_vector in non_zero_vectors:
+                # Positive endpoint
+                pos_endpoint = np.array([gradient_vector[0] / dynamic_scale,
+                                       gradient_vector[1] / dynamic_scale])
+                # Negative endpoint  
+                neg_endpoint = np.array([-gradient_vector[0] / dynamic_scale,
+                                       -gradient_vector[1] / dynamic_scale])
+                all_vector_endpoints.append(pos_endpoint)
+                all_vector_endpoints.append(neg_endpoint)
+            
+            if len(all_vector_endpoints) >= 2:
+                endpoints_matrix = np.array(all_vector_endpoints)  # shape: (n_endpoints, 2)
+                
+                # Calculate covariance matrix
+                cov_matrix = np.cov(endpoints_matrix.T)  # 2x2 covariance matrix
+                
+                # Eigendecomposition for ellipse parameters
+                eigenvals, eigenvecs = np.linalg.eigh(cov_matrix)
+                
+                # Sort eigenvalues and eigenvectors in descending order
+                # (eigh returns them in ascending order)
+                order = eigenvals.argsort()[::-1]
+                eigenvals = eigenvals[order]
+                eigenvecs = eigenvecs[:, order]
+                
+                # Calculate ellipse parameters (scaled smaller to fit inside convex hull)
+                confidence_scale = 1.5  # Reduced from 2.0 to make ellipse smaller
+                width = 2 * confidence_scale * np.sqrt(eigenvals[0])   # Major axis (largest eigenvalue)
+                height = 2 * confidence_scale * np.sqrt(eigenvals[1])  # Minor axis (smallest eigenvalue)
+                
+                # Calculate angle of rotation (in degrees) using the major axis eigenvector
+                angle = np.degrees(np.arctan2(eigenvecs[1, 0], eigenvecs[0, 0]))
+                
+                # Create ellipse centered at Wind Vane center
+                cov_ellipse = Ellipse((center_x, center_y), width, height, 
+                                    angle=angle, fill=False, 
+                                    edgecolor='blue', linewidth=2, 
+                                    alpha=0.6, zorder=6, linestyle='-')
+                ax2.add_patch(cov_ellipse)
+                aggregate_arrows.append(cov_ellipse)
             
             # Determine which endpoints are on the convex hull boundary
             hull_vertices_set = set(hull.vertices)
@@ -640,10 +711,9 @@ def main():
                 pos_on_hull = (2 * i) in hull_vertices_set
                 neg_on_hull = (2 * i + 1) in hull_vertices_set
                 
-                # Use feature color if vector endpoint is on hull, otherwise gray
-                if feat_idx in grad_indices and (pos_on_hull or neg_on_hull):
-                    color_idx = list(grad_indices).index(feat_idx)
-                    arrow_color = feature_colors[color_idx]
+                # Use black for boundary vectors, gray for interior vectors
+                if pos_on_hull or neg_on_hull:
+                    arrow_color = 'black'
                 else:
                     arrow_color = 'gray'
                 
