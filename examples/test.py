@@ -9,7 +9,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import to_rgba
 from matplotlib.patches import Rectangle, Ellipse
-from matplotlib.widgets import Slider, RadioButtons, CheckButtons, TextBox
+from matplotlib.widgets import Slider, RadioButtons, CheckButtons
 from scipy.interpolate import griddata, RegularGridInterpolator
 from scipy.spatial import cKDTree, ConvexHull
 from scipy.ndimage import maximum_filter, gaussian_filter
@@ -520,18 +520,16 @@ def main():
     ax1 = plt.subplot2grid((20, 2), (0, 0), rowspan=18)
     ax2 = plt.subplot2grid((20, 2), (0, 1), rowspan=18)
     # --- feature-selection UI controls ---
-    # TextBox for entering k in Top k mode
-    ax_k = fig.add_axes([0.85, 0.75, 0.12, 0.05])
-    k_text = TextBox(ax_k, 'Top k', initial=str(len(grad_indices)))
+    # Slider for selecting k in Top k mode
+    ax_k = fig.add_axes([0.55, 0.02, 0.35, 0.03])
+    k_slider = Slider(ax_k, 'Top k Features', 1, len(Col_labels), valinit=len(grad_indices), 
+                      valfmt='%d', facecolor='lightgreen', alpha=0.7)
     
     # callback to update selected features based on Top k only
-    def update_features(text):
+    def update_features(val):
         nonlocal grad_indices, interp_u_sum, interp_v_sum, interp_argmax
-        try:
-            k_val = int(text)
-            grad_indices = list(np.argsort(-avg_magnitudes)[:k_val])
-        except ValueError:
-            pass
+        k_val = int(val)
+        grad_indices = list(np.argsort(-avg_magnitudes)[:k_val])
         # Rebuild grids for new top-k selection
         interp_u_sum, interp_v_sum, interp_argmax, *_ = build_grids(
             all_positions, grid_res, grad_indices, all_grad_vectors,
@@ -552,7 +550,7 @@ def main():
         update_selection()
         fig.canvas.draw_idle()
     
-    k_text.on_submit(update_features)
+    k_slider.on_changed(update_features)
     
     # Make both subplots square
     ax1.set_aspect('equal')
@@ -587,7 +585,7 @@ def main():
     
     # Create slider for brush size - smaller and more compact
     ax_slider = plt.subplot2grid((20, 2), (19, 0), colspan=1)
-    ax_slider.set_position([0.1, 0.02, 0.35, 0.03])  # [left, bottom, width, height]
+    ax_slider.set_position([0.1, 0.06, 0.35, 0.03])  # [left, bottom, width, height]
     slider = Slider(ax_slider, 'Brush Size', 0.01, 0.3, valinit=brush_size/(xmax-xmin),
                    facecolor='lightblue', alpha=0.7)
     
@@ -637,6 +635,28 @@ def main():
         if len(selected_indices) == 0:
             fig.canvas.draw_idle()
             return
+            
+        # Extract colors from particles in brush area by analyzing their dominant features
+        brush_feature_colors = {}
+        selected_positions = all_positions[selected_indices]
+        
+        # Get dominant features for each selected position
+        brush_feat_ids = interp_argmax(selected_positions)
+        
+        # Count occurrences of each feature in brush area
+        feature_counts = {}
+        for feat_id in brush_feat_ids:
+            if feat_id in real_feature_rgba:  # Only count valid features
+                feature_counts[feat_id] = feature_counts.get(feat_id, 0) + 1
+        
+        # Calculate color intensity based on frequency in brush area
+        total_points = len(selected_indices)
+        for feat_id, count in feature_counts.items():
+            if feat_id in real_feature_rgba:
+                base_color = real_feature_rgba[feat_id]
+                # Intensity based on prevalence in brush area (0.3 to 1.0)
+                intensity = 0.3 + 0.7 * (count / total_points)
+                brush_feature_colors[feat_id] = (*base_color[:3], intensity)
             
         # Calculate aggregate gradient vectors (sum across selected points for each feature)
         selected_gradients = all_grad_vectors[selected_indices]  # shape: (n_selected, n_features, 2)
@@ -749,20 +769,31 @@ def main():
                 pos_on_hull = (2 * i) in hull_vertices_set
                 neg_on_hull = (2 * i + 1) in hull_vertices_set
                 
-                # Retrieve the feature's base color from the particle-color map (default black if missing)
-                base_rgba = real_feature_rgba.get(feat_idx, (0.0, 0.0, 0.0, 1.0))
-                # Determine alpha for positive and negative arrows based on hull membership
-                pos_alpha = 0.8 if pos_on_hull else 0.3
-                neg_alpha = 0.5 if neg_on_hull else 0.2
-                # Build RGBA colors for arrows: black if on hull boundary, else gray
-                if pos_on_hull:
-                    pos_color = (0.0, 0.0, 0.0, pos_alpha)
+                # Use brush-based colors if available, otherwise default to black/gray
+                if feat_idx in brush_feature_colors:
+                    # Use color from brush area analysis
+                    brush_color = brush_feature_colors[feat_idx]
+                    base_r, base_g, base_b, brush_intensity = brush_color
+                    
+                    # Adjust alpha based on hull membership and brush intensity
+                    pos_alpha = brush_intensity * (0.9 if pos_on_hull else 0.4)
+                    neg_alpha = brush_intensity * (0.7 if neg_on_hull else 0.3)
+                    
+                    pos_color = (base_r, base_g, base_b, pos_alpha)
+                    neg_color = (base_r, base_g, base_b, neg_alpha)
                 else:
-                    pos_color = (0.5, 0.5, 0.5, pos_alpha)
-                if neg_on_hull:
-                    neg_color = (0.0, 0.0, 0.0, neg_alpha)
-                else:
-                    neg_color = (0.5, 0.5, 0.5, neg_alpha)
+                    # Fallback to original black/gray scheme for features not in brush area
+                    pos_alpha = 0.8 if pos_on_hull else 0.3
+                    neg_alpha = 0.5 if neg_on_hull else 0.2
+                    
+                    if pos_on_hull:
+                        pos_color = (0.0, 0.0, 0.0, pos_alpha)
+                    else:
+                        pos_color = (0.5, 0.5, 0.5, pos_alpha)
+                    if neg_on_hull:
+                        neg_color = (0.0, 0.0, 0.0, neg_alpha)
+                    else:
+                        neg_color = (0.5, 0.5, 0.5, neg_alpha)
                 
                 # Draw positive direction arrow (solid)
                 arrow_pos = ax2.arrow(center_x, center_y,
