@@ -53,9 +53,11 @@ def pick_top_k_features(all_grad_vectors):
 
 def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_scale=0.1, output_dir="."):
     # (1) Setup interpolation grid and distance mask
+    # grid_res now represents number of grid cells, so we need grid_res+1 vertices
     xmin, xmax, ymin, ymax = bounding_box
-    grid_x, grid_y = np.mgrid[xmin:xmax:complex(grid_res),
-                                ymin:ymax:complex(grid_res)]
+    num_vertices = grid_res + 1
+    grid_x, grid_y = np.mgrid[xmin:xmax:complex(num_vertices),
+                                ymin:ymax:complex(num_vertices)]
     
     # Build a KD-tree and determine distance to the nearest data point at each grid cell
     kdtree = cKDTree(positions)
@@ -79,36 +81,61 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_sca
         grid_v[mask] = 0.0
         grid_u_feats.append(grid_u)
         grid_v_feats.append(grid_v)
-    grid_u_feats = np.array(grid_u_feats)  # shape: (k, grid_res, grid_res)
-    grid_v_feats = np.array(grid_v_feats)  # shape: (k, grid_res, grid_res)
+    grid_u_feats = np.array(grid_u_feats)  # shape: (k, num_vertices, num_vertices)
+    grid_v_feats = np.array(grid_v_feats)  # shape: (k, num_vertices, num_vertices)
     
     # Create the combined (summed) velocity field for the top-k features.
-    grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (grid_res, grid_res)
-    grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (grid_res, grid_res)
+    grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (num_vertices, num_vertices)
+    grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (num_vertices, num_vertices)
     
-    # (3) Determine the dominant feature at each grid cell (using Gaussian smoothing)
-    # Compute the magnitude of each feature on the grid.
-    grid_mag_feats = np.sqrt(grid_u_feats**2 + grid_v_feats**2)  # shape: (k, grid_res, grid_res)
-    sigma = 1.0  # standard deviation for smoothing
-    grid_mag_feats_gaussian = np.zeros_like(grid_mag_feats)
-    for f in range(grid_mag_feats.shape[0]):
-        grid_mag_feats_gaussian[f] = gaussian_filter(grid_mag_feats[f], sigma=sigma)
-
-    rel_idx = np.argmax(grid_mag_feats_gaussian, axis=0)
-    grid_argmax = np.take(top_k_indices, rel_idx)
-    print("Grid argmax shape:", grid_argmax.shape)
+    # (3) Determine the dominant feature at each grid cell (using 4-corner aggregation)
+    # Compute the magnitude of each feature on the grid vertices.
+    grid_mag_feats = np.sqrt(grid_u_feats**2 + grid_v_feats**2)  # shape: (k, num_vertices, num_vertices)
     
-    # Optionally save the dominant feature grid.
-    np.savetxt(os.path.join(output_dir, "grid_argmax.csv"), np.argmax(grid_mag_feats, axis=0), delimiter=",", fmt="%d")
-    np.savetxt(os.path.join(output_dir, "grid_argmax_local.csv"), grid_argmax, delimiter=",", fmt="%d")
+    # Create dominant features for each grid cell
+    # Each cell aggregates the magnitudes of its 4 corner grid vertices
+    cell_dominant_features = np.zeros((grid_res, grid_res), dtype=int)
+    
+    for i in range(grid_res):
+        for j in range(grid_res):
+            # Get magnitudes at the 4 corner vertices of this cell
+            # Corner vertices: (i,j), (i+1,j), (i,j+1), (i+1,j+1)
+            corner_mags = np.zeros(len(top_k_indices))
+            
+            for k_idx in range(len(top_k_indices)):
+                # Aggregate magnitudes from 4 corner vertices for this feature
+                corner_sum = (grid_mag_feats[k_idx, i, j] + 
+                             grid_mag_feats[k_idx, i+1, j] +
+                             grid_mag_feats[k_idx, i, j+1] + 
+                             grid_mag_feats[k_idx, i+1, j+1])
+                corner_mags[k_idx] = corner_sum / 4.0  # Average of 4 corner vertices
+            
+            # Find the feature with maximum averaged magnitude
+            dominant_k_idx = np.argmax(corner_mags)
+            cell_dominant_features[i, j] = top_k_indices[dominant_k_idx]
+    
+    print("Cell dominant features shape:", cell_dominant_features.shape)
+    
+    # Create cell center coordinates for RegularGridInterpolator
+    # Cell centers are at the midpoints between adjacent vertices
+    cell_centers_x = np.linspace(xmin + (xmax-xmin)/(2*grid_res), xmax - (xmax-xmin)/(2*grid_res), grid_res)
+    cell_centers_y = np.linspace(ymin + (ymax-ymin)/(2*grid_res), ymax - (ymax-ymin)/(2*grid_res), grid_res)
+    
+    print("Cell centers x range:", cell_centers_x[0], "to", cell_centers_x[-1])
+    print("Cell centers y range:", cell_centers_y[0], "to", cell_centers_y[-1])
+    
+    # Save the dominant feature grids.
+    np.savetxt(os.path.join(output_dir, "cell_dominant_features.csv"), cell_dominant_features, delimiter=",", fmt="%d")
     
     # (4) Build grid interpolators from the computed fields.
+    # Use vertex coordinates for velocity interpolation
     interp_u_sum = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
                                              grid_u_sum, bounds_error=False, fill_value=0.0)
     interp_v_sum = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
                                              grid_v_sum, bounds_error=False, fill_value=0.0)
-    interp_argmax = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
-                                             grid_argmax, method='nearest',
+    # Use cell center coordinates for dominant feature interpolation
+    interp_argmax = RegularGridInterpolator((cell_centers_x, cell_centers_y),
+                                             cell_dominant_features, method='nearest',
                                              bounds_error=False, fill_value=-1)
     
     return interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats
@@ -454,7 +481,7 @@ def main():
 
     # Create a grid for interpolation
     grid_res = (min(abs(xmax - xmin), abs(ymax - ymin)) * grid_res_scale).astype(int)
-    grid_res = 15
+    grid_res = 20
     print("Grid resolution:", grid_res)
 
     # Set the KD-tree scale
