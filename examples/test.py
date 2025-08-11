@@ -210,7 +210,7 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtr
     
     return interp_u_sum_local, interp_v_sum_local, interp_argmax_local, grid_argmax_local, grid_x, grid_y
 
-def create_particles(num_particles):
+def create_particles(num_particles, cell_dominant_features=None, grid_res=None):
     xmin, xmax, ymin, ymax = bounding_box
     particle_positions = np.column_stack((
         np.random.uniform(xmin, xmax, size=num_particles),
@@ -223,6 +223,16 @@ def create_particles(num_particles):
     histories = np.full((num_particles, tail_gap + 1, 2), np.nan)
     histories[:, :] = particle_positions[:, None, :]
 
+    # Store initial grid colors for particles
+    particle_grid_colors = np.zeros(num_particles, dtype=int)
+    if cell_dominant_features is not None and grid_res is not None:
+        # Assign each particle the dominant feature of its starting grid cell
+        for i in range(num_particles):
+            x, y = particle_positions[i]
+            cell_i = int(np.clip((y - ymin) / (ymax - ymin) * grid_res, 0, grid_res - 1))
+            cell_j = int(np.clip((x - xmin) / (xmax - xmin) * grid_res, 0, grid_res - 1))
+            particle_grid_colors[i] = cell_dominant_features[cell_i, cell_j]
+
     # A single LineCollection for all particles
     lc = LineCollection([], linewidths=1.5, zorder=2)
 
@@ -234,6 +244,7 @@ def create_particles(num_particles):
         'tail_gap': tail_gap,
         'max_lifetime': max_lifetime,
         'linecoll': lc,
+        'particle_grid_colors': particle_grid_colors,
     }
 
     return system
@@ -320,7 +331,7 @@ def prepare_figure(ax, valid_points, Col_labels, k, grad_indices, feature_colors
 
     return 0
 
-def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale=0.1):
+def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale=0.1, grid_u_sum=None, grid_v_sum=None, grid_res=None):
     xmin, xmax, ymin, ymax = bounding_box
     pp = system['particle_positions']
     lt = system['particle_lifetimes']
@@ -331,9 +342,21 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
     # Increase lifetime
     lt += 1
 
-    # Interpolate velocity
-    U = interp_u_sum(pp)
-    V = interp_v_sum(pp)
+    # Use direct grid vectors instead of interpolation
+    if grid_u_sum is not None and grid_v_sum is not None and grid_res is not None:
+        # Convert particle positions to grid cell indices
+        # Grid cells range from 0 to grid_res-1
+        cell_i_indices = np.clip(((pp[:, 1] - ymin) / (ymax - ymin) * grid_res).astype(int), 0, grid_res - 1)
+        cell_j_indices = np.clip(((pp[:, 0] - xmin) / (xmax - xmin) * grid_res).astype(int), 0, grid_res - 1)
+        
+        # Sample velocity directly from grid cells
+        U = grid_u_sum[cell_i_indices, cell_j_indices]
+        V = grid_v_sum[cell_i_indices, cell_j_indices]
+    else:
+        # Fallback to interpolation method
+        U = interp_u_sum(pp)
+        V = interp_v_sum(pp)
+    
     velocity = np.column_stack((U, V)) * velocity_scale
 
     # Move particles
@@ -343,29 +366,39 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
     his[:, :-1, :] = his[:, 1:, :]
     his[:, -1, :] = pp
 
+    # Get particle grid colors for reinitialization
+    particle_grid_colors = system.get('particle_grid_colors', None)
+    
+    # Helper function to assign grid color to a particle
+    def assign_grid_color(particle_idx, x, y):
+        if particle_grid_colors is not None and grid_res is not None and hasattr(system, 'cell_dominant_features'):
+            cell_i = int(np.clip((y - ymin) / (ymax - ymin) * grid_res, 0, grid_res - 1))
+            cell_j = int(np.clip((x - xmin) / (xmax - xmin) * grid_res, 0, grid_res - 1))
+            particle_grid_colors[particle_idx] = system['cell_dominant_features'][cell_i, cell_j]
+    
     # Reinitialize out-of-bounds or over-age particles
     for i in range(len(pp)):
         x, y = pp[i]
         if (x < xmin or x > xmax or y < ymin or y > ymax
             or lt[i] > max_lifetime):
-            pp[i] = [
-                np.random.uniform(xmin, xmax),
-                np.random.uniform(ymin, ymax)
-            ]
+            new_x = np.random.uniform(xmin, xmax)
+            new_y = np.random.uniform(ymin, ymax)
+            pp[i] = [new_x, new_y]
             his[i] = pp[i]
             lt[i] = 0
+            assign_grid_color(i, new_x, new_y)
 
     # Randomly reinitialize some fraction
     num_to_reinit = int(0.05 * len(pp))
     if num_to_reinit > 0:
         idxs = np.random.choice(len(pp), num_to_reinit, replace=False)
         for idx in idxs:
-            pp[idx] = [
-                np.random.uniform(xmin, xmax),
-                np.random.uniform(ymin, ymax)
-            ]
+            new_x = np.random.uniform(xmin, xmax)
+            new_y = np.random.uniform(ymin, ymax)
+            pp[idx] = [new_x, new_y]
             his[idx] = pp[idx]
             lt[idx] = 0
+            assign_grid_color(idx, new_x, new_y)
 
     # Build line segments
     n_active = len(pp)
@@ -377,11 +410,15 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
     speeds = np.linalg.norm(velocity, axis=1)
     max_speed = speeds.max() + 1e-9  # avoid division by zero
 
-    # Find dominant feature index for each particle
-    feat_ids = interp_argmax(pp)  # each is in [0..k-1] or -1
-
+    # Use stored grid colors for each particle
     for i in range(n_active):
-        this_feat_id = feat_ids[i]
+        # Get the stored grid color for this particle
+        if particle_grid_colors is not None and i < len(particle_grid_colors):
+            this_feat_id = particle_grid_colors[i]
+        else:
+            # Fallback to current position-based color
+            this_feat_id = interp_argmax(pp[i:i+1])[0]
+        
         # Look up the real feature index in our mapping. If not present, assign a default (black).
         if this_feat_id not in real_feature_rgba:
             r, g, b, _ = (0, 0, 0, 1)
@@ -481,7 +518,7 @@ def main():
 
     # Create a grid for interpolation
     grid_res = (min(abs(xmax - xmin), abs(ymax - ymin)) * grid_res_scale).astype(int)
-    grid_res = 20
+    grid_res = 40
     print("Grid resolution:", grid_res)
 
     # Set the KD-tree scale
@@ -542,7 +579,8 @@ def main():
 
     # Create the particle system
     num_particles = 2500
-    system = create_particles(num_particles)
+    system = create_particles(num_particles, cell_dominant_features, grid_res)
+    system['cell_dominant_features'] = cell_dominant_features  # Store for reinitialization
     lc = system['linecoll']
 
     # prepare the figure with 2 subplots and space for controls
@@ -577,6 +615,8 @@ def main():
         ax1.clear()
         prepare_figure(ax1, valid_points, Col_labels, k, grad_indices,
                        new_feature_colors, lc, all_positions, all_grad_vectors)
+        # Redraw grid visualization with updated colors
+        # draw_grid_visualization()  # Hidden per user request
         # Refresh grid cell visualization
         update_grid_cell_visualization()
         fig.canvas.draw_idle()
@@ -908,6 +948,51 @@ def main():
     # Initial grid cell visualization
     update_grid_cell_visualization()
     
+    # Draw grid lines with colors based on dominant features
+    def draw_grid_visualization():
+        # Draw grid lines from the grid arrays
+        n_rows, n_cols = grid_x.shape
+        print("Grid shape:", grid_x.shape)
+        
+        # Draw vertical grid lines
+        for col in range(n_cols):
+            ax1.plot(grid_x[:, col], grid_y[:, col], color='gray', linestyle='--', linewidth=0.3, alpha=0.5, zorder=1)
+        
+        # Draw horizontal grid lines  
+        for row in range(n_rows):
+            ax1.plot(grid_x[row, :], grid_y[row, :], color='gray', linestyle='--', linewidth=0.3, alpha=0.5, zorder=1)
+        
+        # Color-code grid cells based on dominant features
+        for i in range(grid_res):
+            for j in range(grid_res):
+                # Get cell boundaries
+                cell_xmin = xmin + j * (xmax - xmin) / grid_res
+                cell_xmax = xmin + (j + 1) * (xmax - xmin) / grid_res
+                cell_ymin = ymin + i * (ymax - ymin) / grid_res
+                cell_ymax = ymin + (i + 1) * (ymax - ymin) / grid_res
+                
+                # Get dominant feature for this cell
+                dominant_feature = cell_dominant_features[i, j]
+                
+                # Get color for this feature
+                if dominant_feature in all_feature_rgba:
+                    cell_color = all_feature_rgba[dominant_feature]
+                    cell_color = (*cell_color[:3], 0.15)  # Low alpha for background
+                else:
+                    cell_color = (0.5, 0.5, 0.5, 0.1)  # Gray fallback
+                
+                # Draw colored rectangle for cell
+                rect = Rectangle((cell_xmin, cell_ymin), 
+                               cell_xmax - cell_xmin, 
+                               cell_ymax - cell_ymin,
+                               facecolor=cell_color, 
+                               edgecolor='none',
+                               zorder=0)
+                ax1.add_patch(rect)
+    
+    # Draw the grid visualization
+    # draw_grid_visualization()  # Hidden per user request
+    
     # Feature colors legend removed per user request
     
     # # Draw grid lines from the grid arrays
@@ -986,13 +1071,13 @@ def main():
 
     for frame in range(5):
         # Update the system state for this frame.
-        update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale)
+        update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale, grid_u_sum, grid_v_sum, grid_res)
         # Save the current state of the figure.
         fig.savefig(os.path.join(output_dir, f"frame_{frame}.png"), dpi=300)
 
     # Create the animation
     anim = FuncAnimation(fig, 
-                         lambda frame: update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale), 
+                         lambda frame: update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale, grid_u_sum, grid_v_sum, grid_res), 
                          frames=1000, interval=30, blit=False)
 
     # Save the figure as a PNG file with 300 dpi.
