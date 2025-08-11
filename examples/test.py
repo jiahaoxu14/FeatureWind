@@ -138,7 +138,7 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_sca
                                              cell_dominant_features, method='nearest',
                                              bounds_error=False, fill_value=-1)
     
-    return interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats
+    return interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features
 
 def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtree_scale=0.1, output_dir="."):
     """
@@ -488,7 +488,12 @@ def main():
     # kdtree_scale = 0.01 * grid_res
     kdtree_scale = 0.03
 
-    interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats = build_grids(
+    # Declare variables that will be used in nested functions
+    grid_u_feats = None
+    grid_v_feats = None 
+    cell_dominant_features = None
+    
+    interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features = build_grids(
         all_positions, grid_res, grad_indices, all_grad_vectors, kdtree_scale=kdtree_scale, output_dir=output_dir
     )
 
@@ -558,7 +563,7 @@ def main():
         k_val = int(val)
         grad_indices = list(np.argsort(-avg_magnitudes)[:k_val])
         # Rebuild grids for new top-k selection
-        interp_u_sum, interp_v_sum, interp_argmax, *_ = build_grids(
+        interp_u_sum, interp_v_sum, interp_argmax, _, _, grid_u_feats, grid_v_feats, cell_dominant_features = build_grids(
             all_positions, grid_res, grad_indices, all_grad_vectors,
             kdtree_scale=kdtree_scale, output_dir=output_dir)
         # Update color mappings for particles
@@ -572,9 +577,8 @@ def main():
         ax1.clear()
         prepare_figure(ax1, valid_points, Col_labels, k, grad_indices,
                        new_feature_colors, lc, all_positions, all_grad_vectors)
-        # Re-add brush rectangle and refresh selection
-        ax1.add_patch(brush_rect)
-        update_selection()
+        # Refresh grid cell visualization
+        update_grid_cell_visualization()
         fig.canvas.draw_idle()
     
     k_slider.on_changed(update_features)
@@ -600,47 +604,22 @@ def main():
     # Prepare the second subplot (Wind Vane) - no background
     ax2.set_title('Wind Vane', fontsize=12, pad=10)
     
-    # Add brush functionality
-    brush_center = [(xmin + xmax) / 2, (ymin + ymax) / 2]
-    brush_size = (xmax - xmin) * 0.1
-    
-    # Create brush square
-    brush_rect = Rectangle((brush_center[0] - brush_size/2, brush_center[1] - brush_size/2), 
-                          brush_size, brush_size, fill=False, 
-                          edgecolor='red', linewidth=2, alpha=0.7)
-    ax1.add_patch(brush_rect)
-    
-    # Create slider for brush size - smaller and more compact
-    ax_slider = plt.subplot2grid((20, 2), (19, 0), colspan=1)
-    ax_slider.set_position([0.1, 0.06, 0.35, 0.03])  # [left, bottom, width, height]
-    slider = Slider(ax_slider, 'Brush Size', 0.01, 0.3, valinit=brush_size/(xmax-xmin),
-                   facecolor='lightblue', alpha=0.7)
+    # Mouse position tracking for grid cell analysis
+    current_mouse_pos = [(xmin + xmax) / 2, (ymin + ymax) / 2]  # Initialize at center
     
     # Initialize aggregate point visualization elements
     aggregate_point_marker = None
     aggregate_arrows = []
     
-    # Brush interaction variables
-    brush_data = {
-        'center': brush_center,
-        'size': brush_size,
-        'rect': brush_rect,
-        'selected_points': [],
-        'dragging': False,
-        'offset': [0, 0]
+    # Mouse interaction variables for grid cell tracking
+    mouse_data = {
+        'position': current_mouse_pos,
+        'grid_cell': [grid_res//2, grid_res//2]  # Initialize at center grid cell
     }
     
-    def update_brush_size(val):
-        new_size = val * (xmax - xmin)
-        brush_data['size'] = new_size
-        center = brush_data['center']
-        brush_data['rect'].set_xy((center[0] - new_size/2, center[1] - new_size/2))
-        brush_data['rect'].set_width(new_size)
-        brush_data['rect'].set_height(new_size)
-        update_selection()
-        fig.canvas.draw_idle()
+    # Remove brush size update function - no longer needed
     
-    def update_aggregate_visualization():
+    def update_grid_cell_visualization():
         nonlocal aggregate_point_marker, aggregate_arrows
         
         # Clear previous aggregate visualization
@@ -658,53 +637,56 @@ def main():
                 pass  # Already removed or doesn't exist
         aggregate_arrows.clear()
         
-        selected_indices = brush_data['selected_points']
-        if len(selected_indices) == 0:
+        current_cell = mouse_data['grid_cell']
+        cell_i, cell_j = current_cell
+        
+        # Validate grid cell indices
+        if cell_i < 0 or cell_i >= grid_res or cell_j < 0 or cell_j >= grid_res:
             fig.canvas.draw_idle()
             return
+        
+        # Get the averaged vectors for the current grid cell from the 4 corner vertices
+        # The grid cell (cell_i, cell_j) has corner vertices at:
+        # (cell_i, cell_j), (cell_i+1, cell_j), (cell_i, cell_j+1), (cell_i+1, cell_j+1)
+        
+        cell_vectors = np.zeros((len(Col_labels), 2))  # Initialize for all features
+        
+        # Get vectors for the selected top-k features from the grid
+        for k_idx, feat_idx in enumerate(grad_indices):
+            # Average the vectors from the 4 corner vertices of this cell
+            corner_u = (grid_u_feats[k_idx, cell_i, cell_j] + 
+                       grid_u_feats[k_idx, cell_i+1, cell_j] +
+                       grid_u_feats[k_idx, cell_i, cell_j+1] + 
+                       grid_u_feats[k_idx, cell_i+1, cell_j+1]) / 4.0
             
-        # Extract colors from particles in brush area by analyzing their dominant features
-        brush_feature_colors = {}
-        selected_positions = all_positions[selected_indices]
-        
-        # Get dominant features for each selected position
-        brush_feat_ids = interp_argmax(selected_positions)
-        
-        # Count occurrences of each feature in brush area
-        feature_counts = {}
-        for feat_id in brush_feat_ids:
-            if feat_id in real_feature_rgba:  # Only count valid features
-                feature_counts[feat_id] = feature_counts.get(feat_id, 0) + 1
-        
-        # Calculate color intensity based on frequency in brush area
-        total_points = len(selected_indices)
-        for feat_id, count in feature_counts.items():
-            if feat_id in real_feature_rgba:
-                base_color = real_feature_rgba[feat_id]
-                # Intensity based on prevalence in brush area (0.3 to 1.0)
-                intensity = 0.3 + 0.7 * (count / total_points)
-                brush_feature_colors[feat_id] = (*base_color[:3], intensity)
+            corner_v = (grid_v_feats[k_idx, cell_i, cell_j] + 
+                       grid_v_feats[k_idx, cell_i+1, cell_j] +
+                       grid_v_feats[k_idx, cell_i, cell_j+1] + 
+                       grid_v_feats[k_idx, cell_i+1, cell_j+1]) / 4.0
             
-        # Calculate aggregate gradient vectors (sum across selected points for each feature)
-        selected_gradients = all_grad_vectors[selected_indices]  # shape: (n_selected, n_features, 2)
-        aggregate_gradients = np.sum(selected_gradients, axis=0)  # shape: (n_features, 2)
+            cell_vectors[feat_idx] = [corner_u, corner_v]
         
-        # Place aggregate point at center of Wind Vane
+        # Get the dominant feature for this cell
+        dominant_feature = cell_dominant_features[cell_i, cell_j]
+        
+        # Place grid cell point at center of Wind Vane
         center_x, center_y = (xmin + xmax) / 2, (ymin + ymax) / 2
         
-        # Draw aggregate point marker in Wind Vane (always at center)
+        # Draw grid cell marker in Wind Vane (always at center) 
+        # Use color of dominant feature
+        dominant_color = all_feature_rgba.get(dominant_feature, (0.5, 0.5, 0.5, 1.0))
         aggregate_point_marker = ax2.scatter(center_x, center_y, 
-                                           s=100, c='black', marker='o', 
-                                           zorder=10, label='Aggregate Point')
+                                           s=120, c=[dominant_color], marker='s', 
+                                           zorder=10, label=f'Grid Cell ({cell_i},{cell_j})')
         
-        # Draw gradient vector arrows for each feature
+        # Draw gradient vector arrows for each feature in the grid cell
         # Calculate dynamic scaling to use 90% of canvas
         non_zero_vectors = []
         vector_magnitudes = []
         
         # Only include selected top-k features in wind vane
         for feat_idx in grad_indices:
-            vec = aggregate_gradients[feat_idx]
+            vec = cell_vectors[feat_idx]
             mag = np.linalg.norm(vec)
             if mag > 0:
                 non_zero_vectors.append((feat_idx, vec))
@@ -793,34 +775,36 @@ def main():
             
             for i, (feat_idx, gradient_vector, pos_endpoint, neg_endpoint) in enumerate(vector_info):
                 # Check if either endpoint is on the convex hull
-                pos_on_hull = (2 * i) in hull_vertices_set
-                neg_on_hull = (2 * i + 1) in hull_vertices_set
+                pos_on_hull = (2 * i) in hull_vertices_set if hull_vertices_set else False
+                neg_on_hull = (2 * i + 1) in hull_vertices_set if hull_vertices_set else False
                 
-                # Use brush-based colors if available, otherwise default to black/gray
-                if feat_idx in brush_feature_colors:
-                    # Use color from brush area analysis
-                    brush_color = brush_feature_colors[feat_idx]
-                    base_r, base_g, base_b, brush_intensity = brush_color
+                # Use feature colors with intensity based on vector magnitude and dominance
+                if feat_idx in all_feature_rgba:
+                    base_color = all_feature_rgba[feat_idx]
+                    base_r, base_g, base_b = base_color[:3]
                     
-                    # Adjust alpha based on hull membership and brush intensity
-                    pos_alpha = brush_intensity * (0.9 if pos_on_hull else 0.4)
-                    neg_alpha = brush_intensity * (0.7 if neg_on_hull else 0.3)
+                    # Calculate intensity based on vector magnitude
+                    vector_magnitude = np.linalg.norm(gradient_vector)
+                    max_mag = max(vector_magnitudes) if vector_magnitudes else 1.0
+                    mag_intensity = 0.3 + 0.7 * (vector_magnitude / max_mag)
+                    
+                    # Boost intensity if this is the dominant feature
+                    dominance_boost = 1.3 if feat_idx == dominant_feature else 1.0
+                    intensity = min(1.0, mag_intensity * dominance_boost)
+                    
+                    # Adjust alpha based on hull membership
+                    pos_alpha = intensity * (0.9 if pos_on_hull else 0.6)
+                    neg_alpha = intensity * (0.7 if neg_on_hull else 0.4)
                     
                     pos_color = (base_r, base_g, base_b, pos_alpha)
                     neg_color = (base_r, base_g, base_b, neg_alpha)
                 else:
-                    # Fallback to original black/gray scheme for features not in brush area
-                    pos_alpha = 0.8 if pos_on_hull else 0.3
-                    neg_alpha = 0.5 if neg_on_hull else 0.2
+                    # Fallback to black/gray scheme
+                    pos_alpha = 0.8 if pos_on_hull else 0.4
+                    neg_alpha = 0.6 if neg_on_hull else 0.3
                     
-                    if pos_on_hull:
-                        pos_color = (0.0, 0.0, 0.0, pos_alpha)
-                    else:
-                        pos_color = (0.5, 0.5, 0.5, pos_alpha)
-                    if neg_on_hull:
-                        neg_color = (0.0, 0.0, 0.0, neg_alpha)
-                    else:
-                        neg_color = (0.5, 0.5, 0.5, neg_alpha)
+                    pos_color = (0.0, 0.0, 0.0, pos_alpha) if pos_on_hull else (0.5, 0.5, 0.5, pos_alpha)
+                    neg_color = (0.0, 0.0, 0.0, neg_alpha) if neg_on_hull else (0.5, 0.5, 0.5, neg_alpha)
                 
                 # Draw positive direction arrow (solid)
                 arrow_pos = ax2.arrow(center_x, center_y,
@@ -888,53 +872,41 @@ def main():
         
         fig.canvas.draw_idle()
     
-    def update_selection():
-        center = brush_data['center']
-        size = brush_data['size']
-        # Find selected points within brush square
-        in_x = (all_positions[:, 0] >= center[0] - size/2) & (all_positions[:, 0] <= center[0] + size/2)
-        in_y = (all_positions[:, 1] >= center[1] - size/2) & (all_positions[:, 1] <= center[1] + size/2)
-        brush_data['selected_points'] = np.where(in_x & in_y)[0]
-        print(f"Selected {len(brush_data['selected_points'])} points")
-        update_aggregate_visualization()
-    
-    def on_press(event):
-        if event.inaxes == ax1:
-            center = brush_data['center']
-            size = brush_data['size']
-            # Check if click is inside brush
-            if (abs(event.xdata - center[0]) <= size/2 and 
-                abs(event.ydata - center[1]) <= size/2):
-                brush_data['dragging'] = True
-                brush_data['offset'] = [event.xdata - center[0], event.ydata - center[1]]
-            else:
-                # Move brush to click location
-                brush_data['center'] = [event.xdata, event.ydata]
-                brush_data['rect'].set_xy((event.xdata - size/2, event.ydata - size/2))
-                update_selection()
-                fig.canvas.draw_idle()
-    
-    def on_release(event):
-        brush_data['dragging'] = False
+    def update_mouse_grid_cell(mouse_x, mouse_y):
+        """Convert mouse position to grid cell indices and update visualization"""
+        if mouse_x is None or mouse_y is None:
+            return
+            
+        # Convert mouse position to grid cell indices
+        # Grid cells range from 0 to grid_res-1
+        cell_i = int((mouse_y - ymin) / (ymax - ymin) * grid_res)
+        cell_j = int((mouse_x - xmin) / (xmax - xmin) * grid_res)
+        
+        # Clamp to valid range
+        cell_i = max(0, min(grid_res - 1, cell_i))
+        cell_j = max(0, min(grid_res - 1, cell_j))
+        
+        # Update mouse data if cell changed
+        if mouse_data['grid_cell'] != [cell_i, cell_j]:
+            mouse_data['position'] = [mouse_x, mouse_y]
+            mouse_data['grid_cell'] = [cell_i, cell_j]
+            print(f"Grid cell: ({cell_i}, {cell_j})")
+            update_grid_cell_visualization()
     
     def on_motion(event):
-        if brush_data['dragging'] and event.inaxes == ax1:
-            size = brush_data['size']
-            new_center = [event.xdata - brush_data['offset'][0], 
-                         event.ydata - brush_data['offset'][1]]
-            brush_data['center'] = new_center
-            brush_data['rect'].set_xy((new_center[0] - size/2, new_center[1] - size/2))
-            update_selection()
+        """Handle mouse motion over the feature wind map"""
+        if event.inaxes == ax1 and event.xdata is not None and event.ydata is not None:
+            # Debug print to verify mouse events are working
+            print(f"Mouse motion at: ({event.xdata:.2f}, {event.ydata:.2f})")
+            update_mouse_grid_cell(event.xdata, event.ydata)
             fig.canvas.draw_idle()
     
+    
     # Connect events
-    slider.on_changed(update_brush_size)
-    fig.canvas.mpl_connect('button_press_event', on_press)
-    fig.canvas.mpl_connect('button_release_event', on_release)
     fig.canvas.mpl_connect('motion_notify_event', on_motion)
     
-    # Initial selection
-    update_selection()
+    # Initial grid cell visualization
+    update_grid_cell_visualization()
     
     # Feature colors legend removed per user request
     
