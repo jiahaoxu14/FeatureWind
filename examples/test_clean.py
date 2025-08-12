@@ -270,13 +270,9 @@ def update_particles(frame, system, interp_u_sum, interp_v_sum, interp_argmax,
         cell_j = int(np.clip((x - xmin) / (xmax - xmin) * grid_res, 0, grid_res - 1))
         this_feat_id = cell_dominant_features[cell_i, cell_j]
         
-        # Look up color
-        if this_feat_id in real_feature_rgba:
-            r, g, b, _ = real_feature_rgba[this_feat_id]
-            alpha_part = speeds[i] / max_speed
-        else:
-            r, g, b, _ = (0, 0, 0, 1)
-            alpha_part = 0.3
+        # Use grayscale for all particles
+        r, g, b = (0.5, 0.5, 0.5)  # Gray color for all particles
+        alpha_part = speeds[i] / max_speed
         
         # Create trail segments
         for t in range(tail_gap):
@@ -296,7 +292,7 @@ def update_particles(frame, system, interp_u_sum, interp_v_sum, interp_argmax,
 
 def update_wind_vane(ax2, grid_cell, selected_features, all_feature_rgba, 
                      cell_dominant_features, grid_u_all, grid_v_all, col_labels,
-                     interp_u_sum, interp_v_sum):
+                     interp_u_sum, interp_v_sum, grid_x, grid_y):
     """Update wind vane visualization for the selected grid cell."""
     global bounding_box
     xmin, xmax, ymin, ymax = bounding_box
@@ -333,45 +329,32 @@ def update_wind_vane(ax2, grid_cell, selected_features, all_feature_rgba,
     viz_cx = 0.5 * (xmin + xmax)
     viz_cy = 0.5 * (ymin + ymax)
     
-    # Draw grid cell marker (colored by dominant feature)
-    if dominant_feature in all_feature_rgba:
-        dominant_color = all_feature_rgba[dominant_feature]
-    else:
-        dominant_color = (0.5, 0.5, 0.5, 1.0)
+    # Draw grid cell marker (gray for all features)
+    dominant_color = (0.5, 0.5, 0.5, 1.0)  # Gray for all features
     ax2.scatter(viz_cx, viz_cy, s=120, c=[dominant_color], marker='s', 
                zorder=10, label=f'Grid Cell ({cell_i},{cell_j})')
     
-    # Calculate vector magnitudes using grid build method (consistent with dominance)
+    # Calculate vectors sampled at cell center (matches resultant calculation)
     vector_magnitudes = []
     vector_info = []
     
     for feat_idx in selected_features:
-        # Use same method as grid cell dominant feature calculation
-        grid_mag = np.sqrt(grid_u_all[feat_idx]**2 + grid_v_all[feat_idx]**2)
-        mag = (grid_mag[cell_i, cell_j] + grid_mag[cell_i+1, cell_j] +
-               grid_mag[cell_i, cell_j+1] + grid_mag[cell_i+1, cell_j+1]) / 4.0
+        # Sample each feature's vector at the cell center using interpolation
+        feat_u_interp = RegularGridInterpolator(
+            (grid_x[:, 0], grid_y[0, :]), grid_u_all[feat_idx], 
+            bounds_error=False, fill_value=0.0)
+        feat_v_interp = RegularGridInterpolator(
+            (grid_x[:, 0], grid_y[0, :]), grid_v_all[feat_idx], 
+            bounds_error=False, fill_value=0.0)
         
-        if mag > 0:
-            # Get direction vector (averaged from corners for direction)
-            corner_u = (grid_u_all[feat_idx, cell_i, cell_j] + 
-                       grid_u_all[feat_idx, cell_i+1, cell_j] +
-                       grid_u_all[feat_idx, cell_i, cell_j+1] + 
-                       grid_u_all[feat_idx, cell_i+1, cell_j+1]) / 4.0
-            corner_v = (grid_v_all[feat_idx, cell_i, cell_j] + 
-                       grid_v_all[feat_idx, cell_i+1, cell_j] +
-                       grid_v_all[feat_idx, cell_i, cell_j+1] + 
-                       grid_v_all[feat_idx, cell_i+1, cell_j+1]) / 4.0
-            
-            # Scale direction vector to have consistent magnitude
-            original_mag = np.sqrt(corner_u**2 + corner_v**2)
-            if original_mag > 0:
-                scale_factor = mag / original_mag
-                scaled_u, scaled_v = corner_u * scale_factor, corner_v * scale_factor
-            else:
-                scaled_u, scaled_v = corner_u, corner_v
-            
-            vector_magnitudes.append(mag)
-            vector_info.append((feat_idx, scaled_u, scaled_v, mag))
+        # Sample at cell center (same as resultant)
+        center_u = feat_u_interp(np.array([[sample_cx, sample_cy]])).item()
+        center_v = feat_v_interp(np.array([[sample_cx, sample_cy]])).item()
+        center_mag = np.sqrt(center_u**2 + center_v**2)
+        
+        if center_mag > 0:
+            vector_magnitudes.append(center_mag)
+            vector_info.append((feat_idx, center_u, center_v, center_mag))
     
     if not vector_info:
         return
@@ -452,18 +435,13 @@ def update_wind_vane(ax2, grid_cell, selected_features, all_feature_rgba,
     
     # Draw arrows
     for feat_idx, u, v, mag in vector_info:
-        # Get feature color
-        if feat_idx in all_feature_rgba:
-            base_color = all_feature_rgba[feat_idx]
-            r, g, b = base_color[:3]
-            # Boost intensity if dominant
-            if feat_idx == dominant_feature:
-                alpha = 0.9
-            else:
-                alpha = 0.6 * (mag / max_magnitude)
+        # Use gray color for all arrows
+        r, g, b = (0.5, 0.5, 0.5)
+        # Boost intensity if dominant
+        if feat_idx == dominant_feature:
+            alpha = 0.9
         else:
-            r, g, b = (0.5, 0.5, 0.5)
-            alpha = 0.4
+            alpha = 0.6 * (mag / max_magnitude)
         
         # Draw positive direction arrow
         ax2.arrow(viz_cx, viz_cy, u / dynamic_scale, v / dynamic_scale,
@@ -517,15 +495,8 @@ def draw_grid_visualization(ax1, grid_x, grid_y, grid_res, cell_dominant_feature
             if abs(corner_u_sum) < 1e-10 and abs(corner_v_sum) < 1e-10:
                 cell_color = (1.0, 1.0, 1.0, 0.3)  # White for empty cells
             else:
-                # Get dominant feature for this cell
-                dominant_feature = cell_dominant_features[i, j]
-                
-                # Get color for this feature
-                if dominant_feature in all_feature_rgba:
-                    cell_color = all_feature_rgba[dominant_feature]
-                    cell_color = (*cell_color[:3], 0.15)  # Low alpha for background
-                else:
-                    cell_color = (0.5, 0.5, 0.5, 0.1)  # Gray fallback
+                # Use gray for all grid cells
+                cell_color = (0.5, 0.5, 0.5, 0.1)  # Gray for all cells
             
             # Draw colored rectangle for cell
             rect = Rectangle((cell_xmin, cell_ymin), 
@@ -667,7 +638,7 @@ def main():
                         for feat_idx in top_k_indices if feat_idx in all_feature_rgba}
     
     # Create particles and figure
-    num_particles = 2500
+    num_particles = 4000
     system = create_particles(num_particles)
     system['cell_dominant_features'] = cell_dominant_features
     
@@ -724,7 +695,7 @@ def main():
                 current_grid_cell[0], current_grid_cell[1] = cell_i, cell_j
                 update_wind_vane(ax2, current_grid_cell, top_k_indices, all_feature_rgba,
                                  cell_dominant_features, grid_u_all, grid_v_all, col_labels,
-                                 interp_u_sum, interp_v_sum)
+                                 interp_u_sum, interp_v_sum, grid_x, grid_y)
                 fig.canvas.draw_idle()
     
     def on_key_press(event):
@@ -738,7 +709,7 @@ def main():
     # Initialize wind vane
     update_wind_vane(ax2, current_grid_cell, top_k_indices, all_feature_rgba,
                      cell_dominant_features, grid_u_all, grid_v_all, col_labels,
-                     interp_u_sum, interp_v_sum)
+                     interp_u_sum, interp_v_sum, grid_x, grid_y)
     
     # Create animation
     anim = FuncAnimation(
