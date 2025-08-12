@@ -432,8 +432,8 @@ def update_wind_vane(ax2, grid_cell, selected_features, all_feature_rgba,
     
     # Calculate and draw resultant vector sampled at the cell center,
     # but drawn from the visualization center
-    Uc = float(interp_u_sum([[sample_cx, sample_cy]]))
-    Vc = float(interp_v_sum([[sample_cx, sample_cy]]))
+    Uc = interp_u_sum(np.array([[sample_cx, sample_cy]])).item()
+    Vc = interp_v_sum(np.array([[sample_cx, sample_cy]])).item()
     resultant_magnitude = np.hypot(Uc, Vc)
 
     if resultant_magnitude > 0:
