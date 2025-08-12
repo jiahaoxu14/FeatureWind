@@ -445,11 +445,15 @@ def update_wind_vane(ax2, grid_cell, selected_features, all_feature_rgba,
                  fc=(r, g, b, alpha), ec=(r, g, b, alpha),
                  length_includes_head=True, zorder=9)
         
-        # Draw negative direction arrow (dashed style)
-        ax2.arrow(center_x, center_y, -u / dynamic_scale, -v / dynamic_scale,
-                 head_width=canvas_size * 0.02, head_length=canvas_size * 0.025,
-                 fc=(r, g, b, alpha*0.7), ec=(r, g, b, alpha*0.7),
-                 length_includes_head=True, zorder=8, linestyle='--', alpha=0.7)
+        # Draw negative direction arrow (dashed style) using annotate
+        ax2.annotate('', xy=(center_x - u / dynamic_scale, center_y - v / dynamic_scale),
+                    xytext=(center_x, center_y),
+                    arrowprops=dict(arrowstyle='->', 
+                                  connectionstyle='arc3,rad=0',
+                                  linestyle='--',
+                                  linewidth=1.5,
+                                  color=(r, g, b, alpha*0.7)),
+                    zorder=8)
         
         # Add feature label for dominant feature
         if feat_idx == dominant_feature and feat_idx < len(col_labels):
@@ -461,7 +465,8 @@ def update_wind_vane(ax2, grid_cell, selected_features, all_feature_rgba,
                     zorder=10)
 
 
-def draw_grid_visualization(ax1, grid_x, grid_y, grid_res, cell_dominant_features, all_feature_rgba):
+def draw_grid_visualization(ax1, grid_x, grid_y, grid_res, cell_dominant_features, 
+                          all_feature_rgba, grid_u_sum, grid_v_sum):
     """Draw grid lines and colored grid cells."""
     global bounding_box
     xmin, xmax, ymin, ymax = bounding_box
@@ -484,15 +489,26 @@ def draw_grid_visualization(ax1, grid_x, grid_y, grid_res, cell_dominant_feature
             cell_ymin = ymin + i * (ymax - ymin) / grid_res
             cell_ymax = ymin + (i + 1) * (ymax - ymin) / grid_res
             
-            # Get dominant feature for this cell
-            dominant_feature = cell_dominant_features[i, j]
+            # Check if cell has no values (is masked out)
+            # Sample the 4 corner vertices of this cell from grid_u_sum and grid_v_sum
+            corner_u_sum = (grid_u_sum[i, j] + grid_u_sum[i+1, j] + 
+                           grid_u_sum[i, j+1] + grid_u_sum[i+1, j+1])
+            corner_v_sum = (grid_v_sum[i, j] + grid_v_sum[i+1, j] + 
+                           grid_v_sum[i, j+1] + grid_v_sum[i+1, j+1])
             
-            # Get color for this feature
-            if dominant_feature in all_feature_rgba:
-                cell_color = all_feature_rgba[dominant_feature]
-                cell_color = (*cell_color[:3], 0.15)  # Low alpha for background
+            # If all corner values are zero, the cell is masked out
+            if abs(corner_u_sum) < 1e-10 and abs(corner_v_sum) < 1e-10:
+                cell_color = (1.0, 1.0, 1.0, 0.3)  # White for empty cells
             else:
-                cell_color = (0.5, 0.5, 0.5, 0.1)  # Gray fallback
+                # Get dominant feature for this cell
+                dominant_feature = cell_dominant_features[i, j]
+                
+                # Get color for this feature
+                if dominant_feature in all_feature_rgba:
+                    cell_color = all_feature_rgba[dominant_feature]
+                    cell_color = (*cell_color[:3], 0.15)  # Low alpha for background
+                else:
+                    cell_color = (0.5, 0.5, 0.5, 0.1)  # Gray fallback
             
             # Draw colored rectangle for cell
             rect = Rectangle((cell_xmin, cell_ymin), 
@@ -666,7 +682,8 @@ def main():
             
             # Draw grid
             draw_grid_visualization(ax1, grid_x, grid_y, grid_res, 
-                                  cell_dominant_features, all_feature_rgba)
+                                  cell_dominant_features, all_feature_rgba, 
+                                  grid_u_sum, grid_v_sum)
             
             # Store new elements for later removal
             grid_artists.extend([p for p in ax1.patches if p not in current_patches])
