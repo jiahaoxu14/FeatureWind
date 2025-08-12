@@ -205,16 +205,20 @@ def update_particles(frame, system, interp_u_sum, interp_v_sum, interp_argmax,
     # Increase lifetime
     lt += 1
     
-    # Helper function to get velocity at any position
+    # Helper function to get velocity at the cell center for each position
     def get_velocity(positions):
-        if grid_u_sum is not None and grid_v_sum is not None and grid_res is not None:
-            cell_i = np.clip(((positions[:, 1] - ymin) / (ymax - ymin) * grid_res).astype(int), 0, grid_res - 1)
-            cell_j = np.clip(((positions[:, 0] - xmin) / (xmax - xmin) * grid_res).astype(int), 0, grid_res - 1)
-            U = grid_u_sum[cell_i, cell_j]
-            V = grid_v_sum[cell_i, cell_j]
-        else:
-            U = interp_u_sum(positions)
-            V = interp_v_sum(positions)
+        # Compute grid cell indices for each particle
+        cell_i = np.clip(((positions[:, 1] - ymin) / (ymax - ymin) * grid_res).astype(int), 0, grid_res - 1)
+        cell_j = np.clip(((positions[:, 0] - xmin) / (xmax - xmin) * grid_res).astype(int), 0, grid_res - 1)
+
+        # Cell-center coordinates (arrays, one center per particle)
+        cx = xmin + (cell_j + 0.5) * (xmax - xmin) / grid_res
+        cy = ymin + (cell_i + 0.5) * (ymax - ymin) / grid_res
+        centers = np.column_stack((cx, cy))
+
+        # Sample summed field at the cell centers (aligns with wind vane resultant)
+        U = interp_u_sum(centers)
+        V = interp_v_sum(centers)
         return np.column_stack((U, V)) * velocity_scale
     
     # RK4 integration with sub-stepping
@@ -291,7 +295,8 @@ def update_particles(frame, system, interp_u_sum, interp_v_sum, interp_argmax,
 
 
 def update_wind_vane(ax2, grid_cell, selected_features, all_feature_rgba, 
-                     cell_dominant_features, grid_u_all, grid_v_all, col_labels):
+                     cell_dominant_features, grid_u_all, grid_v_all, col_labels,
+                     interp_u_sum, interp_v_sum):
     """Update wind vane visualization for the selected grid cell."""
     global bounding_box
     xmin, xmax, ymin, ymax = bounding_box
@@ -317,15 +322,23 @@ def update_wind_vane(ax2, grid_cell, selected_features, all_feature_rgba,
     
     # Get dominant feature and calculate vectors for all features
     dominant_feature = cell_dominant_features[cell_i, cell_j]
-    center_x, center_y = (xmin + xmax) / 2, (ymin + ymax) / 2
+    # Sampling center (cell center) for field evaluation — keeps advection semantics
+    cell_xmin = xmin + cell_j * (xmax - xmin) / grid_res
+    cell_xmax = xmin + (cell_j + 1) * (xmax - xmin) / grid_res
+    cell_ymin = ymin + cell_i * (ymax - ymin) / grid_res
+    cell_ymax = ymin + (cell_i + 1) * (ymax - ymin) / grid_res
+    sample_cx = 0.5 * (cell_xmin + cell_xmax)
+    sample_cy = 0.5 * (cell_ymin + cell_ymax)
+    # Visualization anchor — always place the point in the middle of the figure
+    viz_cx = 0.5 * (xmin + xmax)
+    viz_cy = 0.5 * (ymin + ymax)
     
     # Draw grid cell marker (colored by dominant feature)
     if dominant_feature in all_feature_rgba:
         dominant_color = all_feature_rgba[dominant_feature]
     else:
         dominant_color = (0.5, 0.5, 0.5, 1.0)
-    
-    ax2.scatter(center_x, center_y, s=120, c=[dominant_color], marker='s', 
+    ax2.scatter(viz_cx, viz_cy, s=120, c=[dominant_color], marker='s', 
                zorder=10, label=f'Grid Cell ({cell_i},{cell_j})')
     
     # Calculate vector magnitudes using grid build method (consistent with dominance)
@@ -372,25 +385,22 @@ def update_wind_vane(ax2, grid_cell, selected_features, all_feature_rgba,
     # Calculate endpoints for convex hull and ellipse
     endpoints = []
     for feat_idx, u, v, mag in vector_info:
-        pos_endpoint = np.array([center_x + u / dynamic_scale, center_y + v / dynamic_scale])
-        neg_endpoint = np.array([center_x - u / dynamic_scale, center_y - v / dynamic_scale])
+        pos_endpoint = np.array([viz_cx + u / dynamic_scale, viz_cy + v / dynamic_scale])
+        neg_endpoint = np.array([viz_cx - u / dynamic_scale, viz_cy - v / dynamic_scale])
         endpoints.append(pos_endpoint)
         endpoints.append(neg_endpoint)
     
-    # Draw convex hull
+    # Calculate convex hull (for vector selection logic, but don't draw)
     if len(endpoints) >= 6:  # Need at least 3 unique points (6 endpoints)
         try:
             endpoints_array = np.array(endpoints)
             hull = ConvexHull(endpoints_array)
             hull_points = endpoints_array[hull.vertices]
-            
-            hull_polygon = Polygon(hull_points, fill=False, edgecolor='black',
-                                 linewidth=1.5, alpha=0.7, zorder=7, linestyle='--')
-            ax2.add_patch(hull_polygon)
+            # Hull calculation preserved for any selection logic
         except Exception:
             pass  # Skip hull if computation fails
     
-    # Draw covariance ellipse
+    # Calculate covariance ellipse (for any analysis logic, but don't draw)
     if len(vector_info) >= 2:
         try:
             # Collect scaled vector endpoints relative to center
@@ -410,19 +420,35 @@ def update_wind_vane(ax2, grid_cell, selected_features, all_feature_rgba,
             eigenvals = eigenvals[order]
             eigenvecs = eigenvecs[:, order]
             
-            # Calculate ellipse parameters
+            # Calculate ellipse parameters (preserved for any analysis)
             confidence_scale = 1.5
             width = 2 * confidence_scale * np.sqrt(eigenvals[0])
             height = 2 * confidence_scale * np.sqrt(eigenvals[1])
             angle = np.degrees(np.arctan2(eigenvecs[1, 0], eigenvecs[0, 0]))
             
-            # Create ellipse
-            ellipse = Ellipse((center_x, center_y), width, height, angle=angle,
-                            fill=False, edgecolor='black', linewidth=2,
-                            alpha=0.6, zorder=11, linestyle='-')
-            ax2.add_patch(ellipse)
+            # Ellipse calculation preserved but not drawn
         except Exception:
             pass  # Skip ellipse if computation fails
+    
+    # Calculate and draw resultant vector sampled at the cell center,
+    # but drawn from the visualization center
+    Uc = float(interp_u_sum([[sample_cx, sample_cy]]))
+    Vc = float(interp_v_sum([[sample_cx, sample_cy]]))
+    resultant_magnitude = np.hypot(Uc, Vc)
+
+    if resultant_magnitude > 0:
+        ax2.arrow(viz_cx, viz_cy,
+                  Uc / dynamic_scale, Vc / dynamic_scale,
+                  head_width=canvas_size * 0.03, head_length=canvas_size * 0.04,
+                  fc='black', ec='black', alpha=0.8,
+                  length_includes_head=True, zorder=15, linewidth=3)
+
+        label_x = viz_cx + (Uc / dynamic_scale) * 1.3
+        label_y = viz_cy + (Vc / dynamic_scale) * 1.3
+        ax2.text(label_x, label_y, 'Resultant',
+                 fontsize=9, ha='center', va='center', fontweight='bold',
+                 bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.9),
+                 zorder=16)
     
     # Draw arrows
     for feat_idx, u, v, mag in vector_info:
@@ -440,25 +466,16 @@ def update_wind_vane(ax2, grid_cell, selected_features, all_feature_rgba,
             alpha = 0.4
         
         # Draw positive direction arrow
-        ax2.arrow(center_x, center_y, u / dynamic_scale, v / dynamic_scale,
+        ax2.arrow(viz_cx, viz_cy, u / dynamic_scale, v / dynamic_scale,
                  head_width=canvas_size * 0.02, head_length=canvas_size * 0.025,
                  fc=(r, g, b, alpha), ec=(r, g, b, alpha),
                  length_includes_head=True, zorder=9)
         
-        # Draw negative direction arrow (dashed style) using annotate
-        ax2.annotate('', xy=(center_x - u / dynamic_scale, center_y - v / dynamic_scale),
-                    xytext=(center_x, center_y),
-                    arrowprops=dict(arrowstyle='->', 
-                                  connectionstyle='arc3,rad=0',
-                                  linestyle='--',
-                                  linewidth=1.5,
-                                  color=(r, g, b, alpha*0.7)),
-                    zorder=8)
         
         # Add feature label for dominant feature
         if feat_idx == dominant_feature and feat_idx < len(col_labels):
-            label_x = center_x + (u / dynamic_scale) * 1.2
-            label_y = center_y + (v / dynamic_scale) * 1.2
+            label_x = viz_cx + (u / dynamic_scale) * 1.2
+            label_y = viz_cy + (v / dynamic_scale) * 1.2
             ax2.text(label_x, label_y, col_labels[feat_idx],
                     fontsize=8, ha='center', va='center',
                     bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8),
@@ -706,7 +723,8 @@ def main():
             if current_grid_cell != [cell_i, cell_j]:
                 current_grid_cell[0], current_grid_cell[1] = cell_i, cell_j
                 update_wind_vane(ax2, current_grid_cell, top_k_indices, all_feature_rgba,
-                               cell_dominant_features, grid_u_all, grid_v_all, col_labels)
+                                 cell_dominant_features, grid_u_all, grid_v_all, col_labels,
+                                 interp_u_sum, interp_v_sum)
                 fig.canvas.draw_idle()
     
     def on_key_press(event):
@@ -719,7 +737,8 @@ def main():
     
     # Initialize wind vane
     update_wind_vane(ax2, current_grid_cell, top_k_indices, all_feature_rgba,
-                    cell_dominant_features, grid_u_all, grid_v_all, col_labels)
+                     cell_dominant_features, grid_u_all, grid_v_all, col_labels,
+                     interp_u_sum, interp_v_sum)
     
     # Create animation
     anim = FuncAnimation(
