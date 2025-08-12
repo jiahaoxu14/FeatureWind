@@ -51,7 +51,7 @@ def pick_top_k_features(all_grad_vectors):
     top_k_indices = np.argsort(-avg_magnitudes)[:k]
     return top_k_indices, avg_magnitudes
 
-def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_scale=0.1, output_dir="."):
+def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels, kdtree_scale=0.1, output_dir="."):
     # (1) Setup interpolation grid and distance mask
     # grid_res now represents number of grid cells, so we need grid_res+1 vertices
     xmin, xmax, ymin, ymax = bounding_box
@@ -88,33 +88,71 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_sca
     grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (num_vertices, num_vertices)
     grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (num_vertices, num_vertices)
     
-    # (3) Determine the dominant feature at each grid cell (using 4-corner aggregation)
-    # Compute the magnitude of each feature on the grid vertices.
-    grid_mag_feats = np.sqrt(grid_u_feats**2 + grid_v_feats**2)  # shape: (k, num_vertices, num_vertices)
+    # (3) Determine the dominant feature at each grid cell from ALL features
+    # First, compute grids for ALL features to find true dominant feature
+    num_features = all_grad_vectors.shape[1]
+    grid_u_all_feats, grid_v_all_feats = [], []
     
-    # Create dominant features for each grid cell
-    # Each cell aggregates the magnitudes of its 4 corner grid vertices
+    for feat_idx in range(num_features):
+        # Extract vectors for this feature
+        vectors = all_grad_vectors[:, feat_idx, :]  # shape: (#points, 2)
+        # Interpolate each component onto the grid
+        grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='nearest')
+        grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='nearest')
+        # Apply same masking as top-k features
+        mask = dist_grid > threshold
+        grid_u[mask] = 0.0
+        grid_v[mask] = 0.0
+        grid_u_all_feats.append(grid_u)
+        grid_v_all_feats.append(grid_v)
+    
+    grid_u_all_feats = np.array(grid_u_all_feats)  # shape: (num_features, num_vertices, num_vertices)
+    grid_v_all_feats = np.array(grid_v_all_feats)  # shape: (num_features, num_vertices, num_vertices)
+    
+    # Compute magnitudes for ALL features
+    grid_mag_all_feats = np.sqrt(grid_u_all_feats**2 + grid_v_all_feats**2)
+    
+    # Create dominant features for each grid cell using ALL features
     cell_dominant_features = np.zeros((grid_res, grid_res), dtype=int)
     
     for i in range(grid_res):
         for j in range(grid_res):
-            # Get magnitudes at the 4 corner vertices of this cell
-            # Corner vertices: (i,j), (i+1,j), (i,j+1), (i+1,j+1)
-            corner_mags = np.zeros(len(top_k_indices))
+            # Get magnitudes at the 4 corner vertices of this cell for ALL features
+            corner_mags = np.zeros(num_features)
             
-            for k_idx in range(len(top_k_indices)):
+            for feat_idx in range(num_features):
                 # Aggregate magnitudes from 4 corner vertices for this feature
-                corner_sum = (grid_mag_feats[k_idx, i, j] + 
-                             grid_mag_feats[k_idx, i+1, j] +
-                             grid_mag_feats[k_idx, i, j+1] + 
-                             grid_mag_feats[k_idx, i+1, j+1])
-                corner_mags[k_idx] = corner_sum / 4.0  # Average of 4 corner vertices
+                corner_sum = (grid_mag_all_feats[feat_idx, i, j] + 
+                             grid_mag_all_feats[feat_idx, i+1, j] +
+                             grid_mag_all_feats[feat_idx, i, j+1] + 
+                             grid_mag_all_feats[feat_idx, i+1, j+1])
+                corner_mags[feat_idx] = corner_sum / 4.0  # Average of 4 corner vertices
             
-            # Find the feature with maximum averaged magnitude
-            dominant_k_idx = np.argmax(corner_mags)
-            cell_dominant_features[i, j] = top_k_indices[dominant_k_idx]
+            # Debug specific problematic cell
+            if i == 27 and j == 11:
+                print(f"\nDebugging grid cell (27,11):")
+                print("Corner magnitudes for all features:")
+                sorted_indices = np.argsort(-corner_mags)  # Sort by magnitude descending
+                for rank, feat_idx in enumerate(sorted_indices[:10]):  # Show top 10
+                    if feat_idx < len(Col_labels):
+                        print(f"  Rank {rank+1}: Feature {feat_idx} ({Col_labels[feat_idx]}): {corner_mags[feat_idx]:.6f}")
+                    else:
+                        print(f"  Rank {rank+1}: Feature {feat_idx} (out of range): {corner_mags[feat_idx]:.6f}")
+            
+            # Find the feature with maximum averaged magnitude among ALL features
+            dominant_feat_idx = np.argmax(corner_mags)
+            cell_dominant_features[i, j] = dominant_feat_idx
     
     print("Cell dominant features shape:", cell_dominant_features.shape)
+    
+    # Debug: Print statistics about dominant features
+    unique_features, counts = np.unique(cell_dominant_features, return_counts=True)
+    print("Dominant features found in grid cells:")
+    for feat_idx, count in zip(unique_features, counts):
+        if feat_idx < len(Col_labels):
+            print(f"  Feature {feat_idx} ({Col_labels[feat_idx]}): {count} cells")
+        else:
+            print(f"  Feature {feat_idx} (index out of range): {count} cells")
     
     # Create cell center coordinates for RegularGridInterpolator
     # Cell centers are at the midpoints between adjacent vertices
@@ -138,7 +176,7 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, kdtree_sca
                                              cell_dominant_features, method='nearest',
                                              bounds_error=False, fill_value=-1)
     
-    return interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features
+    return interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats, grid_v_all_feats
 
 def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtree_scale=0.1, output_dir="."):
     """
@@ -223,16 +261,6 @@ def create_particles(num_particles, cell_dominant_features=None, grid_res=None):
     histories = np.full((num_particles, tail_gap + 1, 2), np.nan)
     histories[:, :] = particle_positions[:, None, :]
 
-    # Store initial grid colors for particles
-    particle_grid_colors = np.zeros(num_particles, dtype=int)
-    if cell_dominant_features is not None and grid_res is not None:
-        # Assign each particle the dominant feature of its starting grid cell
-        for i in range(num_particles):
-            x, y = particle_positions[i]
-            cell_i = int(np.clip((y - ymin) / (ymax - ymin) * grid_res, 0, grid_res - 1))
-            cell_j = int(np.clip((x - xmin) / (xmax - xmin) * grid_res, 0, grid_res - 1))
-            particle_grid_colors[i] = cell_dominant_features[cell_i, cell_j]
-
     # A single LineCollection for all particles
     lc = LineCollection([], linewidths=1.5, zorder=2)
 
@@ -244,7 +272,6 @@ def create_particles(num_particles, cell_dominant_features=None, grid_res=None):
         'tail_gap': tail_gap,
         'max_lifetime': max_lifetime,
         'linecoll': lc,
-        'particle_grid_colors': particle_grid_colors,
     }
 
     return system
@@ -342,63 +369,69 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
     # Increase lifetime
     lt += 1
 
-    # Use direct grid vectors instead of interpolation
-    if grid_u_sum is not None and grid_v_sum is not None and grid_res is not None:
-        # Convert particle positions to grid cell indices
-        # Grid cells range from 0 to grid_res-1
-        cell_i_indices = np.clip(((pp[:, 1] - ymin) / (ymax - ymin) * grid_res).astype(int), 0, grid_res - 1)
-        cell_j_indices = np.clip(((pp[:, 0] - xmin) / (xmax - xmin) * grid_res).astype(int), 0, grid_res - 1)
+    # Helper function to get velocity at any position
+    def get_velocity(positions):
+        if grid_u_sum is not None and grid_v_sum is not None and grid_res is not None:
+            # Convert positions to grid cell indices
+            cell_i_indices = np.clip(((positions[:, 1] - ymin) / (ymax - ymin) * grid_res).astype(int), 0, grid_res - 1)
+            cell_j_indices = np.clip(((positions[:, 0] - xmin) / (xmax - xmin) * grid_res).astype(int), 0, grid_res - 1)
+            
+            # Sample velocity directly from grid cells
+            U = grid_u_sum[cell_i_indices, cell_j_indices]
+            V = grid_v_sum[cell_i_indices, cell_j_indices]
+        else:
+            # Fallback to interpolation method
+            U = interp_u_sum(positions)
+            V = interp_v_sum(positions)
         
-        # Sample velocity directly from grid cells
-        U = grid_u_sum[cell_i_indices, cell_j_indices]
-        V = grid_v_sum[cell_i_indices, cell_j_indices]
-    else:
-        # Fallback to interpolation method
-        U = interp_u_sum(pp)
-        V = interp_v_sum(pp)
-    
-    velocity = np.column_stack((U, V)) * velocity_scale
+        return np.column_stack((U, V)) * velocity_scale
 
-    # Move particles
-    pp += velocity
+    # Sub-stepping with smaller timesteps for better CFL stability
+    n_substeps = 4  # Split into multiple sub-steps
+    dt_sub = 1.0 / n_substeps  # Smaller sub-timestep
+    
+    # Get initial velocity for speed calculation (used for particle coloring)
+    velocity = get_velocity(pp)
+    
+    # Perform multiple sub-steps for smoother, more accurate trajectories
+    for step in range(n_substeps):
+        # RK4 integration for each sub-step
+        k1 = get_velocity(pp)
+        k2 = get_velocity(pp + 0.5 * dt_sub * k1)
+        k3 = get_velocity(pp + 0.5 * dt_sub * k2)
+        k4 = get_velocity(pp + dt_sub * k3)
+        
+        # RK4 final update for this sub-step
+        velocity_sub = (k1 + 2*k2 + 2*k3 + k4) / 6.0
+        pp += dt_sub * velocity_sub
 
     # Shift history
     his[:, :-1, :] = his[:, 1:, :]
     his[:, -1, :] = pp
 
-    # Get particle grid colors for reinitialization
-    particle_grid_colors = system.get('particle_grid_colors', None)
-    
-    # Helper function to assign grid color to a particle
-    def assign_grid_color(particle_idx, x, y):
-        if particle_grid_colors is not None and grid_res is not None and hasattr(system, 'cell_dominant_features'):
-            cell_i = int(np.clip((y - ymin) / (ymax - ymin) * grid_res, 0, grid_res - 1))
-            cell_j = int(np.clip((x - xmin) / (xmax - xmin) * grid_res, 0, grid_res - 1))
-            particle_grid_colors[particle_idx] = system['cell_dominant_features'][cell_i, cell_j]
-    
     # Reinitialize out-of-bounds or over-age particles
     for i in range(len(pp)):
         x, y = pp[i]
         if (x < xmin or x > xmax or y < ymin or y > ymax
             or lt[i] > max_lifetime):
-            new_x = np.random.uniform(xmin, xmax)
-            new_y = np.random.uniform(ymin, ymax)
-            pp[i] = [new_x, new_y]
+            pp[i] = [
+                np.random.uniform(xmin, xmax),
+                np.random.uniform(ymin, ymax)
+            ]
             his[i] = pp[i]
             lt[i] = 0
-            assign_grid_color(i, new_x, new_y)
 
     # Randomly reinitialize some fraction
     num_to_reinit = int(0.05 * len(pp))
     if num_to_reinit > 0:
         idxs = np.random.choice(len(pp), num_to_reinit, replace=False)
         for idx in idxs:
-            new_x = np.random.uniform(xmin, xmax)
-            new_y = np.random.uniform(ymin, ymax)
-            pp[idx] = [new_x, new_y]
+            pp[idx] = [
+                np.random.uniform(xmin, xmax),
+                np.random.uniform(ymin, ymax)
+            ]
             his[idx] = pp[idx]
             lt[idx] = 0
-            assign_grid_color(idx, new_x, new_y)
 
     # Build line segments
     n_active = len(pp)
@@ -410,13 +443,18 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
     speeds = np.linalg.norm(velocity, axis=1)
     max_speed = speeds.max() + 1e-9  # avoid division by zero
 
-    # Use stored grid colors for each particle
+    # Use current grid cell colors for each particle
     for i in range(n_active):
-        # Get the stored grid color for this particle
-        if particle_grid_colors is not None and i < len(particle_grid_colors):
-            this_feat_id = particle_grid_colors[i]
+        # Get the current grid cell color for this particle position
+        x, y = pp[i]
+        cell_i = int(np.clip((y - ymin) / (ymax - ymin) * grid_res, 0, grid_res - 1))
+        cell_j = int(np.clip((x - xmin) / (xmax - xmin) * grid_res, 0, grid_res - 1))
+        
+        # Get the dominant feature of the current grid cell
+        if 'cell_dominant_features' in system:
+            this_feat_id = system['cell_dominant_features'][cell_i, cell_j]
         else:
-            # Fallback to current position-based color
+            # Fallback to interpolation method
             this_feat_id = interp_argmax(pp[i:i+1])[0]
         
         # Look up the real feature index in our mapping. If not present, assign a default (black).
@@ -512,6 +550,16 @@ def main():
     print("Top k feature indices:", top_k_indices)
     print("Their average magnitudes:", avg_magnitudes[top_k_indices])
     print("Their labels:", [Col_labels[i] for i in top_k_indices])
+    
+    # Debug: Find "mean symmetry" feature index
+    mean_symmetry_idx = None
+    for i, label in enumerate(Col_labels):
+        if "mean symmetry" in label.lower():
+            mean_symmetry_idx = i
+            print(f"Found 'mean symmetry' at feature index {i}: {label}")
+            break
+    if mean_symmetry_idx is None:
+        print("Warning: 'mean symmetry' feature not found in labels")
 
     # grad_indices = [2]
     grad_indices = top_k_indices
@@ -530,8 +578,8 @@ def main():
     grid_v_feats = None 
     cell_dominant_features = None
     
-    interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features = build_grids(
-        all_positions, grid_res, grad_indices, all_grad_vectors, kdtree_scale=kdtree_scale, output_dir=output_dir
+    interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats, grid_v_all_feats = build_grids(
+        all_positions, grid_res, grad_indices, all_grad_vectors, Col_labels, kdtree_scale=kdtree_scale, output_dir=output_dir
     )
 
     # interp_u_sum, interp_v_sum, interp_argmax, grid_argmax_local, grid_x, grid_y = build_grids_alternative(
@@ -562,25 +610,45 @@ def main():
             ]
             return [base_colors[i % len(base_colors)] for i in range(n_colors)]
     
-    # Generate colors for ALL features (not just top-k)
-    all_feature_colors = generate_distinct_colors(len(Col_labels))
+    # Generate colors only for top 6 features
+    top_6_indices = top_k_indices[:6]  # Only first 6 features get colors
+    top_6_colors = generate_distinct_colors(6)
     
-    # Extract colors for the selected top features
-    feature_colors = [all_feature_colors[i] for i in grad_indices]
+    # Debug: Print color assignments
+    print("\nColor assignments for top 6 features:")
+    for i, feat_idx in enumerate(top_6_indices):
+        if feat_idx < len(Col_labels):
+            print(f"  Feature {feat_idx} ({Col_labels[feat_idx]}): {top_6_colors[i]}")
+        else:
+            print(f"  Feature {feat_idx} (index out of range): {top_6_colors[i]}")
+    
+    # Extract colors for the selected top features (only if they're in top 6)
+    feature_colors = []
+    for feat_idx in grad_indices:
+        if feat_idx in top_6_indices:
+            color_idx = list(top_6_indices).index(feat_idx)
+            feature_colors.append(top_6_colors[color_idx])
+        else:
+            feature_colors.append('#808080')  # Gray for non-top-6 features
 
-    # Build a mapping for ALL features to their colors (for consistent color coding)
-    all_feature_rgba = {
-        feat_idx: to_rgba(all_feature_colors[feat_idx])
-        for feat_idx in range(len(Col_labels))
-    }
+    # Build a mapping only for top 6 features to their colors
+    all_feature_rgba = {}
+    for i, feat_idx in enumerate(top_6_indices):
+        all_feature_rgba[feat_idx] = to_rgba(top_6_colors[i])
+    
     # Build initial mapping for selected features to RGBA for particle coloring
-    real_feature_rgba = {feat_idx: to_rgba(all_feature_colors[feat_idx])
-                        for feat_idx in grad_indices}
+    # Only top 6 features get colors, others are excluded from coloring
+    real_feature_rgba = {}
+    for feat_idx in grad_indices:
+        if feat_idx in all_feature_rgba:
+            real_feature_rgba[feat_idx] = all_feature_rgba[feat_idx]
 
     # Create the particle system
     num_particles = 2500
     system = create_particles(num_particles, cell_dominant_features, grid_res)
     system['cell_dominant_features'] = cell_dominant_features  # Store for reinitialization
+    system['grid_u_all_feats'] = grid_u_all_feats  # Store for wind vane
+    system['grid_v_all_feats'] = grid_v_all_feats  # Store for wind vane
     lc = system['linecoll']
 
     # prepare the figure with 2 subplots and space for controls
@@ -601,22 +669,32 @@ def main():
         k_val = int(val)
         grad_indices = list(np.argsort(-avg_magnitudes)[:k_val])
         # Rebuild grids for new top-k selection
-        interp_u_sum, interp_v_sum, interp_argmax, _, _, grid_u_feats, grid_v_feats, cell_dominant_features = build_grids(
-            all_positions, grid_res, grad_indices, all_grad_vectors,
+        interp_u_sum, interp_v_sum, interp_argmax, _, _, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats_new, grid_v_all_feats_new = build_grids(
+            all_positions, grid_res, grad_indices, all_grad_vectors, Col_labels,
             kdtree_scale=kdtree_scale, output_dir=output_dir)
-        # Update color mappings for particles
-        # Prepare a new list of feature colors for redrawing
-        new_feature_colors = [all_feature_colors[i] for i in grad_indices]
+        # Update system with new all-features grids
+        system['grid_u_all_feats'] = grid_u_all_feats_new
+        system['grid_v_all_feats'] = grid_v_all_feats_new
+        # Update color mappings for particles using top-6 logic
+        new_feature_colors = []
+        for feat_idx in grad_indices:
+            if feat_idx in top_6_indices:
+                color_idx = list(top_6_indices).index(feat_idx)
+                new_feature_colors.append(top_6_colors[color_idx])
+            else:
+                new_feature_colors.append('#808080')  # Gray for non-top-6 features
+        
         # Mutate the real_feature_rgba mapping in place for the particle update
         real_feature_rgba.clear()
         for feat_idx in grad_indices:
-            real_feature_rgba[feat_idx] = to_rgba(all_feature_colors[feat_idx])
+            if feat_idx in all_feature_rgba:
+                real_feature_rgba[feat_idx] = all_feature_rgba[feat_idx]
         # Redraw main feature wind map
         ax1.clear()
         prepare_figure(ax1, valid_points, Col_labels, k, grad_indices,
                        new_feature_colors, lc, all_positions, all_grad_vectors)
         # Redraw grid visualization with updated colors
-        # draw_grid_visualization()  # Hidden per user request
+        draw_grid_visualization()
         # Refresh grid cell visualization
         update_grid_cell_visualization()
         fig.canvas.draw_idle()
@@ -691,23 +769,59 @@ def main():
         
         cell_vectors = np.zeros((len(Col_labels), 2))  # Initialize for all features
         
-        # Get vectors for the selected top-k features from the grid
-        for k_idx, feat_idx in enumerate(grad_indices):
-            # Average the vectors from the 4 corner vertices of this cell
-            corner_u = (grid_u_feats[k_idx, cell_i, cell_j] + 
-                       grid_u_feats[k_idx, cell_i+1, cell_j] +
-                       grid_u_feats[k_idx, cell_i, cell_j+1] + 
-                       grid_u_feats[k_idx, cell_i+1, cell_j+1]) / 4.0
-            
-            corner_v = (grid_v_feats[k_idx, cell_i, cell_j] + 
-                       grid_v_feats[k_idx, cell_i+1, cell_j] +
-                       grid_v_feats[k_idx, cell_i, cell_j+1] + 
-                       grid_v_feats[k_idx, cell_i+1, cell_j+1]) / 4.0
-            
-            cell_vectors[feat_idx] = [corner_u, corner_v]
+        # Get vectors for ALL features from the all-features grid
+        for feat_idx in range(len(Col_labels)):
+            if 'grid_u_all_feats' in system and 'grid_v_all_feats' in system:
+                # Use the all-features grid data
+                corner_u = (system['grid_u_all_feats'][feat_idx, cell_i, cell_j] + 
+                           system['grid_u_all_feats'][feat_idx, cell_i+1, cell_j] +
+                           system['grid_u_all_feats'][feat_idx, cell_i, cell_j+1] + 
+                           system['grid_u_all_feats'][feat_idx, cell_i+1, cell_j+1]) / 4.0
+                
+                corner_v = (system['grid_v_all_feats'][feat_idx, cell_i, cell_j] + 
+                           system['grid_v_all_feats'][feat_idx, cell_i+1, cell_j] +
+                           system['grid_v_all_feats'][feat_idx, cell_i, cell_j+1] + 
+                           system['grid_v_all_feats'][feat_idx, cell_i+1, cell_j+1]) / 4.0
+                
+                cell_vectors[feat_idx] = [corner_u, corner_v]
+                
+                # Debug: Print the corrected magnitude for problematic cell
+                if cell_i == 27 and cell_j == 11 and feat_idx in [21, 8]:  # Check our two key features
+                    corrected_mag = np.linalg.norm([corner_u, corner_v])
+                    feat_name = Col_labels[feat_idx] if feat_idx < len(Col_labels) else f"Feature {feat_idx}"
+                    print(f"  CORRECTED Feature {feat_idx} ({feat_name}): {corrected_mag:.6f}")
+                    
+                    # Debug: Compare with the grid calculation method
+                    grid_mag_from_build = np.sqrt(system['grid_u_all_feats'][feat_idx]**2 + system['grid_v_all_feats'][feat_idx]**2)
+                    grid_corner_mag = (grid_mag_from_build[cell_i, cell_j] + 
+                                      grid_mag_from_build[cell_i+1, cell_j] +
+                                      grid_mag_from_build[cell_i, cell_j+1] + 
+                                      grid_mag_from_build[cell_i+1, cell_j+1]) / 4.0
+                    print(f"    Grid build method magnitude: {grid_corner_mag:.6f}")
+                    print(f"    Difference: {abs(corrected_mag - grid_corner_mag):.6f}")
+            else:
+                # Fallback: only calculate for selected features using grid_u_feats
+                if feat_idx in grad_indices:
+                    k_idx = list(grad_indices).index(feat_idx)
+                    corner_u = (grid_u_feats[k_idx, cell_i, cell_j] + 
+                               grid_u_feats[k_idx, cell_i+1, cell_j] +
+                               grid_u_feats[k_idx, cell_i, cell_j+1] + 
+                               grid_u_feats[k_idx, cell_i+1, cell_j+1]) / 4.0
+                    
+                    corner_v = (grid_v_feats[k_idx, cell_i, cell_j] + 
+                               grid_v_feats[k_idx, cell_i+1, cell_j] +
+                               grid_v_feats[k_idx, cell_i, cell_j+1] + 
+                               grid_v_feats[k_idx, cell_i+1, cell_j+1]) / 4.0
+                    
+                    cell_vectors[feat_idx] = [corner_u, corner_v]
         
         # Get the dominant feature for this cell
         dominant_feature = cell_dominant_features[cell_i, cell_j]
+        
+        # Debug: Print wind vane cell information
+        if cell_i < len(Col_labels):
+            dominant_feature_name = Col_labels[dominant_feature] if dominant_feature < len(Col_labels) else f"Feature {dominant_feature}"
+            print(f"Wind Vane showing grid cell ({cell_i},{cell_j}), dominant feature: {dominant_feature} ({dominant_feature_name})")
         
         # Place grid cell point at center of Wind Vane
         center_x, center_y = (xmin + xmax) / 2, (ymin + ymax) / 2
@@ -724,10 +838,31 @@ def main():
         non_zero_vectors = []
         vector_magnitudes = []
         
+        # Debug: Show which features are being considered in wind vane
+        if cell_i == 27 and cell_j == 11:
+            print(f"Wind vane considering selected features: {grad_indices}")
+            print("Vector magnitudes in wind vane:")
+            
         # Only include selected top-k features in wind vane
         for feat_idx in grad_indices:
             vec = cell_vectors[feat_idx]
-            mag = np.linalg.norm(vec)
+            
+            # Use the same magnitude calculation method as grid cell dominant feature
+            if 'grid_u_all_feats' in system and 'grid_v_all_feats' in system:
+                grid_mag_from_build = np.sqrt(system['grid_u_all_feats'][feat_idx]**2 + system['grid_v_all_feats'][feat_idx]**2)
+                mag = (grid_mag_from_build[cell_i, cell_j] + 
+                      grid_mag_from_build[cell_i+1, cell_j] +
+                      grid_mag_from_build[cell_i, cell_j+1] + 
+                      grid_mag_from_build[cell_i+1, cell_j+1]) / 4.0
+            else:
+                # Fallback to the old method
+                mag = np.linalg.norm(vec)
+            
+            # Debug output for problematic cell
+            if cell_i == 27 and cell_j == 11:
+                feat_name = Col_labels[feat_idx] if feat_idx < len(Col_labels) else f"Feature {feat_idx}"
+                print(f"  Feature {feat_idx} ({feat_name}): {mag:.6f} (CONSISTENT)")
+            
             if mag > 0:
                 non_zero_vectors.append((feat_idx, vec))
                 vector_magnitudes.append(mag)
@@ -744,15 +879,24 @@ def main():
             endpoints = []
             vector_info = []  # Store (feat_idx, gradient_vector, pos_endpoint, neg_endpoint)
             
-            for feat_idx, gradient_vector in non_zero_vectors:
-                pos_endpoint = np.array([center_x + gradient_vector[0] / dynamic_scale,
-                                       center_y + gradient_vector[1] / dynamic_scale])
-                neg_endpoint = np.array([center_x - gradient_vector[0] / dynamic_scale,
-                                       center_y - gradient_vector[1] / dynamic_scale])
+            for i, (feat_idx, gradient_vector) in enumerate(non_zero_vectors):
+                # Scale the gradient vector to match the consistent magnitude
+                consistent_magnitude = vector_magnitudes[i]
+                original_magnitude = np.linalg.norm(gradient_vector)
+                if original_magnitude > 0:
+                    scale_factor = consistent_magnitude / original_magnitude
+                    scaled_gradient_vector = gradient_vector * scale_factor
+                else:
+                    scaled_gradient_vector = gradient_vector
+                
+                pos_endpoint = np.array([center_x + scaled_gradient_vector[0] / dynamic_scale,
+                                       center_y + scaled_gradient_vector[1] / dynamic_scale])
+                neg_endpoint = np.array([center_x - scaled_gradient_vector[0] / dynamic_scale,
+                                       center_y - scaled_gradient_vector[1] / dynamic_scale])
                 
                 endpoints.append(pos_endpoint)
                 endpoints.append(neg_endpoint)
-                vector_info.append((feat_idx, gradient_vector, pos_endpoint, neg_endpoint))
+                vector_info.append((feat_idx, scaled_gradient_vector, pos_endpoint, neg_endpoint))
             
             # Calculate convex hull
             endpoints_array = np.array(endpoints)
@@ -769,13 +913,22 @@ def main():
             # Calculate and draw covariance ellipse
             # Collect all vector endpoints (scaled the same way as vectors)
             all_vector_endpoints = []
-            for feat_idx, gradient_vector in non_zero_vectors:
+            for i, (feat_idx, gradient_vector) in enumerate(non_zero_vectors):
+                # Scale the gradient vector to match the consistent magnitude
+                consistent_magnitude = vector_magnitudes[i]
+                original_magnitude = np.linalg.norm(gradient_vector)
+                if original_magnitude > 0:
+                    scale_factor = consistent_magnitude / original_magnitude
+                    scaled_gradient_vector = gradient_vector * scale_factor
+                else:
+                    scaled_gradient_vector = gradient_vector
+                
                 # Positive endpoint
-                pos_endpoint = np.array([gradient_vector[0] / dynamic_scale,
-                                       gradient_vector[1] / dynamic_scale])
+                pos_endpoint = np.array([scaled_gradient_vector[0] / dynamic_scale,
+                                       scaled_gradient_vector[1] / dynamic_scale])
                 # Negative endpoint  
-                neg_endpoint = np.array([-gradient_vector[0] / dynamic_scale,
-                                       -gradient_vector[1] / dynamic_scale])
+                neg_endpoint = np.array([-scaled_gradient_vector[0] / dynamic_scale,
+                                       -scaled_gradient_vector[1] / dynamic_scale])
                 all_vector_endpoints.append(pos_endpoint)
                 all_vector_endpoints.append(neg_endpoint)
             
@@ -818,13 +971,25 @@ def main():
                 pos_on_hull = (2 * i) in hull_vertices_set if hull_vertices_set else False
                 neg_on_hull = (2 * i + 1) in hull_vertices_set if hull_vertices_set else False
                 
+                # Get the consistent magnitude for this feature
+                consistent_magnitude = vector_magnitudes[i]  # This now uses the grid build method
+                
+                # Scale the gradient vector to match the consistent magnitude
+                original_magnitude = np.linalg.norm(gradient_vector)
+                if original_magnitude > 0:
+                    # Scale the vector to have the consistent magnitude
+                    scale_factor = consistent_magnitude / original_magnitude
+                    scaled_gradient_vector = gradient_vector * scale_factor
+                else:
+                    scaled_gradient_vector = gradient_vector
+                
                 # Use feature colors with intensity based on vector magnitude and dominance
                 if feat_idx in all_feature_rgba:
                     base_color = all_feature_rgba[feat_idx]
                     base_r, base_g, base_b = base_color[:3]
                     
-                    # Calculate intensity based on vector magnitude
-                    vector_magnitude = np.linalg.norm(gradient_vector)
+                    # Calculate intensity based on consistent vector magnitude
+                    vector_magnitude = consistent_magnitude
                     max_mag = max(vector_magnitudes) if vector_magnitudes else 1.0
                     mag_intensity = 0.3 + 0.7 * (vector_magnitude / max_mag)
                     
@@ -846,29 +1011,29 @@ def main():
                     pos_color = (0.0, 0.0, 0.0, pos_alpha) if pos_on_hull else (0.5, 0.5, 0.5, pos_alpha)
                     neg_color = (0.0, 0.0, 0.0, neg_alpha) if neg_on_hull else (0.5, 0.5, 0.5, neg_alpha)
                 
-                # Draw positive direction arrow (solid)
+                # Draw positive direction arrow (solid) using scaled vector
                 arrow_pos = ax2.arrow(center_x, center_y,
-                                    gradient_vector[0] / dynamic_scale,
-                                    gradient_vector[1] / dynamic_scale,
+                                    scaled_gradient_vector[0] / dynamic_scale,
+                                    scaled_gradient_vector[1] / dynamic_scale,
                                     head_width=canvas_size * 0.02,
                                     head_length=canvas_size * 0.03,
                                     fc=pos_color, ec=pos_color,
                                     length_includes_head=True, zorder=9)
                 aggregate_arrows.append(arrow_pos)
                 
-                # Draw negative direction arrow (solid arrow + dashed overlay)
+                # Draw negative direction arrow (solid arrow + dashed overlay) using scaled vector
                 arrow_neg = ax2.arrow(center_x, center_y,
-                                    -gradient_vector[0] / dynamic_scale,
-                                    -gradient_vector[1] / dynamic_scale,
+                                    -scaled_gradient_vector[0] / dynamic_scale,
+                                    -scaled_gradient_vector[1] / dynamic_scale,
                                     head_width=canvas_size * 0.02,
                                     head_length=canvas_size * 0.03,
                                     fc=neg_color, ec=neg_color,
                                     length_includes_head=True, zorder=8)
                 aggregate_arrows.append(arrow_neg)
                 
-                # Overlay dashed line to create dashed effect
-                neg_end_x = center_x - gradient_vector[0] / dynamic_scale
-                neg_end_y = center_y - gradient_vector[1] / dynamic_scale
+                # Overlay dashed line to create dashed effect using scaled vector
+                neg_end_x = center_x - scaled_gradient_vector[0] / dynamic_scale
+                neg_end_y = center_y - scaled_gradient_vector[1] / dynamic_scale
                 
                 # Draw white dashed line over the arrow to create gaps
                 dash_line = ax2.plot([center_x, neg_end_x], [center_y, neg_end_y], 
@@ -883,13 +1048,13 @@ def main():
                     
                     # Add label for positive vector if it's on hull
                     if pos_on_hull:
-                        pos_end_x = center_x + gradient_vector[0] / dynamic_scale
-                        pos_end_y = center_y + gradient_vector[1] / dynamic_scale
+                        pos_end_x = center_x + scaled_gradient_vector[0] / dynamic_scale
+                        pos_end_y = center_y + scaled_gradient_vector[1] / dynamic_scale
                         
                         # Calculate label offset (slightly beyond arrow tip)
                         offset_factor = 1.2
-                        label_x = center_x + (gradient_vector[0] / dynamic_scale) * offset_factor
-                        label_y = center_y + (gradient_vector[1] / dynamic_scale) * offset_factor
+                        label_x = center_x + (scaled_gradient_vector[0] / dynamic_scale) * offset_factor
+                        label_y = center_y + (scaled_gradient_vector[1] / dynamic_scale) * offset_factor
                         
                         pos_label = ax2.text(label_x, label_y, feature_name,
                                            fontsize=8, ha='center', va='center',
@@ -901,8 +1066,8 @@ def main():
                     if neg_on_hull:
                         # Calculate label offset (slightly beyond arrow tip)
                         offset_factor = 1.2
-                        label_x = center_x - (gradient_vector[0] / dynamic_scale) * offset_factor
-                        label_y = center_y - (gradient_vector[1] / dynamic_scale) * offset_factor
+                        label_x = center_x - (scaled_gradient_vector[0] / dynamic_scale) * offset_factor
+                        label_y = center_y - (scaled_gradient_vector[1] / dynamic_scale) * offset_factor
                         
                         neg_label = ax2.text(label_x, label_y, f"-{feature_name}",
                                            fontsize=8, ha='center', va='center',
@@ -971,15 +1136,30 @@ def main():
                 cell_ymin = ymin + i * (ymax - ymin) / grid_res
                 cell_ymax = ymin + (i + 1) * (ymax - ymin) / grid_res
                 
-                # Get dominant feature for this cell
-                dominant_feature = cell_dominant_features[i, j]
+                # Check if cell has no values (is masked out)
+                # Sample the 4 corner vertices of this cell from grid_u_sum and grid_v_sum
+                corner_u_sum = (grid_u_sum[i, j] + grid_u_sum[i+1, j] + 
+                               grid_u_sum[i, j+1] + grid_u_sum[i+1, j+1])
+                corner_v_sum = (grid_v_sum[i, j] + grid_v_sum[i+1, j] + 
+                               grid_v_sum[i, j+1] + grid_v_sum[i+1, j+1])
                 
-                # Get color for this feature
-                if dominant_feature in all_feature_rgba:
-                    cell_color = all_feature_rgba[dominant_feature]
-                    cell_color = (*cell_color[:3], 0.15)  # Low alpha for background
+                # If all corner values are zero, the cell is masked out
+                if abs(corner_u_sum) < 1e-10 and abs(corner_v_sum) < 1e-10:
+                    cell_color = (1.0, 1.0, 1.0, 0.3)  # White for empty cells
                 else:
-                    cell_color = (0.5, 0.5, 0.5, 0.1)  # Gray fallback
+                    # Get dominant feature for this cell
+                    dominant_feature = cell_dominant_features[i, j]
+                    
+                    # Debug: Print some cell information for problematic cells
+                    if i < 3 and j < 3:  # Only print for first few cells to avoid spam
+                        print(f"Cell ({i},{j}): dominant_feature={dominant_feature}, in top_6={dominant_feature in all_feature_rgba}")
+                    
+                    # Get color for this feature
+                    if dominant_feature in all_feature_rgba:
+                        cell_color = all_feature_rgba[dominant_feature]
+                        cell_color = (*cell_color[:3], 0.15)  # Low alpha for background
+                    else:
+                        cell_color = (0.5, 0.5, 0.5, 0.1)  # Gray fallback
                 
                 # Draw colored rectangle for cell
                 rect = Rectangle((cell_xmin, cell_ymin), 
@@ -991,7 +1171,7 @@ def main():
                 ax1.add_patch(rect)
     
     # Draw the grid visualization
-    # draw_grid_visualization()  # Hidden per user request
+    draw_grid_visualization()
     
     # Feature colors legend removed per user request
     
