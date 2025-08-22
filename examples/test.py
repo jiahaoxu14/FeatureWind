@@ -443,27 +443,11 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
     speeds = np.linalg.norm(velocity, axis=1)
     max_speed = speeds.max() + 1e-9  # avoid division by zero
 
-    # Use current grid cell colors for each particle
+    # Use black color for all particles
     for i in range(n_active):
-        # Get the current grid cell color for this particle position
-        x, y = pp[i]
-        cell_i = int(np.clip((y - ymin) / (ymax - ymin) * grid_res, 0, grid_res - 1))
-        cell_j = int(np.clip((x - xmin) / (xmax - xmin) * grid_res, 0, grid_res - 1))
-        
-        # Get the dominant feature of the current grid cell
-        if 'cell_dominant_features' in system:
-            this_feat_id = system['cell_dominant_features'][cell_i, cell_j]
-        else:
-            # Fallback to interpolation method
-            this_feat_id = interp_argmax(pp[i:i+1])[0]
-        
-        # Look up the real feature index in our mapping. If not present, assign a default (black).
-        if this_feat_id not in real_feature_rgba:
-            r, g, b, _ = (0, 0, 0, 1)
-            alpha_part = 0.3
-        else:
-            r, g, b, _ = real_feature_rgba[this_feat_id]
-            alpha_part = speeds[i] / max_speed
+        # All particles are black regardless of grid cell or feature
+        r, g, b = 0, 0, 0  # Black color
+        alpha_part = speeds[i] / max_speed
 
         for t in range(tail_gap):
             seg_idx = i * tail_gap + t
@@ -1136,39 +1120,8 @@ def main():
                 cell_ymin = ymin + i * (ymax - ymin) / grid_res
                 cell_ymax = ymin + (i + 1) * (ymax - ymin) / grid_res
                 
-                # Check if cell has no values (is masked out)
-                # Sample the 4 corner vertices of this cell from grid_u_sum and grid_v_sum
-                corner_u_sum = (grid_u_sum[i, j] + grid_u_sum[i+1, j] + 
-                               grid_u_sum[i, j+1] + grid_u_sum[i+1, j+1])
-                corner_v_sum = (grid_v_sum[i, j] + grid_v_sum[i+1, j] + 
-                               grid_v_sum[i, j+1] + grid_v_sum[i+1, j+1])
-                
-                # If all corner values are zero, the cell is masked out
-                if abs(corner_u_sum) < 1e-10 and abs(corner_v_sum) < 1e-10:
-                    cell_color = (1.0, 1.0, 1.0, 0.3)  # White for empty cells
-                else:
-                    # Get dominant feature for this cell
-                    dominant_feature = cell_dominant_features[i, j]
-                    
-                    # Debug: Print some cell information for problematic cells
-                    if i < 3 and j < 3:  # Only print for first few cells to avoid spam
-                        print(f"Cell ({i},{j}): dominant_feature={dominant_feature}, in top_6={dominant_feature in all_feature_rgba}")
-                    
-                    # Get color for this feature
-                    if dominant_feature in all_feature_rgba:
-                        cell_color = all_feature_rgba[dominant_feature]
-                        cell_color = (*cell_color[:3], 0.15)  # Low alpha for background
-                    else:
-                        cell_color = (0.5, 0.5, 0.5, 0.1)  # Gray fallback
-                
-                # Draw colored rectangle for cell
-                rect = Rectangle((cell_xmin, cell_ymin), 
-                               cell_xmax - cell_xmin, 
-                               cell_ymax - cell_ymin,
-                               facecolor=cell_color, 
-                               edgecolor='none',
-                               zorder=0)
-                ax1.add_patch(rect)
+                # No grid cell coloring - keep cells transparent
+                # (Grid coloring removed for monochromatic visualization)
     
     # Draw the grid visualization
     draw_grid_visualization()
