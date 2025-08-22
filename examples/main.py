@@ -371,14 +371,17 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
 
     # Helper function to get velocity at any position
     def get_velocity(positions):
-        if grid_u_sum is not None and grid_v_sum is not None and grid_res is not None:
+        # Use grids from system (updated by slider callback)
+        if 'grid_u_sum' in system and 'grid_v_sum' in system and grid_res is not None:
+            current_grid_u = system['grid_u_sum']
+            current_grid_v = system['grid_v_sum']
             # Convert positions to grid cell indices
             cell_i_indices = np.clip(((positions[:, 1] - ymin) / (ymax - ymin) * grid_res).astype(int), 0, grid_res - 1)
             cell_j_indices = np.clip(((positions[:, 0] - xmin) / (xmax - xmin) * grid_res).astype(int), 0, grid_res - 1)
             
             # Sample velocity directly from grid cells
-            U = grid_u_sum[cell_i_indices, cell_j_indices]
-            V = grid_v_sum[cell_i_indices, cell_j_indices]
+            U = current_grid_u[cell_i_indices, cell_j_indices]
+            V = current_grid_v[cell_i_indices, cell_j_indices]
         else:
             # Fallback to interpolation method
             U = interp_u_sum(positions)
@@ -633,6 +636,8 @@ def main():
     system['cell_dominant_features'] = cell_dominant_features  # Store for reinitialization
     system['grid_u_all_feats'] = grid_u_all_feats  # Store for wind vane
     system['grid_v_all_feats'] = grid_v_all_feats  # Store for wind vane
+    system['grid_u_sum'] = grid_u_sum  # Store velocity grids for particle animation
+    system['grid_v_sum'] = grid_v_sum
     lc = system['linecoll']
 
     # prepare the figure with 2 subplots and space for controls
@@ -649,16 +654,24 @@ def main():
     
     # callback to update selected features based on Top k only
     def update_features(val):
-        nonlocal grad_indices, interp_u_sum, interp_v_sum, interp_argmax
+        nonlocal grad_indices, interp_u_sum, interp_v_sum, interp_argmax, grid_u_sum, grid_v_sum
         k_val = int(val)
         grad_indices = list(np.argsort(-avg_magnitudes)[:k_val])
         # Rebuild grids for new top-k selection
         interp_u_sum, interp_v_sum, interp_argmax, _, _, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats_new, grid_v_all_feats_new = build_grids(
             all_positions, grid_res, grad_indices, all_grad_vectors, Col_labels,
             kdtree_scale=kdtree_scale, output_dir=output_dir)
-        # Update system with new all-features grids
+        
+        # Update the combined velocity fields used by particle animation
+        grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (grid_res, grid_res)
+        grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (grid_res, grid_res)
+        
+        # Update system with new grids that animation will use
+        system['grid_u_sum'] = grid_u_sum
+        system['grid_v_sum'] = grid_v_sum
         system['grid_u_all_feats'] = grid_u_all_feats_new
         system['grid_v_all_feats'] = grid_v_all_feats_new
+        system['cell_dominant_features'] = cell_dominant_features  # Update dominant features too
         # Update color mappings for particles using top-6 logic
         new_feature_colors = []
         for feat_idx in grad_indices:
@@ -1204,13 +1217,13 @@ def main():
 
     for frame in range(5):
         # Update the system state for this frame.
-        update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale, grid_u_sum, grid_v_sum, grid_res)
+        update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale, None, None, grid_res)
         # Save the current state of the figure.
         fig.savefig(os.path.join(output_dir, f"frame_{frame}.png"), dpi=300)
 
     # Create the animation
     anim = FuncAnimation(fig, 
-                         lambda frame: update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale, grid_u_sum, grid_v_sum, grid_res), 
+                         lambda frame: update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity_scale, None, None, grid_res), 
                          frames=1000, interval=30, blit=False)
 
     # Save the figure as a PNG file with 300 dpi.
