@@ -15,6 +15,11 @@ from scipy.spatial import cKDTree
 # Add source path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from featurewind.TangentPoint import TangentPoint
+from featurewind.MetricAwareProcessor import MetricAwareProcessor
+
+# Add renderers path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'renderers'))
+from ibfv_renderer import IBFVRenderer, IBFVAnimator
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for React frontend
@@ -178,8 +183,13 @@ class FeatureWindProcessor:
         
         return self.grid_data
 
-# Global processor instance
-processor = FeatureWindProcessor()
+# Global processor instances
+processor = FeatureWindProcessor()  # Legacy processor for backward compatibility
+metric_processor = MetricAwareProcessor()  # New research-grade processor
+
+# IBFV Renderer instances
+ibfv_renderer = IBFVRenderer(texture_size=512, use_gpu=True)
+ibfv_animator = IBFVAnimator(ibfv_renderer)
 
 @app.route('/api/load_data', methods=['POST'])
 def load_data():
@@ -373,14 +383,14 @@ def get_grid_data():
         for col in range(n_cols):
             line = []
             for row in range(n_rows):
-                line.append([grid_x[row, col], grid_y[row, col]])
+                line.append([float(grid_x[row, col]), float(grid_y[row, col])])
             grid_lines.append(line)
         
         # Horizontal lines
         for row in range(n_rows):
             line = []
             for col in range(n_cols):
-                line.append([grid_x[row, col], grid_y[row, col]])
+                line.append([float(grid_x[row, col]), float(grid_y[row, col])])
             grid_lines.append(line)
         
         # Prepare cell data
@@ -405,15 +415,15 @@ def get_grid_data():
                 cells.append({
                     'i': i,
                     'j': j,
-                    'bounds': [cell_xmin, cell_ymin, cell_xmax, cell_ymax],
+                    'bounds': [float(cell_xmin), float(cell_ymin), float(cell_xmax), float(cell_ymax)],
                     'dominant_feature': int(cell_dominant_features[i, j]),
-                    'is_empty': is_empty
+                    'is_empty': bool(is_empty)
                 })
         
         return jsonify({
             'grid_lines': grid_lines,
             'cells': cells,
-            'grid_res': grid_res
+            'grid_res': int(grid_res)
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -428,6 +438,326 @@ def available_files():
     
     files = [f for f in os.listdir(tangent_dir) if f.endswith('.tmap')]
     return jsonify({'files': files})
+
+# New metric-aware API endpoints
+
+@app.route('/api/load_data_tsne', methods=['POST'])
+def load_data_tsne():
+    """Load data and compute t-SNE projection with Jacobian (research mode)."""
+    data = request.get_json()
+    filename = data.get('filename', 'breast_cancer.tmap')
+    
+    tangent_map_path = os.path.join(os.path.dirname(__file__), 'tangentmaps', filename)
+    
+    if not os.path.exists(tangent_map_path):
+        return jsonify({'error': 'File not found'}), 404
+    
+    try:
+        # Load the .tmap file to extract high-D data
+        with open(tangent_map_path, "r") as f:
+            data_import = json.loads(f.read())
+        
+        tmap = data_import['tmap']
+        col_labels = data_import['Col_labels']
+        
+        # Extract high-dimensional points
+        points_data = np.array([entry['domain'] for entry in tmap])
+        
+        # Compute t-SNE with Jacobian
+        metric_processor.load_data_and_compute_tsne(points_data, col_labels)
+        
+        return jsonify({
+            'success': True,
+            'num_points': len(points_data),
+            'num_features': len(col_labels),
+            'bounding_box': metric_processor.bounding_box,
+            'feature_labels': col_labels,
+            'method': 't-SNE with Jacobian'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/setup_metric_visualization', methods=['POST'])
+def setup_metric_visualization():
+    """Setup metric-aware visualization with specified parameters."""
+    data = request.get_json()
+    k = data.get('k', 5)
+    grid_res = data.get('grid_res', 40)
+    kdtree_scale = data.get('kdtree_scale', 0.03)
+    metric_aware = data.get('metric_aware', True)
+    
+    if metric_processor.projection_runner is None:
+        return jsonify({'error': 'No data loaded'}), 400
+    
+    try:
+        # Toggle metric-aware mode
+        metric_processor.toggle_metric_aware(metric_aware)
+        
+        # Select top features
+        top_k_indices, avg_magnitudes = metric_processor.select_top_features(k)
+        
+        # Create grids
+        grid_data = metric_processor.create_metric_aware_grids(grid_res, kdtree_scale)
+        
+        return jsonify({
+            'success': True,
+            'top_k_indices': top_k_indices.tolist(),
+            'avg_magnitudes': avg_magnitudes.tolist(),
+            'grid_res': grid_res,
+            'bounding_box': metric_processor.bounding_box,
+            'metric_aware': metric_processor.metric_aware_enabled
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/get_jacobian', methods=['POST'])
+def get_jacobian():
+    """Get Jacobian matrix data for specific points."""
+    data = request.get_json()
+    point_indices = data.get('point_indices', [])
+    
+    if metric_processor.projection_runner is None:
+        return jsonify({'error': 'No data loaded'}), 400
+    
+    try:
+        jacobian_data = []
+        
+        for point_idx in point_indices:
+            if point_idx >= len(metric_processor.projected_positions):
+                continue
+                
+            jacobian = metric_processor.projection_runner.get_jacobian_for_point(point_idx)
+            metric_tensor = metric_processor.projection_runner.compute_metric_tensor(point_idx)
+            
+            jacobian_data.append({
+                'point_idx': point_idx,
+                'jacobian': jacobian.tolist(),
+                'metric_tensor': metric_tensor.tolist(),
+                'condition_number': float(np.linalg.cond(metric_tensor)),
+                'position': metric_processor.projected_positions[point_idx].tolist()
+            })
+        
+        return jsonify({
+            'jacobian_data': jacobian_data,
+            'feature_names': metric_processor.feature_names
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/get_metric_wind_vane_data', methods=['POST'])
+def get_metric_wind_vane_data():
+    """Get metric-aware wind vane data for a specific point."""
+    data = request.get_json()
+    point_idx = data.get('point_idx', 0)
+    
+    if metric_processor.grid_data is None:
+        return jsonify({'error': 'Grid data not initialized'}), 400
+    
+    try:
+        # Validate point index
+        if point_idx < 0 or point_idx >= len(metric_processor.projected_positions):
+            return jsonify({'error': 'Invalid point index'}), 400
+        
+        wind_vane_data = metric_processor.get_wind_vane_analysis(point_idx)
+        
+        return jsonify(wind_vane_data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/get_projected_points', methods=['GET'])
+def get_projected_points():
+    """Get t-SNE projected points for visualization."""
+    if metric_processor.projected_positions is None:
+        return jsonify({'error': 'No projection computed'}), 400
+    
+    try:
+        points_data = []
+        for i, position in enumerate(metric_processor.projected_positions):
+            points_data.append({
+                'position': position.tolist(),
+                'point_idx': i
+            })
+        
+        return jsonify({
+            'points': points_data,
+            'bounding_box': metric_processor.bounding_box
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/toggle_metric_aware', methods=['POST'])
+def toggle_metric_aware():
+    """Toggle metric-aware rendering mode."""
+    data = request.get_json()
+    enabled = data.get('enabled')
+    
+    if metric_processor.projection_runner is None:
+        return jsonify({'error': 'No data loaded'}), 400
+    
+    try:
+        current_state = metric_processor.toggle_metric_aware(enabled)
+        return jsonify({
+            'metric_aware': current_state,
+            'message': f"Metric-aware mode {'enabled' if current_state else 'disabled'}"
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# IBFV Rendering API endpoints
+
+@app.route('/api/render/ibfv/setup', methods=['POST'])
+def setup_ibfv_renderer():
+    """Setup IBFV renderer with velocity field."""
+    data = request.get_json()
+    use_metric_aware = data.get('metric_aware', False)
+    
+    # Determine which processor to use
+    if use_metric_aware and metric_processor.grid_data is not None:
+        grid_data = metric_processor.grid_data
+        bounding_box = metric_processor.bounding_box
+    elif processor.grid_data is not None:
+        grid_data = processor.grid_data
+        bounding_box = processor.bounding_box
+    else:
+        return jsonify({'error': 'No grid data available'}), 400
+    
+    try:
+        # Get velocity field components
+        grid_u_sum = grid_data['grid_u_sum']
+        grid_v_sum = grid_data['grid_v_sum']
+        
+        # Setup IBFV renderer
+        ibfv_renderer.set_velocity_field(grid_u_sum, grid_v_sum, bounding_box)
+        
+        # Configure parameters
+        ibfv_params = data.get('parameters', {})
+        ibfv_renderer.set_parameters(
+            injection_rate=ibfv_params.get('injection_rate', 0.05),
+            decay_rate=ibfv_params.get('decay_rate', 0.98),
+            advection_steps=ibfv_params.get('advection_steps', 1)
+        )
+        
+        return jsonify({
+            'success': True,
+            'texture_size': ibfv_renderer.texture_size,
+            'parameters': ibfv_renderer.get_parameters(),
+            'bounding_box': bounding_box
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/render/ibfv/frame', methods=['GET'])
+def render_ibfv_frame():
+    """Render single IBFV frame."""
+    try:
+        if ibfv_renderer.velocity_field_u is None:
+            return jsonify({'error': 'IBFV renderer not setup. Call /api/render/ibfv/setup first.'}), 400
+        
+        # Get query parameters
+        steps = int(request.args.get('steps', 1))
+        
+        # Render frame
+        frame_b64 = ibfv_renderer.render_to_base64(steps=steps)
+        
+        return jsonify({
+            'success': True,
+            'frame': frame_b64,
+            'parameters': ibfv_renderer.get_parameters()
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/render/ibfv/animate', methods=['POST'])
+def render_ibfv_animation():
+    """Generate IBFV animation frames."""
+    data = request.get_json()
+    num_frames = data.get('num_frames', 30)
+    use_metric_aware = data.get('metric_aware', False)
+    
+    # Determine which processor to use
+    if use_metric_aware and metric_processor.grid_data is not None:
+        grid_data = metric_processor.grid_data
+        bounding_box = metric_processor.bounding_box
+    elif processor.grid_data is not None:
+        grid_data = processor.grid_data
+        bounding_box = processor.bounding_box
+    else:
+        return jsonify({'error': 'No grid data available'}), 400
+    
+    try:
+        # Get velocity field components
+        grid_u_sum = grid_data['grid_u_sum']
+        grid_v_sum = grid_data['grid_v_sum']
+        
+        # Generate animation frames
+        frames = ibfv_animator.generate_animation_frames(
+            grid_u_sum, grid_v_sum, bounding_box, num_frames
+        )
+        
+        return jsonify({
+            'success': True,
+            'num_frames': len(frames),
+            'frames': frames,
+            'parameters': ibfv_renderer.get_parameters()
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/render/ibfv/realtime', methods=['GET'])
+def render_ibfv_realtime():
+    """Get real-time IBFV frame for continuous animation."""
+    try:
+        if ibfv_renderer.velocity_field_u is None:
+            return jsonify({'error': 'IBFV renderer not setup'}), 400
+        
+        # Get current velocity field (use existing setup)
+        frame_b64 = ibfv_animator.get_realtime_frame(
+            ibfv_renderer.velocity_field_u.squeeze().cpu().numpy(),
+            ibfv_renderer.velocity_field_v.squeeze().cpu().numpy(),
+            ibfv_renderer.bounding_box
+        )
+        
+        return jsonify({
+            'success': True,
+            'frame': frame_b64,
+            'frame_count': ibfv_animator.frame_count
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/render/ibfv/parameters', methods=['GET', 'POST'])
+def ibfv_parameters():
+    """Get or update IBFV parameters."""
+    if request.method == 'GET':
+        return jsonify(ibfv_renderer.get_parameters())
+    
+    elif request.method == 'POST':
+        try:
+            data = request.get_json()
+            ibfv_renderer.set_parameters(
+                injection_rate=data.get('injection_rate'),
+                decay_rate=data.get('decay_rate'),
+                advection_steps=data.get('advection_steps')
+            )
+            
+            return jsonify({
+                'success': True,
+                'parameters': ibfv_renderer.get_parameters()
+            })
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+@app.route('/api/render/ibfv/reset', methods=['POST'])
+def reset_ibfv_texture():
+    """Reset IBFV texture to initial state."""
+    try:
+        ibfv_renderer.reset_texture()
+        return jsonify({
+            'success': True,
+            'message': 'IBFV texture reset'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)
