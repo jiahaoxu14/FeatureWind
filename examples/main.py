@@ -72,9 +72,9 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels
     for feat_idx in top_k_indices:
         # Extract the vectors for the given feature.
         vectors = all_grad_vectors[:, feat_idx, :]  # shape: (#points, 2)
-        # Interpolate each component onto the grid.
-        grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='nearest')
-        grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='nearest')
+        # Interpolate each component onto the grid with smooth transitions
+        grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='linear', fill_value=0.0)
+        grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='linear', fill_value=0.0)
         # Mask out grid cells too far from any data.
         mask = dist_grid > threshold
         grid_u[mask] = 0.0
@@ -96,9 +96,9 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels
     for feat_idx in range(num_features):
         # Extract vectors for this feature
         vectors = all_grad_vectors[:, feat_idx, :]  # shape: (#points, 2)
-        # Interpolate each component onto the grid
-        grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='nearest')
-        grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='nearest')
+        # Interpolate each component onto the grid with smooth transitions
+        grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='linear', fill_value=0.0)
+        grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='linear', fill_value=0.0)
         # Apply same masking as top-k features
         mask = dist_grid > threshold
         grid_u[mask] = 0.0
@@ -207,8 +207,8 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtr
     grid_u_all, grid_v_all = [], []
     for m in range(num_features):
         vectors = all_grad_vectors[:, m, :]  # shape: (#points, 2)
-        grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='nearest')
-        grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='nearest')
+        grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='linear', fill_value=0.0)
+        grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='linear', fill_value=0.0)
         mask = dist_grid > threshold
         grid_u[mask] = 0.0
         grid_v[mask] = 0.0
@@ -646,11 +646,374 @@ def main():
     # Create main subplots
     ax1 = plt.subplot2grid((20, 2), (0, 0), rowspan=18)
     ax2 = plt.subplot2grid((20, 2), (0, 1), rowspan=18)
-    # --- feature-selection UI controls ---
+    # --- UI Mode Controls ---
+    # Mode selection radio buttons
+    ax_mode = fig.add_axes([0.05, 0.02, 0.25, 0.06])
+    mode_radio = RadioButtons(ax_mode, ('Top-K Mode', 'Direction-Conditioned Mode'))
+    mode_radio.set_active(0)  # Start with Top-K mode
+    
+    # Current mode state
+    current_mode = {'mode': 'top_k'}  # 'top_k' or 'direction_conditioned'
+    
+    # --- Top-K Mode Controls ---
     # Slider for selecting k in Top k mode
-    ax_k = fig.add_axes([0.55, 0.02, 0.35, 0.03])
+    ax_k = fig.add_axes([0.35, 0.02, 0.30, 0.03])
     k_slider = Slider(ax_k, 'Top k Features', 1, len(Col_labels), valinit=len(grad_indices), 
                       valfmt='%d', facecolor='lightgreen', alpha=0.7)
+    
+    # --- Direction-Conditioned Mode Controls ---
+    # Angle slider for direction specification
+    ax_angle = fig.add_axes([0.70, 0.06, 0.25, 0.03])
+    angle_slider = Slider(ax_angle, 'Direction (°)', 0, 360, valinit=0, 
+                         valfmt='%.0f°', facecolor='lightblue', alpha=0.7)
+    
+    # Magnitude slider for desired flow strength
+    ax_magnitude = fig.add_axes([0.70, 0.02, 0.25, 0.03])
+    magnitude_slider = Slider(ax_magnitude, 'Magnitude', 0.1, 2.0, valinit=1.0, 
+                             valfmt='%.1f', facecolor='lightcoral', alpha=0.7)
+    
+    # Status text for direction-conditioned mode
+    ax_status = fig.add_axes([0.35, 0.06, 0.30, 0.03])
+    ax_status.text(0.5, 0.5, 'Select grid cells and specify direction', 
+                   ha='center', va='center', fontsize=10, 
+                   bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.7))
+    ax_status.set_xlim(0, 1)
+    ax_status.set_ylim(0, 1)
+    ax_status.axis('off')
+    
+    # Initially hide direction-conditioned controls
+    ax_angle.set_visible(False)
+    ax_magnitude.set_visible(False)
+    ax_status.set_visible(False)
+    
+    # Data structures for direction-conditioned mode
+    selected_cells = set()  # Set of (i, j) grid cell indices
+    user_constraints = {}   # {(i, j): {"direction": (dx, dy), "weight": float}}
+    constraint_arrows = []  # Visual arrows for constraints
+    cell_highlight_patches = []  # Visual highlighting for selected cells
+    
+    # Mode switching callback
+    def switch_mode(label):
+        nonlocal current_mode
+        if label == 'Top-K Mode':
+            current_mode['mode'] = 'top_k'
+            # Show top-k controls, hide direction controls
+            ax_k.set_visible(True)
+            ax_angle.set_visible(False)
+            ax_magnitude.set_visible(False)
+            ax_status.set_visible(False)
+            # Clear any selected cells and constraints
+            selected_cells.clear()
+            user_constraints.clear()
+            clear_constraint_visuals()
+        else:  # Direction-Conditioned Mode
+            current_mode['mode'] = 'direction_conditioned'
+            # Hide top-k controls, show direction controls
+            ax_k.set_visible(False)
+            ax_angle.set_visible(True)
+            ax_magnitude.set_visible(True)
+            ax_status.set_visible(True)
+            # Reset to no features selected (no wind)
+            reset_to_no_features()
+            update_status_text("Select grid cells and specify direction")
+        
+        # Redraw the interface
+        fig.canvas.draw_idle()
+    
+    mode_radio.on_clicked(switch_mode)
+    
+    # Helper functions for mode switching
+    def clear_constraint_visuals():
+        """Remove all constraint arrows and highlights from the visualization"""
+        for arrow in constraint_arrows:
+            try:
+                arrow.remove()
+            except (ValueError, AttributeError):
+                pass
+        constraint_arrows.clear()
+        
+        # Clear cell highlighting patches
+        for patch in cell_highlight_patches:
+            try:
+                patch.remove()
+            except (ValueError, AttributeError):
+                pass
+        cell_highlight_patches.clear()
+    
+    def update_cell_highlighting():
+        """Update visual highlighting for selected grid cells"""
+        # Clear existing highlights
+        for patch in cell_highlight_patches:
+            try:
+                patch.remove()
+            except (ValueError, AttributeError):
+                pass
+        cell_highlight_patches.clear()
+        
+        # Add highlights for all selected cells
+        for cell_i, cell_j in selected_cells:
+            # Calculate cell boundaries
+            cell_xmin = xmin + cell_j * (xmax - xmin) / grid_res
+            cell_xmax = xmin + (cell_j + 1) * (xmax - xmin) / grid_res
+            cell_ymin = ymin + cell_i * (ymax - ymin) / grid_res
+            cell_ymax = ymin + (cell_i + 1) * (ymax - ymin) / grid_res
+            
+            # Create highlighting rectangle
+            from matplotlib.patches import Rectangle
+            highlight = Rectangle((cell_xmin, cell_ymin), 
+                                cell_xmax - cell_xmin, cell_ymax - cell_ymin,
+                                facecolor='yellow', alpha=0.3, 
+                                edgecolor='orange', linewidth=2, zorder=5)
+            ax1.add_patch(highlight)
+            cell_highlight_patches.append(highlight)
+    
+    def reset_to_no_features():
+        """Reset system to have no features selected (no particle flow)"""
+        nonlocal grad_indices, grid_u_sum, grid_v_sum
+        grad_indices = []  # No features selected
+        # Set velocity grids to zero
+        grid_u_sum = np.zeros_like(grid_u_sum)
+        grid_v_sum = np.zeros_like(grid_v_sum)
+        # Update system grids
+        system['grid_u_sum'] = grid_u_sum
+        system['grid_v_sum'] = grid_v_sum
+    
+    def update_status_text(message):
+        """Update the status text in direction-conditioned mode"""
+        ax_status.clear()
+        ax_status.text(0.5, 0.5, message, ha='center', va='center', fontsize=9,
+                      bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.7))
+        ax_status.set_xlim(0, 1)
+        ax_status.set_ylim(0, 1)
+        ax_status.axis('off')
+    
+    # Direction specification callbacks
+    def update_direction_constraints(val=None):
+        """Update direction constraints for selected cells based on slider values"""
+        if current_mode['mode'] != 'direction_conditioned' or not selected_cells:
+            return
+            
+        # Get current angle and magnitude from sliders
+        angle_deg = angle_slider.val
+        magnitude = magnitude_slider.val
+        
+        # Convert angle to direction vector
+        angle_rad = np.radians(angle_deg)
+        direction_x = np.cos(angle_rad) * magnitude
+        direction_y = np.sin(angle_rad) * magnitude
+        
+        # Update constraints for all selected cells
+        for cell in selected_cells:
+            user_constraints[cell] = {
+                "direction": (direction_x, direction_y),
+                "weight": 1.0,
+                "enabled": True
+            }
+        
+        # Update constraint visualization
+        update_constraint_arrows()
+        
+        # Trigger feature optimization
+        optimize_features_for_constraints()
+        
+        # Update status text with current constraint info
+        num_cells = len(selected_cells)
+        update_status_text(f"{num_cells} cell(s) constrained: {angle_deg:.0f}°, mag={magnitude:.1f}")
+        
+        print(f"Updated constraints: angle={angle_deg:.0f}°, magnitude={magnitude:.1f}")
+        fig.canvas.draw_idle()
+    
+    # Connect direction sliders to callback
+    angle_slider.on_changed(update_direction_constraints)
+    magnitude_slider.on_changed(update_direction_constraints)
+    
+    def update_constraint_arrows():
+        """Update visual arrows showing user constraints on selected cells"""
+        # Clear existing constraint arrows
+        for arrow in constraint_arrows:
+            try:
+                arrow.remove()
+            except (ValueError, AttributeError):
+                pass
+        constraint_arrows.clear()
+        
+        # Draw arrows for each constraint
+        for (cell_i, cell_j), constraint in user_constraints.items():
+            if not constraint.get("enabled", True):
+                continue
+                
+            # Calculate cell center
+            cell_center_x = xmin + (cell_j + 0.5) * (xmax - xmin) / grid_res
+            cell_center_y = ymin + (cell_i + 0.5) * (ymax - ymin) / grid_res
+            
+            # Get direction vector
+            dx, dy = constraint["direction"]
+            
+            # Scale arrow for visibility
+            arrow_scale = 0.8 * min((xmax - xmin) / grid_res, (ymax - ymin) / grid_res)
+            arrow_dx = dx * arrow_scale
+            arrow_dy = dy * arrow_scale
+            
+            # Create arrow
+            arrow = ax1.arrow(cell_center_x, cell_center_y, arrow_dx, arrow_dy,
+                            head_width=arrow_scale*0.2, head_length=arrow_scale*0.2,
+                            fc='red', ec='red', linewidth=2, alpha=0.8, zorder=6)
+            constraint_arrows.append(arrow)
+    
+    def optimize_features_for_constraints():
+        """Find the best combination of features that match user constraints"""
+        if not user_constraints:
+            # No constraints, reset to no features
+            reset_to_no_features()
+            return
+        
+        print(f"Optimizing features for {len(user_constraints)} constraints...")
+        
+        # Show constraints being optimized for
+        for (i, j), constraint in user_constraints.items():
+            dx, dy = constraint["direction"]
+            angle = np.degrees(np.arctan2(dy, dx))
+            mag = np.sqrt(dx**2 + dy**2)
+            print(f"  Cell ({i},{j}): angle={angle:.0f}°, magnitude={mag:.2f}")
+        
+        # Parameters for optimization
+        max_features = min(10, len(Col_labels))  # Limit search space
+        best_score = -float('inf')
+        best_features = []
+        
+        # Try different feature combinations using greedy forward selection
+        current_features = []
+        remaining_features = list(range(len(Col_labels)))
+        
+        for step in range(max_features):
+            best_candidate = None
+            best_candidate_score = -float('inf')
+            
+            # Try adding each remaining feature
+            for feat_idx in remaining_features:
+                candidate_features = current_features + [feat_idx]
+                score = evaluate_feature_combination(candidate_features)
+                
+                if score > best_candidate_score:
+                    best_candidate_score = score
+                    best_candidate = feat_idx
+            
+            # If adding this feature improves the score, add it
+            if best_candidate is not None and best_candidate_score > best_score:
+                current_features.append(best_candidate)
+                remaining_features.remove(best_candidate)
+                best_score = best_candidate_score
+                best_features = current_features.copy()
+                print(f"Added feature {best_candidate} ({Col_labels[best_candidate]}), score: {best_score:.3f}")
+            else:
+                # No improvement, stop search
+                break
+        
+        # Apply the best feature combination
+        apply_feature_combination(best_features)
+        
+        # Update status with optimization results
+        if best_features:
+            feature_names = [Col_labels[i] for i in best_features[:3]]  # Show first 3 feature names
+            if len(best_features) > 3:
+                status_msg = f"Using {len(best_features)} features: {', '.join(feature_names)}..."
+            else:
+                status_msg = f"Using {len(best_features)} features: {', '.join(feature_names)}"
+            update_status_text(status_msg)
+        else:
+            update_status_text("No suitable features found")
+        
+        print(f"Final optimization: {len(best_features)} features, score: {best_score:.3f}")
+    
+    def evaluate_feature_combination(feature_indices):
+        """Evaluate how well a feature combination matches user constraints"""
+        if not feature_indices or not user_constraints:
+            return -1.0
+        
+        # Create combined velocity field for these features
+        # Use the same shape as the all-features grids
+        if len(grid_u_all_feats) > 0:
+            combined_u = np.zeros_like(grid_u_all_feats[0])
+            combined_v = np.zeros_like(grid_v_all_feats[0])
+        else:
+            combined_u = np.zeros((grid_res + 1, grid_res + 1))
+            combined_v = np.zeros((grid_res + 1, grid_res + 1))
+        
+        for feat_idx in feature_indices:
+            if feat_idx < len(grid_u_all_feats):
+                combined_u += grid_u_all_feats[feat_idx]
+                combined_v += grid_v_all_feats[feat_idx]
+        
+        total_score = 0.0
+        total_weight = 0.0
+        
+        # Evaluate alignment at each constrained cell
+        for (cell_i, cell_j), constraint in user_constraints.items():
+            if not constraint.get("enabled", True):
+                continue
+            
+            # Get desired direction
+            desired_dx, desired_dy = constraint["direction"]
+            desired_magnitude = np.sqrt(desired_dx**2 + desired_dy**2)
+            
+            if desired_magnitude < 1e-6:
+                continue  # Skip zero constraints
+            
+            # Get actual velocity at cell center by averaging corner vertices
+            actual_u = (combined_u[cell_i, cell_j] + combined_u[cell_i+1, cell_j] + 
+                       combined_u[cell_i, cell_j+1] + combined_u[cell_i+1, cell_j+1]) / 4.0
+            actual_v = (combined_v[cell_i, cell_j] + combined_v[cell_i+1, cell_j] + 
+                       combined_v[cell_i, cell_j+1] + combined_v[cell_i+1, cell_j+1]) / 4.0
+            
+            actual_magnitude = np.sqrt(actual_u**2 + actual_v**2)
+            
+            if actual_magnitude < 1e-6:
+                # No flow at this location
+                alignment = 0.0
+            else:
+                # Compute cosine similarity (dot product of normalized vectors)
+                alignment = (actual_u * desired_dx + actual_v * desired_dy) / (actual_magnitude * desired_magnitude)
+                # Bonus for magnitude matching
+                magnitude_ratio = min(actual_magnitude / desired_magnitude, desired_magnitude / actual_magnitude)
+                alignment = alignment * (0.7 + 0.3 * magnitude_ratio)  # Weight direction more than magnitude
+            
+            weight = constraint.get("weight", 1.0)
+            total_score += alignment * weight
+            total_weight += weight
+        
+        return total_score / max(total_weight, 1e-6)
+    
+    def apply_feature_combination(feature_indices):
+        """Apply the optimized feature combination to the system"""
+        nonlocal grad_indices, grid_u_sum, grid_v_sum
+        
+        grad_indices = feature_indices
+        
+        if not feature_indices:
+            # No features selected
+            grid_u_sum = np.zeros_like(grid_u_sum)
+            grid_v_sum = np.zeros_like(grid_v_sum)
+        else:
+            # Sum the selected features - use consistent shape
+            if len(grid_u_all_feats) > 0:
+                grid_u_sum = np.zeros_like(grid_u_all_feats[0])
+                grid_v_sum = np.zeros_like(grid_v_all_feats[0])
+            else:
+                grid_u_sum = np.zeros((grid_res + 1, grid_res + 1))
+                grid_v_sum = np.zeros((grid_res + 1, grid_res + 1))
+            
+            for feat_idx in feature_indices:
+                if feat_idx < len(grid_u_all_feats):
+                    grid_u_sum += grid_u_all_feats[feat_idx]
+                    grid_v_sum += grid_v_all_feats[feat_idx]
+        
+        # Update system grids for particle animation
+        system['grid_u_sum'] = grid_u_sum
+        system['grid_v_sum'] = grid_v_sum
+        
+        # Update other system components if needed
+        # Note: We're not rebuilding interpolators here for performance,
+        # but the particle system uses the grid arrays directly
     
     # callback to update selected features based on Top k only
     def update_features(val):
@@ -1098,14 +1461,56 @@ def main():
     def on_motion(event):
         """Handle mouse motion over the feature wind map"""
         if event.inaxes == ax1 and event.xdata is not None and event.ydata is not None:
-            # Debug print to verify mouse events are working
-            print(f"Mouse motion at: ({event.xdata:.2f}, {event.ydata:.2f})")
-            update_mouse_grid_cell(event.xdata, event.ydata)
-            fig.canvas.draw_idle()
+            # Only update wind vane in top-k mode, reduce debug printing
+            if current_mode['mode'] == 'top_k':
+                update_mouse_grid_cell(event.xdata, event.ydata)
+                fig.canvas.draw_idle()
     
+    def on_click(event):
+        """Handle mouse clicks for grid cell selection in direction-conditioned mode"""
+        if (event.inaxes == ax1 and event.xdata is not None and event.ydata is not None 
+            and current_mode['mode'] == 'direction_conditioned'):
+            
+            # Convert click position to grid cell indices
+            cell_i = int((event.ydata - ymin) / (ymax - ymin) * grid_res)
+            cell_j = int((event.xdata - xmin) / (xmax - xmin) * grid_res)
+            
+            # Clamp to valid range
+            cell_i = max(0, min(grid_res - 1, cell_i))
+            cell_j = max(0, min(grid_res - 1, cell_j))
+            
+            # Toggle cell selection (Ctrl+click for multi-select, regular click for single select)
+            if event.key == 'ctrl':
+                # Multi-select mode: toggle this cell
+                if (cell_i, cell_j) in selected_cells:
+                    selected_cells.remove((cell_i, cell_j))
+                    if (cell_i, cell_j) in user_constraints:
+                        del user_constraints[(cell_i, cell_j)]
+                    print(f"Deselected cell ({cell_i}, {cell_j})")
+                else:
+                    selected_cells.add((cell_i, cell_j))
+                    print(f"Selected cell ({cell_i}, {cell_j})")
+            else:
+                # Single select mode: clear previous and select this cell
+                selected_cells.clear()
+                user_constraints.clear()
+                selected_cells.add((cell_i, cell_j))
+                print(f"Selected cell ({cell_i}, {cell_j}) (cleared previous)")
+            
+            # Update visual highlighting
+            update_cell_highlighting()
+            
+            # Update status text
+            if selected_cells:
+                update_status_text(f"{len(selected_cells)} cell(s) selected. Adjust angle/magnitude sliders.")
+            else:
+                update_status_text("Select grid cells and specify direction")
+            
+            fig.canvas.draw_idle()
     
     # Connect events
     fig.canvas.mpl_connect('motion_notify_event', on_motion)
+    fig.canvas.mpl_connect('button_press_event', on_click)
     
     # Initial grid cell visualization
     update_grid_cell_visualization()
