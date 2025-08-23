@@ -483,6 +483,10 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
         
         rk4_result = pos + dt * (k1 + 2*k2 + 2*k3 + k4) / 6.0
         
+        # Estimate velocity at final position using RK4 intermediate values
+        # This is more accurate than k4 alone and avoids recomputing velocity
+        estimated_final_velocity = (k1 + 2*k2 + 2*k3 + k4) / 6.0
+        
         # Embedded Heun method for error estimation (simpler RK2)
         heun_k1 = k1
         heun_k2 = get_vel_func(pos + dt * heun_k1)
@@ -492,10 +496,7 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
         error = np.linalg.norm(rk4_result - heun_result, axis=1)
         max_error_this_step = np.max(error)
         
-        return rk4_result, dt, max_error_this_step
-    
-    # Get initial velocity for speed calculation (used for particle coloring)
-    velocity = get_velocity(pp)
+        return rk4_result, dt, max_error_this_step, estimated_final_velocity
     
     # Adaptive integration with error control
     total_time = 0.0
@@ -504,12 +505,13 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
     
     max_steps = 10  # Prevent infinite loops
     step_count = 0
+    final_velocity = None  # Store final velocity for accurate coloring
     
     while total_time < target_total_time and step_count < max_steps:
         remaining_time = target_total_time - total_time
         target_dt = min(0.25, remaining_time)  # Start with quarter steps
         
-        new_pos, dt_used, error_est = adaptive_rk4_step(current_pos, target_dt, get_velocity)
+        new_pos, dt_used, error_est, estimated_velocity = adaptive_rk4_step(current_pos, target_dt, get_velocity)
         
         # Simple error control: accept step if error is reasonable
         if error_est < 0.01 or dt_used < 1e-3:
@@ -517,6 +519,9 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
             current_pos = new_pos
             total_time += dt_used
             step_count += 1
+            
+            # Use the estimated velocity from RK4 intermediate steps
+            final_velocity = estimated_velocity
         else:
             # Reduce time step and try again
             target_dt *= 0.5
@@ -525,8 +530,14 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
                 current_pos = new_pos
                 total_time += dt_used
                 step_count += 1
+                
+                # Use the estimated velocity even for forced steps
+                final_velocity = estimated_velocity
     
     pp[:] = current_pos
+    
+    # Use the current velocity after integration for accurate coloring
+    velocity = final_velocity if final_velocity is not None else get_velocity(pp)
 
     # Shift history
     his[:, :-1, :] = his[:, 1:, :]
