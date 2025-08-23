@@ -12,7 +12,7 @@ from matplotlib.patches import Rectangle, Ellipse
 from matplotlib.widgets import Slider, RadioButtons, CheckButtons
 from scipy.interpolate import griddata, RegularGridInterpolator
 from scipy.spatial import cKDTree, ConvexHull
-from scipy.ndimage import maximum_filter, gaussian_filter
+from scipy.ndimage import maximum_filter, gaussian_filter, binary_closing, binary_dilation
 
 try:
     import colorcet as cc
@@ -94,10 +94,22 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels
         # Interpolate each component onto the grid with smooth transitions
         grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='linear', fill_value=0.0)
         grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='linear', fill_value=0.0)
-        # Mask out grid cells too far from any data.
-        mask = dist_grid > threshold
-        grid_u[mask] = 0.0
-        grid_v[mask] = 0.0
+        
+        # Create smooth mask to avoid jagged boundaries
+        magnitude_grid = np.sqrt(grid_u**2 + grid_v**2)
+        # Apply Gaussian smoothing to magnitude grid
+        smooth_magnitude = gaussian_filter(magnitude_grid, sigma=1.0)
+        # Create distance-based mask with morphological smoothing  
+        distance_mask = dist_grid > threshold
+        # Apply morphological closing to smooth boundaries
+        smooth_mask = binary_closing(distance_mask, structure=np.ones((3,3)))
+        # Combine with magnitude-based threshold for final mask
+        # Use smoothed magnitude to avoid sharp transitions
+        magnitude_threshold = np.percentile(smooth_magnitude[~smooth_mask], 10) if np.any(~smooth_mask) else 0.0
+        final_mask = smooth_mask | (smooth_magnitude < magnitude_threshold)
+        
+        grid_u[final_mask] = 0.0
+        grid_v[final_mask] = 0.0
         grid_u_feats.append(grid_u)
         grid_v_feats.append(grid_v)
     grid_u_feats = np.array(grid_u_feats)  # shape: (k, num_vertices, num_vertices)
@@ -253,9 +265,21 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, outp
         vectors = all_grad_vectors[:, m, :]  # shape: (#points, 2)
         grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='linear', fill_value=0.0)
         grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='linear', fill_value=0.0)
-        mask = dist_grid > threshold
-        grid_u[mask] = 0.0
-        grid_v[mask] = 0.0
+        
+        # Create smooth mask to avoid jagged boundaries
+        magnitude_grid = np.sqrt(grid_u**2 + grid_v**2)
+        # Apply Gaussian smoothing to magnitude grid
+        smooth_magnitude = gaussian_filter(magnitude_grid, sigma=1.0)
+        # Create distance-based mask with morphological smoothing  
+        distance_mask = dist_grid > threshold
+        # Apply morphological closing to smooth boundaries
+        smooth_mask = binary_closing(distance_mask, structure=np.ones((3,3)))
+        # Combine with magnitude-based threshold for final mask
+        magnitude_threshold = np.percentile(smooth_magnitude[~smooth_mask], 10) if np.any(~smooth_mask) else 0.0
+        final_mask = smooth_mask | (smooth_magnitude < magnitude_threshold)
+        
+        grid_u[final_mask] = 0.0
+        grid_v[final_mask] = 0.0
         grid_u_all.append(grid_u)
         grid_v_all.append(grid_v)
     grid_u_all = np.array(grid_u_all)  # shape: (M, grid_res, grid_res)
@@ -555,17 +579,115 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
             his[i] = pp[i]
             lt[i] = 0
 
-    # Randomly reinitialize some fraction
-    num_to_reinit = int(0.05 * len(pp))
-    if num_to_reinit > 0:
-        idxs = np.random.choice(len(pp), num_to_reinit, replace=False)
-        for idx in idxs:
-            pp[idx] = [
-                np.random.uniform(xmin, xmax),
-                np.random.uniform(ymin, ymax)
-            ]
-            his[idx] = pp[idx]
-            lt[idx] = 0
+    # Density/divergence-aware reseeding for temporal coherence
+    def density_aware_reseed():
+        if len(pp) == 0:
+            return
+            
+        # Create density grid (coarser than flow field for efficiency)
+        density_res = max(8, grid_res // 4)  # Adaptive resolution
+        density_grid = np.zeros((density_res, density_res))
+        divergence_grid = np.zeros((density_res, density_res))
+        
+        # Compute particle density
+        for pos in pp:
+            if xmin <= pos[0] <= xmax and ymin <= pos[1] <= ymax:
+                grid_x = int((pos[0] - xmin) / (xmax - xmin) * (density_res - 1))
+                grid_y = int((pos[1] - ymin) / (ymax - ymin) * (density_res - 1))
+                grid_x = max(0, min(density_res - 1, grid_x))
+                grid_y = max(0, min(density_res - 1, grid_y))
+                density_grid[grid_y, grid_x] += 1
+        
+        # Compute flow divergence on density grid
+        for i in range(1, density_res - 1):
+            for j in range(1, density_res - 1):
+                # Map density grid coordinates to flow field coordinates
+                x = xmin + j / (density_res - 1) * (xmax - xmin)
+                y = ymin + i / (density_res - 1) * (ymax - ymin)
+                
+                # Sample velocity at neighboring points using our interpolators
+                h = min((xmax - xmin) / density_res, (ymax - ymin) / density_res)
+                try:
+                    u_right = system['interp_u_sum']([[x + h, y]])[0]
+                    u_left = system['interp_u_sum']([[x - h, y]])[0]
+                    v_up = system['interp_v_sum']([[x, y + h]])[0]
+                    v_down = system['interp_v_sum']([[x, y - h]])[0]
+                    
+                    # Compute divergence: div = du/dx + dv/dy
+                    du_dx = (u_right - u_left) / (2 * h)
+                    dv_dy = (v_up - v_down) / (2 * h)
+                    divergence_grid[i, j] = du_dx + dv_dy
+                except:
+                    divergence_grid[i, j] = 0.0
+        
+        # Target density (particles per cell)
+        total_particles = len(pp)
+        target_density = total_particles / (density_res * density_res)
+        
+        # Find cells that need reseeding (low density, especially in divergent regions)
+        reseed_candidates = []
+        remove_candidates = []
+        
+        for i in range(density_res):
+            for j in range(density_res):
+                current_density = density_grid[i, j]
+                div_factor = max(0, divergence_grid[i, j])  # Only consider divergent regions
+                
+                # Cells with low density and positive divergence need particles
+                if current_density < target_density * 0.7:
+                    reseed_weight = (target_density - current_density) * (1 + div_factor * 0.5)
+                    reseed_candidates.append((i, j, reseed_weight))
+                
+                # Cells with high density could lose particles
+                elif current_density > target_density * 1.5:
+                    remove_candidates.append((i, j, current_density - target_density))
+        
+        # Limit reseeding to maintain temporal coherence (max 2% per frame)
+        max_reseed = int(0.02 * len(pp))
+        if max_reseed > 0 and reseed_candidates:
+            # Sort by reseeding weight
+            reseed_candidates.sort(key=lambda x: x[2], reverse=True)
+            
+            num_reseeded = 0
+            for i, j, weight in reseed_candidates:
+                if num_reseeded >= max_reseed:
+                    break
+                
+                # Find a particle to respawn (prefer older particles in high-density regions)
+                candidate_particles = []
+                for idx, pos in enumerate(pp):
+                    # Check if particle is in a high-density region or very old
+                    px_grid = int((pos[0] - xmin) / (xmax - xmin) * (density_res - 1))
+                    py_grid = int((pos[1] - ymin) / (ymax - ymin) * (density_res - 1))
+                    px_grid = max(0, min(density_res - 1, px_grid))
+                    py_grid = max(0, min(density_res - 1, py_grid))
+                    
+                    # Prefer particles from high-density regions or old particles
+                    if (density_grid[py_grid, px_grid] > target_density * 1.3 or 
+                        lt[idx] > max_lifetime * 0.8):
+                        candidate_particles.append(idx)
+                
+                if candidate_particles:
+                    # Choose particle to respawn (prefer oldest)
+                    idx = max(candidate_particles, key=lambda x: lt[x])
+                else:
+                    # Fallback: choose randomly from all particles
+                    idx = np.random.randint(len(pp))
+                
+                # Respawn in the target cell with some jitter
+                cell_x = xmin + (j + np.random.uniform(-0.4, 0.4)) / (density_res - 1) * (xmax - xmin)
+                cell_y = ymin + (i + np.random.uniform(-0.4, 0.4)) / (density_res - 1) * (ymax - ymin)
+                
+                # Ensure within bounds
+                cell_x = max(xmin, min(xmax, cell_x))
+                cell_y = max(ymin, min(ymax, cell_y))
+                
+                pp[idx] = [cell_x, cell_y]
+                his[idx] = pp[idx]
+                lt[idx] = 0
+                num_reseeded += 1
+    
+    density_aware_reseed()
 
     # Build line segments
     n_active = len(pp)
