@@ -51,7 +51,7 @@ def pick_top_k_features(all_grad_vectors):
     top_k_indices = np.argsort(-avg_magnitudes)[:k]
     return top_k_indices, avg_magnitudes
 
-def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels, kdtree_scale=0.1, output_dir="."):
+def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels, output_dir="."):
     # (1) Setup interpolation grid using cell-center convention
     # grid_res represents number of grid cells, create cell centers
     xmin, xmax, ymin, ymax = bounding_box
@@ -65,8 +65,26 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels
     grid_points = np.column_stack((grid_x.ravel(), grid_y.ravel()))
     distances, _ = kdtree.query(grid_points, k=1)
     dist_grid = distances.reshape(grid_x.shape)
-    threshold = max(abs(xmax - xmin), abs(ymax - ymin)) * kdtree_scale
-    print("Distance threshold:", threshold)
+    
+    # Compute adaptive threshold based on local point density
+    def compute_adaptive_threshold(positions, kdtree, percentile=75):
+        """Compute threshold based on local point density"""
+        # Get k-nearest neighbor distances for each point
+        k = min(5, len(positions))  # Use 5-NN or fewer if dataset is small
+        if k <= 1:
+            # Fallback for very small datasets
+            return max(abs(xmax - xmin), abs(ymax - ymin)) * 0.1
+        
+        distances, _ = kdtree.query(positions, k=k+1)  # k+1 because first is self
+        local_densities = distances[:, 1:].mean(axis=1)  # Average k-NN distance per point
+        
+        # Use a percentile of local densities as threshold
+        adaptive_threshold = np.percentile(local_densities, percentile)
+        return adaptive_threshold
+    
+    threshold = compute_adaptive_threshold(positions, kdtree, percentile=75)
+    print(f"Adaptive distance threshold: {threshold:.4f} (based on local density)")
+    print(f"  Data points: {len(positions)}, using {min(5, len(positions))}-NN distances")
     
     # (2) Interpolate velocity fields for the top-k features
     grid_u_feats, grid_v_feats = [], []
@@ -115,6 +133,8 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels
     
     # Create dominant features for each grid cell using ALL features
     cell_dominant_features = np.zeros((grid_res, grid_res), dtype=int)
+    # Store soft dominance probabilities for better visualization
+    cell_soft_dominance = np.zeros((grid_res, grid_res, num_features))
     
     for i in range(grid_res):
         for j in range(grid_res):
@@ -136,7 +156,21 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels
                     else:
                         print(f"  Rank {rank+1}: Feature {feat_idx} (out of range): {cell_mags[feat_idx]:.6f}")
             
-            # Find the feature with maximum magnitude among ALL features
+            # Compute soft dominance using temperature-based softmax
+            # Add small epsilon to avoid division by zero
+            cell_mags_safe = cell_mags + 1e-8
+            
+            # Temperature parameter: lower = more decisive, higher = more uncertainty
+            temperature = 0.5  # Adjust this to control softness (0.1=hard, 1.0=soft, 2.0=very soft)
+            
+            # Compute softmax probabilities
+            softmax_scores = np.exp(cell_mags_safe / temperature)
+            softmax_probs = softmax_scores / np.sum(softmax_scores)
+            
+            # Store probabilities for this cell
+            cell_soft_dominance[i, j, :] = softmax_probs
+            
+            # Store the dominant feature (still need one for compatibility)
             dominant_feat_idx = np.argmax(cell_mags)
             cell_dominant_features[i, j] = dominant_feat_idx
     
@@ -169,9 +203,9 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels
                                              cell_dominant_features, method='nearest',
                                              bounds_error=False, fill_value=-1)
     
-    return interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y
+    return interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y, cell_soft_dominance
 
-def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtree_scale=0.1, output_dir="."):
+def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, output_dir="."):
     """
     Alternative grid builder:
       - Divides space with grid_res.
@@ -194,8 +228,24 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtr
     grid_points = np.column_stack((grid_x.ravel(), grid_y.ravel()))
     distances, _ = kdtree.query(grid_points, k=1)
     dist_grid = distances.reshape(grid_x.shape)
-    threshold = max(abs(xmax - xmin), abs(ymax - ymin)) * kdtree_scale
-    print("Distance threshold:", threshold)
+    
+    # Compute adaptive threshold based on local point density
+    def compute_adaptive_threshold_alt(positions, kdtree, percentile=75):
+        """Compute threshold based on local point density"""
+        k = min(5, len(positions))  # Use 5-NN or fewer if dataset is small
+        if k <= 1:
+            # Fallback for very small datasets
+            return max(abs(xmax - xmin), abs(ymax - ymin)) * 0.1
+        
+        distances, _ = kdtree.query(positions, k=k+1)  # k+1 because first is self
+        local_densities = distances[:, 1:].mean(axis=1)  # Average k-NN distance per point
+        
+        # Use a percentile of local densities as threshold
+        adaptive_threshold = np.percentile(local_densities, percentile)
+        return adaptive_threshold
+    
+    threshold = compute_adaptive_threshold_alt(positions, kdtree, percentile=75)
+    print(f"Adaptive distance threshold (alt): {threshold:.4f} (based on local density)")
     
     # (2) For each feature, interpolate the velocity fields onto the grid.
     grid_u_all, grid_v_all = [], []
@@ -561,17 +611,15 @@ def main():
     grid_res = 40
     print("Grid resolution:", grid_res)
 
-    # Set the KD-tree scale
-    # kdtree_scale = 0.01 * grid_res
-    kdtree_scale = 0.03
+    # KD-tree scale no longer needed - using adaptive thresholding
 
     # Declare variables that will be used in nested functions
     grid_u_feats = None
     grid_v_feats = None 
     cell_dominant_features = None
     
-    interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y = build_grids(
-        all_positions, grid_res, grad_indices, all_grad_vectors, Col_labels, kdtree_scale=kdtree_scale, output_dir=output_dir
+    interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y, cell_soft_dominance = build_grids(
+        all_positions, grid_res, grad_indices, all_grad_vectors, Col_labels, output_dir=output_dir
     )
 
     # interp_u_sum, interp_v_sum, interp_argmax, grid_argmax_local, grid_x, grid_y = build_grids_alternative(
@@ -1035,9 +1083,8 @@ def main():
         k_val = int(val)
         grad_indices = list(np.argsort(-avg_magnitudes)[:k_val])
         # Rebuild grids for new top-k selection
-        interp_u_sum, interp_v_sum, interp_argmax, _, _, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats_new, grid_v_all_feats_new, _, _ = build_grids(
-            all_positions, grid_res, grad_indices, all_grad_vectors, Col_labels,
-            kdtree_scale=kdtree_scale, output_dir=output_dir)
+        interp_u_sum, interp_v_sum, interp_argmax, _, _, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats_new, grid_v_all_feats_new, _, _, cell_soft_dominance_new = build_grids(
+            all_positions, grid_res, grad_indices, all_grad_vectors, Col_labels, output_dir=output_dir)
         
         # Update the combined velocity fields used by particle animation
         grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (grid_res, grid_res)
@@ -1371,16 +1418,55 @@ def main():
                     max_mag = max(vector_magnitudes) if vector_magnitudes else 1.0
                     mag_intensity = 0.3 + 0.7 * (vector_magnitude / max_mag)
                     
-                    # Boost intensity if this is the dominant feature
-                    dominance_boost = 1.3 if feat_idx == dominant_feature else 1.0
+                    # Use soft dominance instead of hard dominance boost
+                    # Get the probability for this feature from soft dominance
+                    if 'cell_soft_dominance' in globals() and cell_soft_dominance is not None:
+                        # Get cell indices for the grid position
+                        cell_i = int(np.round((click_y - cell_centers_y[0]) / (cell_centers_y[1] - cell_centers_y[0])))
+                        cell_j = int(np.round((click_x - cell_centers_x[0]) / (cell_centers_x[1] - cell_centers_x[0])))
+                        
+                        # Clamp to valid range
+                        cell_i = max(0, min(grid_res - 1, cell_i))
+                        cell_j = max(0, min(grid_res - 1, cell_j))
+                        
+                        # Get soft dominance probability for this feature
+                        if feat_idx < cell_soft_dominance.shape[2]:
+                            soft_prob = cell_soft_dominance[cell_i, cell_j, feat_idx]
+                            dominance_boost = 0.8 + 0.8 * soft_prob  # Scale from 0.8 to 1.6 based on probability
+                        else:
+                            dominance_boost = 1.0
+                    else:
+                        # Fallback to hard dominance if soft dominance not available
+                        dominance_boost = 1.3 if feat_idx == dominant_feature else 1.0
+                    
                     intensity = min(1.0, mag_intensity * dominance_boost)
+                    
+                    # Add uncertainty visualization through desaturation
+                    uncertainty_factor = 1.0  # Default: no desaturation
+                    if 'cell_soft_dominance' in globals() and cell_soft_dominance is not None:
+                        # Calculate uncertainty as entropy of the probability distribution
+                        if feat_idx < cell_soft_dominance.shape[2]:
+                            probs = cell_soft_dominance[cell_i, cell_j, :]
+                            # Compute entropy: higher entropy = more uncertainty
+                            entropy = -np.sum(probs * np.log(probs + 1e-8))
+                            max_entropy = np.log(len(probs))  # Maximum possible entropy
+                            normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
+                            
+                            # Convert entropy to desaturation factor: high uncertainty = more desaturation
+                            uncertainty_factor = 0.5 + 0.5 * (1.0 - normalized_entropy)  # Range [0.5, 1.0]
+                    
+                    # Apply desaturation by blending with gray
+                    gray_value = 0.5  # Mid-gray
+                    desaturated_r = base_r * uncertainty_factor + gray_value * (1 - uncertainty_factor)
+                    desaturated_g = base_g * uncertainty_factor + gray_value * (1 - uncertainty_factor)  
+                    desaturated_b = base_b * uncertainty_factor + gray_value * (1 - uncertainty_factor)
                     
                     # Adjust alpha based on hull membership
                     pos_alpha = intensity * (0.9 if pos_on_hull else 0.6)
                     neg_alpha = intensity * (0.7 if neg_on_hull else 0.4)
                     
-                    pos_color = (base_r, base_g, base_b, pos_alpha)
-                    neg_color = (base_r, base_g, base_b, neg_alpha)
+                    pos_color = (desaturated_r, desaturated_g, desaturated_b, pos_alpha)
+                    neg_color = (desaturated_r, desaturated_g, desaturated_b, neg_alpha)
                 else:
                     # Fallback to black/gray scheme
                     pos_alpha = 0.8 if pos_on_hull else 0.4
