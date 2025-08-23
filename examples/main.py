@@ -371,21 +371,32 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
 
     # Helper function to get velocity at any position
     def get_velocity(positions):
-        # Use grids from system (updated by slider callback)
-        if 'grid_u_sum' in system and 'grid_v_sum' in system and grid_res is not None:
-            current_grid_u = system['grid_u_sum']
-            current_grid_v = system['grid_v_sum']
-            # Convert positions to grid cell indices
-            cell_i_indices = np.clip(((positions[:, 1] - ymin) / (ymax - ymin) * grid_res).astype(int), 0, grid_res - 1)
-            cell_j_indices = np.clip(((positions[:, 0] - xmin) / (xmax - xmin) * grid_res).astype(int), 0, grid_res - 1)
-            
-            # Sample velocity directly from grid cells
-            U = current_grid_u[cell_i_indices, cell_j_indices]
-            V = current_grid_v[cell_i_indices, cell_j_indices]
-        else:
-            # Fallback to interpolation method
+        # Always prefer smooth bilinear interpolation for consistent motion
+        if 'interp_u_sum' in system and 'interp_v_sum' in system:
+            # Direction-conditioned mode: use updated interpolators from system
+            current_interp_u = system['interp_u_sum']
+            current_interp_v = system['interp_v_sum']
+            U = current_interp_u(positions)
+            V = current_interp_v(positions)
+        elif interp_u_sum is not None and interp_v_sum is not None:
+            # Top-K mode: use original interpolators
             U = interp_u_sum(positions)
             V = interp_v_sum(positions)
+        else:
+            # Fallback: direct grid indexing (should rarely be used)
+            if 'grid_u_sum' in system and 'grid_v_sum' in system:
+                current_grid_u = system['grid_u_sum']
+                current_grid_v = system['grid_v_sum']
+                # Convert positions to grid cell indices
+                cell_i_indices = np.clip(((positions[:, 1] - ymin) / (ymax - ymin) * grid_res).astype(int), 0, grid_res - 1)
+                cell_j_indices = np.clip(((positions[:, 0] - xmin) / (xmax - xmin) * grid_res).astype(int), 0, grid_res - 1)
+                # Sample velocity directly from grid cells
+                U = current_grid_u[cell_i_indices, cell_j_indices]
+                V = current_grid_v[cell_i_indices, cell_j_indices]
+            else:
+                # No velocity field available
+                U = np.zeros(len(positions))
+                V = np.zeros(len(positions))
         
         return np.column_stack((U, V)) * velocity_scale
 
@@ -638,6 +649,9 @@ def main():
     system['grid_v_all_feats'] = grid_v_all_feats  # Store for wind vane
     system['grid_u_sum'] = grid_u_sum  # Store velocity grids for particle animation
     system['grid_v_sum'] = grid_v_sum
+    # Store initial interpolators for smooth motion
+    system['interp_u_sum'] = interp_u_sum
+    system['interp_v_sum'] = interp_v_sum
     lc = system['linecoll']
 
     # prepare the figure with 2 subplots and space for controls
@@ -777,6 +791,11 @@ def main():
         # Update system grids
         system['grid_u_sum'] = grid_u_sum
         system['grid_v_sum'] = grid_v_sum
+        # Create zero interpolators for smooth motion
+        system['interp_u_sum'] = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
+                                                         grid_u_sum, bounds_error=False, fill_value=0.0)
+        system['interp_v_sum'] = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
+                                                         grid_v_sum, bounds_error=False, fill_value=0.0)
     
     def update_status_text(message):
         """Update the status text in direction-conditioned mode"""
@@ -1011,9 +1030,12 @@ def main():
         system['grid_u_sum'] = grid_u_sum
         system['grid_v_sum'] = grid_v_sum
         
-        # Update other system components if needed
-        # Note: We're not rebuilding interpolators here for performance,
-        # but the particle system uses the grid arrays directly
+        # Create RegularGridInterpolators for smooth bilinear interpolation
+        # Use the same grid coordinates as the original build_grids function
+        system['interp_u_sum'] = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
+                                                         grid_u_sum, bounds_error=False, fill_value=0.0)
+        system['interp_v_sum'] = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
+                                                         grid_v_sum, bounds_error=False, fill_value=0.0)
     
     # callback to update selected features based on Top k only
     def update_features(val):
@@ -1035,6 +1057,10 @@ def main():
         system['grid_u_all_feats'] = grid_u_all_feats_new
         system['grid_v_all_feats'] = grid_v_all_feats_new
         system['cell_dominant_features'] = cell_dominant_features  # Update dominant features too
+        
+        # Update interpolators for consistent smooth motion
+        system['interp_u_sum'] = interp_u_sum
+        system['interp_v_sum'] = interp_v_sum
         # Update color mappings for particles using top-6 logic
         new_feature_colors = []
         for feat_idx in grad_indices:
