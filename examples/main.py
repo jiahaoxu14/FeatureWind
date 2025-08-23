@@ -444,24 +444,89 @@ def update(frame, system, interp_u_sum, interp_v_sum, interp_argmax, k, velocity
         
         return np.column_stack((U, V)) * velocity_scale
 
-    # Sub-stepping with smaller timesteps for better CFL stability
-    n_substeps = 4  # Split into multiple sub-steps
-    dt_sub = 1.0 / n_substeps  # Smaller sub-timestep
+    # Adaptive time stepping with CFL-like condition
+    def adaptive_rk4_step(pos, target_dt, get_vel_func, max_error=1e-3):
+        """
+        Adaptive RK4 with embedded Heun method for error estimation.
+        Returns: (new_position, actual_dt_used, error_estimate)
+        """
+        # Calculate velocity at current position
+        vel = get_vel_func(pos)
+        speed = np.linalg.norm(vel, axis=1)
+        
+        # CFL-like condition: dt should be proportional to cell_size / |v|
+        if grid_res is not None and len(bounding_box) >= 4:
+            cell_size = min(
+                (bounding_box[1] - bounding_box[0]) / grid_res,  # dx
+                (bounding_box[3] - bounding_box[2]) / grid_res   # dy
+            )
+            # CFL number around 0.5 for stability
+            cfl_number = 0.5
+            max_speed = np.maximum(speed, 1e-6)  # Avoid division by zero
+            cfl_dt = cfl_number * cell_size / max_speed
+            
+            # Use minimum of target dt and CFL-limited dt for each particle
+            dt_per_particle = np.minimum(target_dt, cfl_dt)
+            # Use the most restrictive dt for this step
+            dt = np.min(dt_per_particle)
+        else:
+            dt = target_dt
+        
+        # Ensure minimum time step
+        dt = max(dt, 1e-4)
+        
+        # RK4 step
+        k1 = get_vel_func(pos)
+        k2 = get_vel_func(pos + 0.5 * dt * k1)
+        k3 = get_vel_func(pos + 0.5 * dt * k2)
+        k4 = get_vel_func(pos + dt * k3)
+        
+        rk4_result = pos + dt * (k1 + 2*k2 + 2*k3 + k4) / 6.0
+        
+        # Embedded Heun method for error estimation (simpler RK2)
+        heun_k1 = k1
+        heun_k2 = get_vel_func(pos + dt * heun_k1)
+        heun_result = pos + dt * (heun_k1 + heun_k2) / 2.0
+        
+        # Estimate local truncation error
+        error = np.linalg.norm(rk4_result - heun_result, axis=1)
+        max_error_this_step = np.max(error)
+        
+        return rk4_result, dt, max_error_this_step
     
     # Get initial velocity for speed calculation (used for particle coloring)
     velocity = get_velocity(pp)
     
-    # Perform multiple sub-steps for smoother, more accurate trajectories
-    for step in range(n_substeps):
-        # RK4 integration for each sub-step
-        k1 = get_velocity(pp)
-        k2 = get_velocity(pp + 0.5 * dt_sub * k1)
-        k3 = get_velocity(pp + 0.5 * dt_sub * k2)
-        k4 = get_velocity(pp + dt_sub * k3)
+    # Adaptive integration with error control
+    total_time = 0.0
+    target_total_time = 1.0
+    current_pos = pp.copy()
+    
+    max_steps = 10  # Prevent infinite loops
+    step_count = 0
+    
+    while total_time < target_total_time and step_count < max_steps:
+        remaining_time = target_total_time - total_time
+        target_dt = min(0.25, remaining_time)  # Start with quarter steps
         
-        # RK4 final update for this sub-step
-        velocity_sub = (k1 + 2*k2 + 2*k3 + k4) / 6.0
-        pp += dt_sub * velocity_sub
+        new_pos, dt_used, error_est = adaptive_rk4_step(current_pos, target_dt, get_velocity)
+        
+        # Simple error control: accept step if error is reasonable
+        if error_est < 0.01 or dt_used < 1e-3:
+            # Accept the step
+            current_pos = new_pos
+            total_time += dt_used
+            step_count += 1
+        else:
+            # Reduce time step and try again
+            target_dt *= 0.5
+            if target_dt < 1e-4:
+                # Force acceptance with very small step
+                current_pos = new_pos
+                total_time += dt_used
+                step_count += 1
+    
+    pp[:] = current_pos
 
     # Shift history
     his[:, :-1, :] = his[:, 1:, :]
@@ -1421,14 +1486,7 @@ def main():
                     # Use soft dominance instead of hard dominance boost
                     # Get the probability for this feature from soft dominance
                     if 'cell_soft_dominance' in globals() and cell_soft_dominance is not None:
-                        # Get cell indices for the grid position
-                        cell_i = int(np.round((click_y - cell_centers_y[0]) / (cell_centers_y[1] - cell_centers_y[0])))
-                        cell_j = int(np.round((click_x - cell_centers_x[0]) / (cell_centers_x[1] - cell_centers_x[0])))
-                        
-                        # Clamp to valid range
-                        cell_i = max(0, min(grid_res - 1, cell_i))
-                        cell_j = max(0, min(grid_res - 1, cell_j))
-                        
+                        # cell_i and cell_j are already available from mouse_data['grid_cell'] above
                         # Get soft dominance probability for this feature
                         if feat_idx < cell_soft_dominance.shape[2]:
                             soft_prob = cell_soft_dominance[cell_i, cell_j, feat_idx]
