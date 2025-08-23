@@ -765,6 +765,7 @@ def main():
     system['cell_dominant_features'] = cell_dominant_features  # Store for reinitialization
     system['grid_u_all_feats'] = grid_u_all_feats  # Store for wind vane
     system['grid_v_all_feats'] = grid_v_all_feats  # Store for wind vane
+    system['cell_soft_dominance'] = cell_soft_dominance  # Store for uncertainty visualization
     system['grid_u_sum'] = grid_u_sum  # Store velocity grids for particle animation
     system['grid_v_sum'] = grid_v_sum
     # Store initial interpolators for smooth motion
@@ -1172,6 +1173,7 @@ def main():
         system['grid_u_all_feats'] = grid_u_all_feats_new
         system['grid_v_all_feats'] = grid_v_all_feats_new
         system['cell_dominant_features'] = cell_dominant_features  # Update dominant features too
+        system['cell_soft_dominance'] = cell_soft_dominance_new  # Update soft dominance for uncertainty
         
         # Update interpolators for consistent smooth motion
         system['interp_u_sum'] = interp_u_sum
@@ -1264,57 +1266,39 @@ def main():
             fig.canvas.draw_idle()
             return
         
-        # Get the averaged vectors for the current grid cell from the 4 corner vertices
-        # The grid cell (cell_i, cell_j) has corner vertices at:
-        # (cell_i, cell_j), (cell_i+1, cell_j), (cell_i, cell_j+1), (cell_i+1, cell_j+1)
+        # Get the vectors for the current grid cell using cell-center values
+        # This avoids out-of-bounds errors at grid edges and is consistent with optimization
         
         cell_vectors = np.zeros((len(Col_labels), 2))  # Initialize for all features
         
         # Get vectors for ALL features from the all-features grid
         for feat_idx in range(len(Col_labels)):
             if 'grid_u_all_feats' in system and 'grid_v_all_feats' in system:
-                # Use the all-features grid data
-                corner_u = (system['grid_u_all_feats'][feat_idx, cell_i, cell_j] + 
-                           system['grid_u_all_feats'][feat_idx, cell_i+1, cell_j] +
-                           system['grid_u_all_feats'][feat_idx, cell_i, cell_j+1] + 
-                           system['grid_u_all_feats'][feat_idx, cell_i+1, cell_j+1]) / 4.0
+                # Use cell-center values directly (consistent with optimization and no bounds errors)
+                center_u = system['grid_u_all_feats'][feat_idx, cell_i, cell_j]
+                center_v = system['grid_v_all_feats'][feat_idx, cell_i, cell_j]
                 
-                corner_v = (system['grid_v_all_feats'][feat_idx, cell_i, cell_j] + 
-                           system['grid_v_all_feats'][feat_idx, cell_i+1, cell_j] +
-                           system['grid_v_all_feats'][feat_idx, cell_i, cell_j+1] + 
-                           system['grid_v_all_feats'][feat_idx, cell_i+1, cell_j+1]) / 4.0
+                cell_vectors[feat_idx] = [center_u, center_v]
                 
-                cell_vectors[feat_idx] = [corner_u, corner_v]
-                
-                # Debug: Print the corrected magnitude for problematic cell
+                # Debug: Print the center magnitude for problematic cell
                 if cell_i == 27 and cell_j == 11 and feat_idx in [21, 8]:  # Check our two key features
-                    corrected_mag = np.linalg.norm([corner_u, corner_v])
+                    center_mag = np.linalg.norm([center_u, center_v])
                     feat_name = Col_labels[feat_idx] if feat_idx < len(Col_labels) else f"Feature {feat_idx}"
-                    print(f"  CORRECTED Feature {feat_idx} ({feat_name}): {corrected_mag:.6f}")
+                    print(f"  CENTER Feature {feat_idx} ({feat_name}): {center_mag:.6f}")
                     
-                    # Debug: Compare with the grid calculation method
+                    # Debug: Compare with the grid calculation method (using center value too)
                     grid_mag_from_build = np.sqrt(system['grid_u_all_feats'][feat_idx]**2 + system['grid_v_all_feats'][feat_idx]**2)
-                    grid_corner_mag = (grid_mag_from_build[cell_i, cell_j] + 
-                                      grid_mag_from_build[cell_i+1, cell_j] +
-                                      grid_mag_from_build[cell_i, cell_j+1] + 
-                                      grid_mag_from_build[cell_i+1, cell_j+1]) / 4.0
-                    print(f"    Grid build method magnitude: {grid_corner_mag:.6f}")
-                    print(f"    Difference: {abs(corrected_mag - grid_corner_mag):.6f}")
+                    grid_center_mag = grid_mag_from_build[cell_i, cell_j]
+                    print(f"    Grid build center magnitude: {grid_center_mag:.6f}")
+                    print(f"    Difference: {abs(center_mag - grid_center_mag):.6f}")
             else:
-                # Fallback: only calculate for selected features using grid_u_feats
+                # Fallback: only calculate for selected features using grid_u_feats (use center values)
                 if feat_idx in grad_indices:
                     k_idx = list(grad_indices).index(feat_idx)
-                    corner_u = (grid_u_feats[k_idx, cell_i, cell_j] + 
-                               grid_u_feats[k_idx, cell_i+1, cell_j] +
-                               grid_u_feats[k_idx, cell_i, cell_j+1] + 
-                               grid_u_feats[k_idx, cell_i+1, cell_j+1]) / 4.0
+                    center_u = grid_u_feats[k_idx, cell_i, cell_j]
+                    center_v = grid_v_feats[k_idx, cell_i, cell_j]
                     
-                    corner_v = (grid_v_feats[k_idx, cell_i, cell_j] + 
-                               grid_v_feats[k_idx, cell_i+1, cell_j] +
-                               grid_v_feats[k_idx, cell_i, cell_j+1] + 
-                               grid_v_feats[k_idx, cell_i+1, cell_j+1]) / 4.0
-                    
-                    cell_vectors[feat_idx] = [corner_u, corner_v]
+                    cell_vectors[feat_idx] = [center_u, center_v]
         
         # Get the dominant feature for this cell
         dominant_feature = cell_dominant_features[cell_i, cell_j]
@@ -1348,13 +1332,12 @@ def main():
         for feat_idx in grad_indices:
             vec = cell_vectors[feat_idx]
             
-            # Use the same magnitude calculation method as grid cell dominant feature
+            # Use consistent cell-center magnitude (same as optimization and grid building)
             if 'grid_u_all_feats' in system and 'grid_v_all_feats' in system:
-                grid_mag_from_build = np.sqrt(system['grid_u_all_feats'][feat_idx]**2 + system['grid_v_all_feats'][feat_idx]**2)
-                mag = (grid_mag_from_build[cell_i, cell_j] + 
-                      grid_mag_from_build[cell_i+1, cell_j] +
-                      grid_mag_from_build[cell_i, cell_j+1] + 
-                      grid_mag_from_build[cell_i+1, cell_j+1]) / 4.0
+                # Use cell-center magnitude directly (consistent with optimization)
+                u_val = system['grid_u_all_feats'][feat_idx][cell_i, cell_j]
+                v_val = system['grid_v_all_feats'][feat_idx][cell_i, cell_j]
+                mag = np.sqrt(u_val**2 + v_val**2)
             else:
                 # Fallback to the old method
                 mag = np.linalg.norm(vec)
@@ -1496,11 +1479,12 @@ def main():
                     
                     # Use soft dominance instead of hard dominance boost
                     # Get the probability for this feature from soft dominance
-                    if 'cell_soft_dominance' in globals() and cell_soft_dominance is not None:
+                    if 'cell_soft_dominance' in system and system['cell_soft_dominance'] is not None:
                         # cell_i and cell_j are already available from mouse_data['grid_cell'] above
                         # Get soft dominance probability for this feature
-                        if feat_idx < cell_soft_dominance.shape[2]:
-                            soft_prob = cell_soft_dominance[cell_i, cell_j, feat_idx]
+                        cell_soft_dom = system['cell_soft_dominance']
+                        if feat_idx < cell_soft_dom.shape[2]:
+                            soft_prob = cell_soft_dom[cell_i, cell_j, feat_idx]
                             dominance_boost = 0.8 + 0.8 * soft_prob  # Scale from 0.8 to 1.6 based on probability
                         else:
                             dominance_boost = 1.0
@@ -1512,10 +1496,11 @@ def main():
                     
                     # Add uncertainty visualization through desaturation
                     uncertainty_factor = 1.0  # Default: no desaturation
-                    if 'cell_soft_dominance' in globals() and cell_soft_dominance is not None:
+                    if 'cell_soft_dominance' in system and system['cell_soft_dominance'] is not None:
                         # Calculate uncertainty as entropy of the probability distribution
-                        if feat_idx < cell_soft_dominance.shape[2]:
-                            probs = cell_soft_dominance[cell_i, cell_j, :]
+                        cell_soft_dom = system['cell_soft_dominance']
+                        if feat_idx < cell_soft_dom.shape[2]:
+                            probs = cell_soft_dom[cell_i, cell_j, :]
                             # Compute entropy: higher entropy = more uncertainty
                             entropy = -np.sum(probs * np.log(probs + 1e-8))
                             max_entropy = np.log(len(probs))  # Maximum possible entropy
