@@ -52,12 +52,13 @@ def pick_top_k_features(all_grad_vectors):
     return top_k_indices, avg_magnitudes
 
 def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels, kdtree_scale=0.1, output_dir="."):
-    # (1) Setup interpolation grid and distance mask
-    # grid_res now represents number of grid cells, so we need grid_res+1 vertices
+    # (1) Setup interpolation grid using cell-center convention
+    # grid_res represents number of grid cells, create cell centers
     xmin, xmax, ymin, ymax = bounding_box
-    num_vertices = grid_res + 1
-    grid_x, grid_y = np.mgrid[xmin:xmax:complex(num_vertices),
-                                ymin:ymax:complex(num_vertices)]
+    # Create cell center coordinates
+    cell_centers_x = np.linspace(xmin + (xmax-xmin)/(2*grid_res), xmax - (xmax-xmin)/(2*grid_res), grid_res)
+    cell_centers_y = np.linspace(ymin + (ymax-ymin)/(2*grid_res), ymax - (ymax-ymin)/(2*grid_res), grid_res)
+    grid_x, grid_y = np.meshgrid(cell_centers_x, cell_centers_y)
     
     # Build a KD-tree and determine distance to the nearest data point at each grid cell
     kdtree = cKDTree(positions)
@@ -117,30 +118,26 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels
     
     for i in range(grid_res):
         for j in range(grid_res):
-            # Get magnitudes at the 4 corner vertices of this cell for ALL features
-            corner_mags = np.zeros(num_features)
+            # Get magnitudes directly from cell centers (no averaging needed)
+            cell_mags = np.zeros(num_features)
             
             for feat_idx in range(num_features):
-                # Aggregate magnitudes from 4 corner vertices for this feature
-                corner_sum = (grid_mag_all_feats[feat_idx, i, j] + 
-                             grid_mag_all_feats[feat_idx, i+1, j] +
-                             grid_mag_all_feats[feat_idx, i, j+1] + 
-                             grid_mag_all_feats[feat_idx, i+1, j+1])
-                corner_mags[feat_idx] = corner_sum / 4.0  # Average of 4 corner vertices
+                # Get magnitude directly from cell center
+                cell_mags[feat_idx] = grid_mag_all_feats[feat_idx, i, j]
             
             # Debug specific problematic cell
             if i == 27 and j == 11:
                 print(f"\nDebugging grid cell (27,11):")
-                print("Corner magnitudes for all features:")
-                sorted_indices = np.argsort(-corner_mags)  # Sort by magnitude descending
+                print("Cell magnitudes for all features:")
+                sorted_indices = np.argsort(-cell_mags)  # Sort by magnitude descending
                 for rank, feat_idx in enumerate(sorted_indices[:10]):  # Show top 10
                     if feat_idx < len(Col_labels):
-                        print(f"  Rank {rank+1}: Feature {feat_idx} ({Col_labels[feat_idx]}): {corner_mags[feat_idx]:.6f}")
+                        print(f"  Rank {rank+1}: Feature {feat_idx} ({Col_labels[feat_idx]}): {cell_mags[feat_idx]:.6f}")
                     else:
-                        print(f"  Rank {rank+1}: Feature {feat_idx} (out of range): {corner_mags[feat_idx]:.6f}")
+                        print(f"  Rank {rank+1}: Feature {feat_idx} (out of range): {cell_mags[feat_idx]:.6f}")
             
-            # Find the feature with maximum averaged magnitude among ALL features
-            dominant_feat_idx = np.argmax(corner_mags)
+            # Find the feature with maximum magnitude among ALL features
+            dominant_feat_idx = np.argmax(cell_mags)
             cell_dominant_features[i, j] = dominant_feat_idx
     
     print("Cell dominant features shape:", cell_dominant_features.shape)
@@ -154,11 +151,7 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels
         else:
             print(f"  Feature {feat_idx} (index out of range): {count} cells")
     
-    # Create cell center coordinates for RegularGridInterpolator
-    # Cell centers are at the midpoints between adjacent vertices
-    cell_centers_x = np.linspace(xmin + (xmax-xmin)/(2*grid_res), xmax - (xmax-xmin)/(2*grid_res), grid_res)
-    cell_centers_y = np.linspace(ymin + (ymax-ymin)/(2*grid_res), ymax - (ymax-ymin)/(2*grid_res), grid_res)
-    
+    # Cell center coordinates already created above
     print("Cell centers x range:", cell_centers_x[0], "to", cell_centers_x[-1])
     print("Cell centers y range:", cell_centers_y[0], "to", cell_centers_y[-1])
     
@@ -166,17 +159,17 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, Col_labels
     np.savetxt(os.path.join(output_dir, "cell_dominant_features.csv"), cell_dominant_features, delimiter=",", fmt="%d")
     
     # (4) Build grid interpolators from the computed fields.
-    # Use vertex coordinates for velocity interpolation
-    interp_u_sum = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
+    # Use cell-center coordinates for all interpolation (unified convention)
+    interp_u_sum = RegularGridInterpolator((cell_centers_y, cell_centers_x),
                                              grid_u_sum, bounds_error=False, fill_value=0.0)
-    interp_v_sum = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
+    interp_v_sum = RegularGridInterpolator((cell_centers_y, cell_centers_x),
                                              grid_v_sum, bounds_error=False, fill_value=0.0)
-    # Use cell center coordinates for dominant feature interpolation
-    interp_argmax = RegularGridInterpolator((cell_centers_x, cell_centers_y),
+    # Use same cell center coordinates for dominant feature interpolation
+    interp_argmax = RegularGridInterpolator((cell_centers_y, cell_centers_x),
                                              cell_dominant_features, method='nearest',
                                              bounds_error=False, fill_value=-1)
     
-    return interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats, grid_v_all_feats
+    return interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y
 
 def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtree_scale=0.1, output_dir="."):
     """
@@ -188,10 +181,11 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtr
       - RegularGridInterpolators for the aggregated u‐ and v‑fields.
       - An integer grid of the locally dominant feature (the one with highest magnitude in that cell).
     """
-    # (1) Setup interpolation grid
+    # (1) Setup interpolation grid using cell-center convention
     xmin, xmax, ymin, ymax = bounding_box  # assuming bounding_box is defined globally
-    grid_x, grid_y = np.mgrid[xmin:xmax:complex(grid_res),
-                              ymin:ymax:complex(grid_res)]
+    cell_centers_x = np.linspace(xmin + (xmax-xmin)/(2*grid_res), xmax - (xmax-xmin)/(2*grid_res), grid_res)
+    cell_centers_y = np.linspace(ymin + (ymax-ymin)/(2*grid_res), ymax - (ymax-ymin)/(2*grid_res), grid_res)
+    grid_x, grid_y = np.meshgrid(cell_centers_x, cell_centers_y)
     
     num_features = all_grad_vectors.shape[1]
 
@@ -235,11 +229,11 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, kdtr
             grid_argmax_local[i, j] = top_indices[0]  # the most dominant one
     
     # (4) Build RegularGridInterpolators to be used in the animation
-    interp_u_sum_local = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
+    interp_u_sum_local = RegularGridInterpolator((cell_centers_y, cell_centers_x),
                                                  grid_u_sum_local, bounds_error=False, fill_value=0.0)
-    interp_v_sum_local = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
+    interp_v_sum_local = RegularGridInterpolator((cell_centers_y, cell_centers_x),
                                                  grid_v_sum_local, bounds_error=False, fill_value=0.0)
-    interp_argmax_local = RegularGridInterpolator((grid_x[:,0], grid_y[0,:]),
+    interp_argmax_local = RegularGridInterpolator((cell_centers_y, cell_centers_x),
                                                   grid_argmax_local, method='nearest', 
                                                   bounds_error=False, fill_value=-1)
     
@@ -576,7 +570,7 @@ def main():
     grid_v_feats = None 
     cell_dominant_features = None
     
-    interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats, grid_v_all_feats = build_grids(
+    interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y = build_grids(
         all_positions, grid_res, grad_indices, all_grad_vectors, Col_labels, kdtree_scale=kdtree_scale, output_dir=output_dir
     )
 
@@ -792,9 +786,9 @@ def main():
         system['grid_u_sum'] = grid_u_sum
         system['grid_v_sum'] = grid_v_sum
         # Create zero interpolators for smooth motion
-        system['interp_u_sum'] = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
+        system['interp_u_sum'] = RegularGridInterpolator((cell_centers_y, cell_centers_x),
                                                          grid_u_sum, bounds_error=False, fill_value=0.0)
-        system['interp_v_sum'] = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
+        system['interp_v_sum'] = RegularGridInterpolator((cell_centers_y, cell_centers_x),
                                                          grid_v_sum, bounds_error=False, fill_value=0.0)
     
     def update_status_text(message):
@@ -955,8 +949,8 @@ def main():
             combined_u = np.zeros_like(grid_u_all_feats[0])
             combined_v = np.zeros_like(grid_v_all_feats[0])
         else:
-            combined_u = np.zeros((grid_res + 1, grid_res + 1))
-            combined_v = np.zeros((grid_res + 1, grid_res + 1))
+            combined_u = np.zeros((grid_res, grid_res))
+            combined_v = np.zeros((grid_res, grid_res))
         
         for feat_idx in feature_indices:
             if feat_idx < len(grid_u_all_feats):
@@ -978,11 +972,9 @@ def main():
             if desired_magnitude < 1e-6:
                 continue  # Skip zero constraints
             
-            # Get actual velocity at cell center by averaging corner vertices
-            actual_u = (combined_u[cell_i, cell_j] + combined_u[cell_i+1, cell_j] + 
-                       combined_u[cell_i, cell_j+1] + combined_u[cell_i+1, cell_j+1]) / 4.0
-            actual_v = (combined_v[cell_i, cell_j] + combined_v[cell_i+1, cell_j] + 
-                       combined_v[cell_i, cell_j+1] + combined_v[cell_i+1, cell_j+1]) / 4.0
+            # Get actual velocity directly from cell center (no averaging needed with cell-centered grids)
+            actual_u = combined_u[cell_i, cell_j]
+            actual_v = combined_v[cell_i, cell_j]
             
             actual_magnitude = np.sqrt(actual_u**2 + actual_v**2)
             
@@ -1018,8 +1010,8 @@ def main():
                 grid_u_sum = np.zeros_like(grid_u_all_feats[0])
                 grid_v_sum = np.zeros_like(grid_v_all_feats[0])
             else:
-                grid_u_sum = np.zeros((grid_res + 1, grid_res + 1))
-                grid_v_sum = np.zeros((grid_res + 1, grid_res + 1))
+                grid_u_sum = np.zeros((grid_res, grid_res))
+                grid_v_sum = np.zeros((grid_res, grid_res))
             
             for feat_idx in feature_indices:
                 if feat_idx < len(grid_u_all_feats):
@@ -1031,10 +1023,10 @@ def main():
         system['grid_v_sum'] = grid_v_sum
         
         # Create RegularGridInterpolators for smooth bilinear interpolation
-        # Use the same grid coordinates as the original build_grids function
-        system['interp_u_sum'] = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
+        # Use cell-center coordinates for consistent indexing
+        system['interp_u_sum'] = RegularGridInterpolator((cell_centers_y, cell_centers_x),
                                                          grid_u_sum, bounds_error=False, fill_value=0.0)
-        system['interp_v_sum'] = RegularGridInterpolator((grid_x[:, 0], grid_y[0, :]),
+        system['interp_v_sum'] = RegularGridInterpolator((cell_centers_y, cell_centers_x),
                                                          grid_v_sum, bounds_error=False, fill_value=0.0)
     
     # callback to update selected features based on Top k only
@@ -1043,7 +1035,7 @@ def main():
         k_val = int(val)
         grad_indices = list(np.argsort(-avg_magnitudes)[:k_val])
         # Rebuild grids for new top-k selection
-        interp_u_sum, interp_v_sum, interp_argmax, _, _, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats_new, grid_v_all_feats_new = build_grids(
+        interp_u_sum, interp_v_sum, interp_argmax, _, _, grid_u_feats, grid_v_feats, cell_dominant_features, grid_u_all_feats_new, grid_v_all_feats_new, _, _ = build_grids(
             all_positions, grid_res, grad_indices, all_grad_vectors, Col_labels,
             kdtree_scale=kdtree_scale, output_dir=output_dir)
         
