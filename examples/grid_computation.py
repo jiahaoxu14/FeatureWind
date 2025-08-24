@@ -65,7 +65,7 @@ def create_grid_coordinates(grid_res):
     return grid_x, grid_y, cell_centers_x, cell_centers_y
 
 
-def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold, dist_grid):
+def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold, dist_grid, grid_res=None):
     """
     Interpolate a single feature's vectors onto the grid with masking.
     
@@ -83,6 +83,28 @@ def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold,
     grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='linear', fill_value=0.0)
     grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='linear', fill_value=0.0)
     
+    # Create mask to avoid masking cells that contain actual data points
+    contains_data_mask = np.zeros(grid_x.shape, dtype=bool)
+    
+    if grid_res is None:
+        grid_res = grid_x.shape[0]  # Assume square grid
+    
+    # Check which grid cells contain actual data points
+    xmin, xmax = grid_x.min(), grid_x.max()
+    ymin, ymax = grid_y.min(), grid_y.max()
+    
+    for pos in positions:
+        # Find which grid cell this data point belongs to
+        cell_i = int((pos[1] - ymin) / (ymax - ymin) * grid_res)
+        cell_j = int((pos[0] - xmin) / (xmax - xmin) * grid_res)
+        
+        # Clamp to grid bounds
+        cell_i = max(0, min(grid_res - 1, cell_i))
+        cell_j = max(0, min(grid_res - 1, cell_j))
+        
+        # Mark this cell as containing data
+        contains_data_mask[cell_i, cell_j] = True
+    
     # Create smooth mask to avoid jagged boundaries
     magnitude_grid = np.sqrt(grid_u**2 + grid_v**2)
     # Apply Gaussian smoothing to magnitude grid
@@ -94,7 +116,10 @@ def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold,
     # Combine with magnitude-based threshold for final mask
     # Use smoothed magnitude to avoid sharp transitions
     magnitude_threshold = np.percentile(smooth_magnitude[~smooth_mask], 10) if np.any(~smooth_mask) else 0.0
-    final_mask = smooth_mask | (smooth_magnitude < magnitude_threshold)
+    magnitude_mask = smooth_magnitude < magnitude_threshold
+    
+    # Final mask: exclude distance and magnitude masks, but NEVER mask cells with actual data
+    final_mask = (smooth_mask | magnitude_mask) & (~contains_data_mask)
     
     grid_u[final_mask] = 0.0
     grid_v[final_mask] = 0.0
@@ -163,7 +188,7 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
     for feat_idx in top_k_indices:
         # Extract the vectors for the given feature
         vectors = all_grad_vectors[:, feat_idx, :]  # shape: (#points, 2)
-        grid_u, grid_v = interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold, dist_grid)
+        grid_u, grid_v = interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold, dist_grid, grid_res)
         grid_u_feats.append(grid_u)
         grid_v_feats.append(grid_v)
     
@@ -182,7 +207,7 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
     for feat_idx in range(num_features):
         # Extract vectors for this feature
         vectors = all_grad_vectors[:, feat_idx, :]  # shape: (#points, 2)
-        grid_u, grid_v = interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold, dist_grid)
+        grid_u, grid_v = interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold, dist_grid, grid_res)
         grid_u_all_feats.append(grid_u)
         grid_v_all_feats.append(grid_v)
     
@@ -295,7 +320,7 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, outp
     grid_u_all, grid_v_all = [], []
     for m in range(num_features):
         vectors = all_grad_vectors[:, m, :]  # shape: (#points, 2)
-        grid_u, grid_v = interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold, dist_grid)
+        grid_u, grid_v = interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold, dist_grid, grid_res)
         grid_u_all.append(grid_u)
         grid_v_all.append(grid_v)
     

@@ -13,7 +13,7 @@ import config
 
 
 def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors, lc, 
-                  all_positions=None, all_grad_vectors=None):
+                  all_positions=None, all_grad_vectors=None, grid_res=None):
     """
     Prepare the main visualization figure with data points and particle system.
     
@@ -35,8 +35,20 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
     ax.set_aspect('equal')
-    ax.set_xticks([])
-    ax.set_yticks([])
+    
+    # Set up grid ticks to match interpolation grid cell boundaries
+    if grid_res is None:
+        grid_res = config.DEFAULT_GRID_RES
+    
+    # Create grid cell boundary coordinates (not cell centers)
+    # For grid_res cells, we need grid_res+1 boundary lines
+    x_boundaries = np.linspace(xmin, xmax, grid_res + 1)
+    y_boundaries = np.linspace(ymin, ymax, grid_res + 1)
+    
+    ax.set_xticks(x_boundaries)
+    ax.set_yticks(y_boundaries)
+    ax.set_xticklabels([])  # Hide tick labels
+    ax.set_yticklabels([])  # Hide tick labels
 
     # Plot underlying data points with different markers for each label
     feature_idx = 2  # Use feature index 2 for alpha computation
@@ -69,7 +81,10 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
 
     # Add particle line collection
     ax.add_collection(lc)
-    ax.grid(False)
+    
+    # Show grid lines
+    ax.grid(True, alpha=0.3, linewidth=0.5, color='lightgray')
+    ax.set_axisbelow(True)  # Put grid behind other elements
 
     return 0
 
@@ -81,15 +96,15 @@ def prepare_wind_vane_subplot(ax2):
     Args:
         ax2: Matplotlib axes object for wind vane
     """
-    ax2.set_xlim(-0.6, 0.6)
-    ax2.set_ylim(-0.6, 0.6)
+    ax2.set_xlim(-0.8, 0.8)  # Larger limits for bigger wind vane
+    ax2.set_ylim(-0.8, 0.8)
     ax2.set_aspect('equal')
     ax2.set_xticks([])
     ax2.set_yticks([])
-    ax2.set_title("Wind Vane", fontsize=12, pad=10)
+    ax2.set_title("Wind Vane", fontsize=16, pad=15)  # Larger title
     
-    # Draw unit circle
-    circle = plt.Circle((0, 0), 0.5, fill=False, color='lightgray', linewidth=1)
+    # Draw reference circle - larger for bigger wind vane
+    circle = plt.Circle((0, 0), 0.7, fill=False, color='lightgray', linewidth=1.5)
     ax2.add_patch(circle)
     
     # Remove spines for cleaner look
@@ -170,7 +185,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
     
     # Draw gradient vector arrows for each feature in the grid cell
     # Calculate dynamic scaling to use 90% of canvas
-    max_canvas_radius = 0.45  # 90% of 0.5 radius
+    max_canvas_radius = 0.63  # 90% of 0.7 radius (enlarged wind vane)
     
     # Debug: Show which features are being considered in wind vane
     print(f"Selected features for wind vane: {selected_features}")
@@ -180,6 +195,10 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
     mags_selected = []
     features_selected = []
     
+    # Check if this cell is masked (all vectors are zero or near-zero)
+    total_magnitude = sum(mags_all)
+    is_masked_cell = total_magnitude < 1e-6
+    
     for i, feat_idx in enumerate(selected_features):
         if feat_idx < len(vectors_all):
             # Use consistent cell-center magnitude (same as optimization)
@@ -188,6 +207,15 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 vectors_selected.append(vectors_all[feat_idx])
                 mags_selected.append(mag)
                 features_selected.append(feat_idx)
+    
+    # Show masked cell indication if no vectors are present
+    if is_masked_cell or len(vectors_selected) == 0:
+        # Draw a visual indication that this cell is masked/has no flow
+        ax2.text(0, 0, 'MASKED\nCELL', ha='center', va='center', 
+                fontsize=12, color='red', weight='bold', alpha=0.7)
+        ax2.scatter(0, 0, c='lightgray', s=120, marker='X', edgecolor='red', 
+                   linewidth=2, zorder=10, alpha=0.7)
+        return
     
     if len(vectors_selected) > 0:
         # Find the longest vector
@@ -403,12 +431,12 @@ def setup_figure_layout():
     Returns:
         tuple: (fig, ax, ax2) - Figure and axes objects
     """
-    # Create figure with subplots and space for controls
-    fig = plt.figure(figsize=(16, 8))
+    # Create figure with enlarged wind vane and space for controls
+    fig = plt.figure(figsize=(18, 10))  # Larger overall figure
     
-    # Create main subplots
-    ax = plt.subplot2grid((2, 3), (0, 0), rowspan=2, colspan=2)
-    ax2 = plt.subplot2grid((2, 3), (0, 2), rowspan=2)  # Make wind vane span both rows
+    # Create main subplots - give more space to wind vane
+    ax = plt.subplot2grid((2, 4), (0, 0), rowspan=2, colspan=2)  # Main plot takes 2/4 width
+    ax2 = plt.subplot2grid((2, 4), (0, 2), rowspan=2, colspan=2)  # Wind vane takes 2/4 width
     
     # Make both subplots square
     ax.set_aspect('equal')

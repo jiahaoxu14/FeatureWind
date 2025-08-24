@@ -152,7 +152,7 @@ def main():
     # Prepare the main subplot
     lc = system['linecoll']
     visualization_core.prepare_figure(ax1, valid_points, col_labels, config.k, grad_indices, 
-                                    feature_colors, lc, all_positions, all_grad_vectors)
+                                    feature_colors, lc, all_positions, all_grad_vectors, grid_res)
     
     # Prepare the wind vane subplot
     visualization_core.prepare_wind_vane_subplot(ax2)
