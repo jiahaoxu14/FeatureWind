@@ -264,24 +264,20 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                                          color='lightblue', edgecolor='blue', linewidth=1)
                 ax2.add_patch(hull_polygon)
                 
-                # Calculate and draw covariance ellipse
-                # Collect all vector endpoints (scaled the same way as vectors)
-                ellipse_points = []
+                # Calculate and draw covariance ellipse based on vector directions
+                # Collect the actual vector directions (not endpoints)
+                vector_directions = []
                 for info in vector_info:
-                    # Scale the gradient vector to match the consistent magnitude
+                    # Use the scaled vector direction
                     scaled_vector = info['vector']
-                    
-                    # Positive endpoint
-                    ellipse_points.append(info['pos_end'])
-                    # Negative endpoint  
-                    ellipse_points.append(info['neg_end'])
+                    vector_directions.append(scaled_vector)
                 
-                if len(ellipse_points) >= 2:
-                    ellipse_points = np.array(ellipse_points)
+                if len(vector_directions) >= 2:
+                    vector_directions = np.array(vector_directions)
                     
                     try:
-                        # Calculate covariance matrix
-                        cov_matrix = np.cov(ellipse_points.T)
+                        # Calculate covariance matrix of vector directions
+                        cov_matrix = np.cov(vector_directions.T)
                         
                         # Eigendecomposition for ellipse parameters
                         eigenvalues, eigenvectors = np.linalg.eigh(cov_matrix)
@@ -298,7 +294,9 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                         height = 2 * np.sqrt(eigenvalues[1]) * ellipse_scale
                         
                         # Calculate angle of rotation (in degrees) using the major axis eigenvector
-                        angle = np.arctan2(eigenvectors[0, 1], eigenvectors[0, 0]) * 180 / np.pi
+                        # Use the eigenvector corresponding to the largest eigenvalue (index 0 after sorting)
+                        major_eigenvector = eigenvectors[:, 0]
+                        angle = np.arctan2(major_eigenvector[1], major_eigenvector[0]) * 180 / np.pi
                         
                         # Create ellipse centered at Wind Vane center
                         ellipse = Ellipse((0, 0), width, height, angle=angle,

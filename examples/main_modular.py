@@ -40,14 +40,9 @@ def main():
     # Setup paths relative to repository root
     repo_root = os.path.join(os.path.dirname(__file__), '..')
     tangent_map_path = os.path.join(repo_root, config.DEFAULT_TANGENT_MAP)
-    print(f"Trying to load tangent map from: {tangent_map_path}")
-    print(f"File exists: {os.path.exists(tangent_map_path)}")
     if not os.path.exists(tangent_map_path):
         # Fallback to breast_cancer.tmap if the configured file doesn't exist
         tangent_map_path = os.path.join(repo_root, 'tangentmaps', 'breast_cancer.tmap')
-        print(f"Falling back to: {tangent_map_path}")
-    
-    print(f"Final tangent map path: {tangent_map_path}")
     
     output_dir = os.path.join(repo_root, 'output')
     if not os.path.exists(output_dir):
@@ -63,6 +58,20 @@ def main():
     # Validate the loaded data
     data_processing.validate_data(valid_points, all_grad_vectors, all_positions, col_labels)
     
+    # Analyze gradient magnitudes and auto-scale velocity if needed
+    magnitudes = np.linalg.norm(all_grad_vectors, axis=2)
+    avg_magnitude = magnitudes.mean()
+    
+    # Auto-scale velocity based on gradient magnitudes
+    # Target average magnitude should be around 1.0 for stability
+    target_avg_magnitude = 1.0
+    if avg_magnitude > target_avg_magnitude * 2:  # If magnitudes are too large
+        scale_factor = target_avg_magnitude / avg_magnitude
+        config.velocity_scale = config.velocity_scale * scale_factor
+    elif avg_magnitude < target_avg_magnitude * 0.1:  # If magnitudes are too small
+        scale_factor = target_avg_magnitude / avg_magnitude
+        config.velocity_scale = config.velocity_scale * scale_factor
+    
     # Set global configuration values
     config.k = len(col_labels)  # Use all features initially
     # config.k = 5  # Uncomment to limit to top 5 features
@@ -72,6 +81,10 @@ def main():
     
     print(f"Loaded {len(valid_points)} valid points with {len(col_labels)} features")
     print(f"Bounding box: {config.bounding_box}")
+    
+    # Debug: Verify coordinate system alignment
+    print(f"Grid resolution: {config.DEFAULT_GRID_RES}x{config.DEFAULT_GRID_RES}")
+    print(f"Data point range: X[{all_positions[:,0].min():.2f}, {all_positions[:,0].max():.2f}], Y[{all_positions[:,1].min():.2f}, {all_positions[:,1].max():.2f}]")
     
     # Step 2: Feature selection
     print("Selecting top features...")

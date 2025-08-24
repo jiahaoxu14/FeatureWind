@@ -75,12 +75,14 @@ def get_velocity_at_positions(positions, system, interp_u_sum=None, interp_v_sum
         # Direction-conditioned mode: use updated interpolators from system
         current_interp_u = system['interp_u_sum']
         current_interp_v = system['interp_v_sum']
-        U = current_interp_u(positions)
-        V = current_interp_v(positions)
+        # Fix coordinate order: interpolators expect (y, x) but we have (x, y)
+        U = current_interp_u(positions[:, [1, 0]])  # Swap to (y, x)
+        V = current_interp_v(positions[:, [1, 0]])  # Swap to (y, x)
     elif interp_u_sum is not None and interp_v_sum is not None:
         # Top-K mode: use original interpolators
-        U = interp_u_sum(positions)
-        V = interp_v_sum(positions)
+        # Fix coordinate order: interpolators expect (y, x) but we have (x, y)
+        U = interp_u_sum(positions[:, [1, 0]])  # Swap to (y, x)
+        V = interp_v_sum(positions[:, [1, 0]])  # Swap to (y, x)
     else:
         # Fallback: direct grid indexing (should rarely be used)
         if 'grid_u_sum' in system and 'grid_v_sum' in system:
@@ -97,7 +99,18 @@ def get_velocity_at_positions(positions, system, interp_u_sum=None, interp_v_sum
             U = np.zeros(len(positions))
             V = np.zeros(len(positions))
     
-    return np.column_stack((U, V)) * config.velocity_scale
+    velocity = np.column_stack((U, V)) * config.velocity_scale
+    
+    # Add safety check to prevent runaway particles
+    velocity_magnitudes = np.linalg.norm(velocity, axis=1)
+    max_safe_velocity = config.MAX_SAFE_VELOCITY
+    
+    # Clip velocities that are too large
+    mask = velocity_magnitudes > max_safe_velocity
+    if np.any(mask):
+        velocity[mask] = velocity[mask] / velocity_magnitudes[mask, np.newaxis] * max_safe_velocity
+        
+    return velocity
 
 
 def adaptive_rk4_step(pos, target_dt, get_vel_func, grid_res=None, max_error=None):

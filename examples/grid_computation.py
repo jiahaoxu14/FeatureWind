@@ -95,14 +95,15 @@ def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold,
     
     for pos in positions:
         # Find which grid cell this data point belongs to
-        cell_i = int((pos[1] - ymin) / (ymax - ymin) * grid_res)
-        cell_j = int((pos[0] - xmin) / (xmax - xmin) * grid_res)
+        # Note: grid indexing is [y_index, x_index] due to meshgrid convention
+        cell_i = int((pos[1] - ymin) / (ymax - ymin) * grid_res)  # Y-direction (row index)
+        cell_j = int((pos[0] - xmin) / (xmax - xmin) * grid_res)  # X-direction (column index)
         
         # Clamp to grid bounds
         cell_i = max(0, min(grid_res - 1, cell_i))
         cell_j = max(0, min(grid_res - 1, cell_j))
         
-        # Mark this cell as containing data
+        # Mark this cell as containing data (using [y_index, x_index] convention)
         contains_data_mask[cell_i, cell_j] = True
     
     # Create smooth mask to avoid jagged boundaries
