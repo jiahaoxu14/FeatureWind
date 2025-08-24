@@ -147,7 +147,7 @@ def main():
     
     # Step 6: Setup figure and visualization
     print("Setting up figure and visualization...")
-    fig, ax1, ax2, control_axes = visualization_core.setup_figure_layout()
+    fig, ax1, ax2 = visualization_core.setup_figure_layout()
     
     # Prepare the main subplot
     lc = system['linecoll']

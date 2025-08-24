@@ -398,28 +398,23 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
 
 def setup_figure_layout():
     """
-    Setup the main figure layout with subplots and controls.
+    Setup the main figure layout with subplots.
     
     Returns:
-        tuple: (fig, ax, ax2, control_axes) - Figure and axes objects
+        tuple: (fig, ax, ax2) - Figure and axes objects
     """
     # Create figure with subplots and space for controls
     fig = plt.figure(figsize=(16, 8))
     
     # Create main subplots
     ax = plt.subplot2grid((2, 3), (0, 0), rowspan=2, colspan=2)
-    ax2 = plt.subplot2grid((2, 3), (0, 2))
-    
-    # Control areas will be added by ui_controls module
-    control_axes = {
-        'mode_ax': plt.subplot2grid((2, 3), (1, 2)),
-    }
+    ax2 = plt.subplot2grid((2, 3), (0, 2), rowspan=2)  # Make wind vane span both rows
     
     # Make both subplots square
     ax.set_aspect('equal')
     ax2.set_aspect('equal')
     
-    return fig, ax, ax2, control_axes
+    return fig, ax, ax2
 
 
 def save_figure_frames(fig, output_dir, num_frames=5):
