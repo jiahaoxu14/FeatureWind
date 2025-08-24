@@ -18,8 +18,8 @@ real_feature_rgba = {}  # Feature to RGBA mapping for particles
 DEFAULT_GRID_RES = 40
 
 # Particle system parameters
-DEFAULT_NUM_PARTICLES = 800
-PARTICLE_LIFETIME = 200  # frames
+DEFAULT_NUM_PARTICLES = 2000
+PARTICLE_LIFETIME = 100  # frames
 TAIL_LENGTH = 10  # number of position history points
 
 # Animation parameters
