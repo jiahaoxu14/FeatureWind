@@ -39,9 +39,15 @@ def main():
     
     # Setup paths relative to repository root
     repo_root = os.path.join(os.path.dirname(__file__), '..')
-    tangent_map_path = os.path.join(repo_root, 'tangentmaps', 'breast_cancer.tmap')
+    tangent_map_path = os.path.join(repo_root, config.DEFAULT_TANGENT_MAP)
+    print(f"Trying to load tangent map from: {tangent_map_path}")
+    print(f"File exists: {os.path.exists(tangent_map_path)}")
     if not os.path.exists(tangent_map_path):
-        tangent_map_path = config.DEFAULT_TANGENT_MAP
+        # Fallback to breast_cancer.tmap if the configured file doesn't exist
+        tangent_map_path = os.path.join(repo_root, 'tangentmaps', 'breast_cancer.tmap')
+        print(f"Falling back to: {tangent_map_path}")
+    
+    print(f"Final tangent map path: {tangent_map_path}")
     
     output_dir = os.path.join(repo_root, 'output')
     if not os.path.exists(output_dir):
@@ -201,15 +207,6 @@ def main():
         """Animation update function."""
         return particle_system.update_particles(
             system, interp_u_sum, interp_v_sum, grid_u_sum, grid_v_sum, grid_res)
-    
-    # Save some frames as static images
-    print("Saving initial frames...")
-    for frame in range(5):
-        # Update the system state for this frame
-        update_frame(frame)
-        # Save the current state of the figure
-        fig.savefig(os.path.join(output_dir, f"frame_{frame}.png"), dpi=config.DPI)
-        print(f"Saved frame {frame}")
     
     # Create the animation
     anim = FuncAnimation(fig, update_frame, frames=config.ANIMATION_FRAMES, 

@@ -72,7 +72,7 @@ DEFAULT_MAGNITUDE = 1.0
 TEMPERATURE_SOFTMAX = 2.0  # Temperature for soft dominance computation
 
 # File paths (relative to examples directory)
-DEFAULT_TANGENT_MAP = '../tangentmaps/breast_cancer.tmap'
+DEFAULT_TANGENT_MAP = 'tangentmaps/tangent.tmap'
 DEFAULT_OUTPUT_DIR = '../output'
 
 # Feature selection limits

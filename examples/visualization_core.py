@@ -45,10 +45,15 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
     x_boundaries = np.linspace(xmin, xmax, grid_res + 1)
     y_boundaries = np.linspace(ymin, ymax, grid_res + 1)
     
-    ax.set_xticks(x_boundaries)
-    ax.set_yticks(y_boundaries)
-    ax.set_xticklabels([])  # Hide tick labels
-    ax.set_yticklabels([])  # Hide tick labels
+    # Remove all ticks and tick labels
+    ax.set_xticks([])  # Remove tick marks
+    ax.set_yticks([])  # Remove tick marks
+    
+    # Manually draw grid lines to preserve them
+    for x in x_boundaries:
+        ax.axvline(x, alpha=0.3, linewidth=0.5, color='lightgray', zorder=1)
+    for y in y_boundaries:
+        ax.axhline(y, alpha=0.3, linewidth=0.5, color='lightgray', zorder=1)
 
     # Plot underlying data points with different markers for each label
     feature_idx = 2  # Use feature index 2 for alpha computation
@@ -82,8 +87,7 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
     # Add particle line collection
     ax.add_collection(lc)
     
-    # Show grid lines
-    ax.grid(True, alpha=0.3, linewidth=0.5, color='lightgray')
+    # Grid lines are manually drawn above, so no need for ax.grid()
     ax.set_axisbelow(True)  # Put grid behind other elements
 
     return 0
