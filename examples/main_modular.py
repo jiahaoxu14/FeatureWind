@@ -183,43 +183,43 @@ def main():
     # Pass the all_grad_vectors for proper feature selection in UI
     ui_controller.all_grad_vectors = all_grad_vectors
     
-    # Setup mouse interactions
-    ui_controls.setup_mouse_interactions(ui_controller)
+    # Setup reliable mouse interactions using the enhanced event system
+    import event_manager
     
-    # Store mouse interaction data for wind vane updates
-    mouse_data = {'grid_cell': None, 'grid_res': grid_res}
+    # Create reliable event handling system (replaces conflicting event handlers)
+    event_mgr = event_manager.create_reliable_event_system(
+        fig, ax1, ax2, ui_controller, system, col_labels, grad_indices, feature_colors, grid_res
+    )
     
-    # Mouse position tracking for grid cell analysis
-    def on_mouse_move(event):
-        """Handle mouse movement for wind vane updates."""
-        if event.inaxes == ax1 and event.xdata is not None and event.ydata is not None:
-            xmin, xmax, ymin, ymax = config.bounding_box
-            
-            if xmin <= event.xdata <= xmax and ymin <= event.ydata <= ymax:
-                cell_j = int((event.xdata - xmin) / (xmax - xmin) * grid_res)
-                cell_i = int((event.ydata - ymin) / (ymax - ymin) * grid_res)
-                
-                # Clamp to grid bounds
-                cell_i = max(0, min(grid_res - 1, cell_i))
-                cell_j = max(0, min(grid_res - 1, cell_j))
-                
-                mouse_data['grid_cell'] = (cell_i, cell_j)
-                
-                # Update wind vane
-                visualization_core.update_wind_vane(ax2, mouse_data, system, col_labels, 
-                                                  grad_indices, feature_colors)
-                fig.canvas.draw_idle()
+    # Step 8: Animation setup with enhanced performance monitoring
+    print("Setting up animation with performance monitoring...")
     
-    # Connect mouse movement handler
-    fig.canvas.mpl_connect('motion_notify_event', on_mouse_move)
-    
-    # Step 8: Animation setup
-    print("Setting up animation...")
+    animation_frame_count = 0
     
     def update_frame(frame):
-        """Animation update function."""
-        return particle_system.update_particles(
-            system, interp_u_sum, interp_v_sum, grid_u_sum, grid_v_sum, grid_res)
+        """Enhanced animation update function with performance monitoring."""
+        nonlocal animation_frame_count
+        animation_frame_count += 1
+        
+        try:
+            # Update particles
+            result = particle_system.update_particles(
+                system, interp_u_sum, interp_v_sum, grid_u_sum, grid_v_sum, grid_res)
+            
+            # Periodic performance check (every 150 frames ~ 5 seconds at 30 FPS)
+            if animation_frame_count % 150 == 0:
+                event_mgr.get_performance_stats()
+                
+                # Check for interaction failures and suggest solutions
+                if hasattr(event_mgr, 'failed_updates') and event_mgr.failed_updates > 10:
+                    print("⚠ High interaction failure rate detected!")
+                    print("Tips: 1) Move mouse slower, 2) Check system performance, 3) Try F5 to refresh")
+            
+            return result
+            
+        except Exception as e:
+            print(f"Animation frame error: {e}")
+            return []
     
     # Create the animation
     anim = FuncAnimation(fig, update_frame, frames=config.ANIMATION_FRAMES, 
@@ -229,12 +229,40 @@ def main():
     visualization_core.save_final_figure(fig, output_dir, "featurewind_modular_figure.png")
     print(f"Saved final figure to {output_dir}")
     
+    # Add keyboard shortcuts for troubleshooting
+    def on_key_press(event):
+        """Handle keyboard shortcuts for troubleshooting."""
+        if event.key == 'f5' or event.key == 'r':
+            print("🔄 Refreshing visualization...")
+            event_mgr.force_refresh()
+        elif event.key == 'p':
+            print("📊 Performance stats:")
+            stats = event_mgr.get_performance_stats()
+            if stats:
+                print(f"  Events/sec: {stats['events_per_second']:.1f}")
+                print(f"  Failure rate: {stats['failure_rate_percent']:.1f}%")
+            else:
+                print("  No recent activity")
+        elif event.key == 'h':
+            print("\n🔧 FeatureWind Keyboard Shortcuts:")
+            print("  F5 or R: Force refresh visualization")
+            print("  P: Show performance statistics")
+            print("  H: Show this help message")
+    
+    fig.canvas.mpl_connect('key_press_event', on_key_press)
+    
     # Show the interactive visualization
-    print("Starting interactive visualization...")
+    print("Starting enhanced interactive visualization...")
+    print("\n📊 Interface Controls:")
     print("- Use radio buttons to switch between Top-K and Direction-Conditioned modes")
     print("- In Top-K mode: Use the slider to select number of features")
     print("- In Direction-Conditioned mode: Click on grid cells and use angle/magnitude sliders")
     print("- Move mouse over the main plot to see feature vectors in the wind vane")
+    print("\n🔧 Troubleshooting:")
+    print("- If interactions stop working, press F5 or R to refresh")
+    print("- Press P to check performance stats")
+    print("- Press H for keyboard shortcuts help")
+    print("- If problems persist, move mouse slower or check system performance")
     
     plt.show()
 

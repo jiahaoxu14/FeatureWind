@@ -502,37 +502,12 @@ class UIController:
 
 
 def setup_mouse_interactions(ui_controller):
-    """Setup mouse interaction handlers."""
-    def on_mouse_move(event):
-        """Handle mouse movement for wind vane updates."""
-        if event.inaxes == ui_controller.ax1 and event.xdata is not None and event.ydata is not None:
-            # Convert mouse position to grid cell for wind vane
-            xmin, xmax, ymin, ymax = config.bounding_box
-            grid_res = len(ui_controller.cell_centers_x)
-            
-            if xmin <= event.xdata <= xmax and ymin <= event.ydata <= ymax:
-                cell_j = int((event.xdata - xmin) / (xmax - xmin) * grid_res)
-                cell_i = int((event.ydata - ymin) / (ymax - ymin) * grid_res)
-                
-                # Clamp to grid bounds
-                cell_i = max(0, min(grid_res - 1, cell_i))
-                cell_j = max(0, min(grid_res - 1, cell_j))
-                
-                # Update wind vane
-                mouse_data = {
-                    'grid_cell': (cell_i, cell_j),
-                    'grid_res': grid_res
-                }
-                
-                from visualization_core import update_wind_vane
-                # Note: This would need feature_colors and selected_features passed properly
-                # update_wind_vane(ui_controller.ax2, mouse_data, ui_controller.system, 
-                #                 ui_controller.col_labels, ui_controller.grad_indices, feature_colors)
+    """
+    Setup mouse interaction handlers.
     
-    def on_mouse_click(event):
-        """Handle mouse clicks."""
-        ui_controller.handle_mouse_click(event)
-    
-    # Connect event handlers
-    ui_controller.fig.canvas.mpl_connect('motion_notify_event', on_mouse_move)
-    ui_controller.fig.canvas.mpl_connect('button_press_event', on_mouse_click)
+    Note: This function is now deprecated in favor of the centralized
+    event_manager system to prevent conflicts. It's kept for compatibility
+    but no longer connects duplicate event handlers.
+    """
+    print("Note: Mouse interactions are now handled by event_manager.py")
+    print("UI controller will receive click events through the centralized system")
