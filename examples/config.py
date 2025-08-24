@@ -78,6 +78,7 @@ DEFAULT_OUTPUT_DIR = '../output'
 
 # Feature selection limits
 MAX_FEATURES_WITH_COLORS = 6  # Only top 6 features get distinct colors
+MAX_FEATURE_FAMILIES = 6      # Maximum number of feature families (Paul Tol palette limit)
 
 def get_feature_color(feature_idx, total_features):
     """

@@ -116,9 +116,10 @@ def prepare_wind_vane_subplot(ax2):
         spine.set_visible(False)
 
 
-def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, feature_colors):
+def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, feature_colors, 
+                     family_assignments=None):
     """
-    Update the wind vane visualization showing feature vectors at a grid cell.
+    Update the wind vane visualization with family-based colors.
     
     Args:
         ax2: Matplotlib axes object for wind vane
@@ -126,7 +127,8 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
         system: Particle system dictionary
         col_labels: Feature column labels
         selected_features: Selected feature indices
-        feature_colors: Colors for features
+        feature_colors: Colors for features (family-based)
+        family_assignments: Optional array of family assignments for features
     """
     # Clear previous aggregate visualization
     for artist in ax2.collections + ax2.patches:
@@ -344,40 +346,37 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             else:
                 continue  # Skip zero-magnitude vectors
             
-            # Use feature colors with intensity based on vector magnitude and dominance
+            # Use family-based colors with perceptual encoding
             if feat_idx < len(feature_colors):
                 base_color = feature_colors[feat_idx]
-                # Parse hex color to RGB
-                if isinstance(base_color, str) and base_color.startswith('#'):
-                    base_r = int(base_color[1:3], 16) / 255.0
-                    base_g = int(base_color[3:5], 16) / 255.0
-                    base_b = int(base_color[5:7], 16) / 255.0
+                
+                # Import color utilities for family-based coloring
+                try:
+                    from color_system import hex_to_rgb, create_lightness_ramp, create_alpha_for_dominance
                     
-                    # Calculate intensity based on consistent vector magnitude
+                    # Calculate magnitude-modulated lightness
                     max_mag = max(mags_selected) if mags_selected else 1.0
-                    mag_intensity = 0.3 + 0.7 * (vector_magnitude / max_mag)
+                    magnitude_color = create_lightness_ramp(base_color, vector_magnitude, max_mag)
+                    base_r, base_g, base_b = hex_to_rgb(magnitude_color)
                     
-                    # Use soft dominance instead of hard dominance boost
-                    # Get the probability for this feature from soft dominance
+                    # Get dominance for alpha modulation
                     if 'cell_soft_dominance' in system and system['cell_soft_dominance'] is not None:
                         cell_soft_dom = system['cell_soft_dominance']
                         if feat_idx < cell_soft_dom.shape[2]:
-                            soft_prob = cell_soft_dom[cell_i, cell_j, feat_idx]
-                            dominance_boost = 0.8 + 0.8 * soft_prob  # Scale from 0.8 to 1.6 based on probability
+                            dominance = cell_soft_dom[cell_i, cell_j, feat_idx]
                         else:
-                            dominance_boost = 1.0
+                            dominance = 1.0 if feat_idx == dominant_feature else 0.5
                     else:
-                        # Fallback to hard dominance if soft dominance not available
-                        dominance_boost = 1.3 if feat_idx == dominant_feature else 1.0
+                        dominance = 1.0 if feat_idx == dominant_feature else 0.5
                     
-                    intensity = min(1.0, mag_intensity * dominance_boost)
+                    # Create alpha for dominance
+                    base_alpha = create_alpha_for_dominance(dominance, min_alpha=0.4, max_alpha=0.9)
                     
-                    # Add uncertainty visualization through desaturation
+                    # Add uncertainty visualization through desaturation if available
                     uncertainty_factor = 1.0  # Default: no desaturation
                     if 'cell_soft_dominance' in system and system['cell_soft_dominance'] is not None:
-                        # Calculate uncertainty as entropy of the probability distribution
                         cell_soft_dom = system['cell_soft_dominance']
-                        if feat_idx < cell_soft_dom.shape[2]:
+                        if cell_soft_dom.shape[2] > 1:  # Only if we have multiple features
                             probs = cell_soft_dom[cell_i, cell_j, :]
                             # Compute entropy: higher entropy = more uncertainty
                             entropy = -np.sum(probs * np.log(probs + 1e-8))
@@ -385,29 +384,44 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                             normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
                             
                             # Convert entropy to desaturation factor: high uncertainty = more desaturation
-                            uncertainty_factor = 0.5 + 0.5 * (1.0 - normalized_entropy)  # Range [0.5, 1.0]
+                            uncertainty_factor = 0.6 + 0.4 * (1.0 - normalized_entropy)  # Range [0.6, 1.0]
                     
-                    # Apply desaturation by blending with gray
+                    # Apply desaturation by blending with neutral gray
                     gray_value = 0.5  # Mid-gray
                     desaturated_r = base_r * uncertainty_factor + gray_value * (1 - uncertainty_factor)
                     desaturated_g = base_g * uncertainty_factor + gray_value * (1 - uncertainty_factor)  
                     desaturated_b = base_b * uncertainty_factor + gray_value * (1 - uncertainty_factor)
                     
-                    # Adjust alpha based on hull membership
-                    pos_alpha = intensity * (0.9 if pos_on_hull else 0.6)
-                    neg_alpha = intensity * (0.7 if neg_on_hull else 0.4)
+                    # Adjust alpha based on convex hull membership (visual emphasis)
+                    pos_alpha = base_alpha * (1.0 if pos_on_hull else 0.7)
+                    neg_alpha = base_alpha * (0.8 if neg_on_hull else 0.5)
                     
                     pos_color = (desaturated_r, desaturated_g, desaturated_b, pos_alpha)
                     neg_color = (desaturated_r, desaturated_g, desaturated_b, neg_alpha)
-                else:
-                    # Fallback to black/gray scheme
-                    pos_alpha = 0.8 if pos_on_hull else 0.4
-                    neg_alpha = 0.6 if neg_on_hull else 0.3
-                    pos_color = (0, 0, 0, pos_alpha)
-                    neg_color = (0.3, 0.3, 0.3, neg_alpha)
+                    
+                except ImportError:
+                    # Fallback if color_system is not available
+                    if isinstance(base_color, str) and base_color.startswith('#'):
+                        base_r = int(base_color[1:3], 16) / 255.0
+                        base_g = int(base_color[3:5], 16) / 255.0
+                        base_b = int(base_color[5:7], 16) / 255.0
+                        
+                        max_mag = max(mags_selected) if mags_selected else 1.0
+                        mag_intensity = 0.3 + 0.7 * (vector_magnitude / max_mag)
+                        dominance_boost = 1.3 if feat_idx == dominant_feature else 1.0
+                        intensity = min(1.0, mag_intensity * dominance_boost)
+                        
+                        pos_alpha = intensity * (0.9 if pos_on_hull else 0.6)
+                        neg_alpha = intensity * (0.7 if neg_on_hull else 0.4)
+                        
+                        pos_color = (base_r, base_g, base_b, pos_alpha)
+                        neg_color = (base_r, base_g, base_b, neg_alpha)
+                    else:
+                        pos_color = (0, 0, 0, 0.6)
+                        neg_color = (0.3, 0.3, 0.3, 0.4)
             else:
-                # Fallback colors
-                pos_color = (0, 0, 0, 0.6)
+                # Fallback colors for invalid feature indices
+                pos_color = (0.5, 0.5, 0.5, 0.6)
                 neg_color = (0.3, 0.3, 0.3, 0.4)
             
             # Draw vector arrows
@@ -428,23 +442,66 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
 
 def setup_figure_layout():
     """
-    Setup the main figure layout with subplots.
+    Setup the main figure layout with professional styling.
     
     Returns:
         tuple: (fig, ax, ax2) - Figure and axes objects
     """
-    # Create figure with enlarged wind vane and space for controls
-    fig = plt.figure(figsize=(18, 10))  # Larger overall figure
+    # Create figure with enlarged wind vane and space for controls and legends
+    fig = plt.figure(figsize=(18, 10))
     
-    # Create main subplots - give more space to wind vane
-    ax = plt.subplot2grid((2, 4), (0, 0), rowspan=2, colspan=2)  # Main plot takes 2/4 width
-    ax2 = plt.subplot2grid((2, 4), (0, 2), rowspan=2, colspan=2)  # Wind vane takes 2/4 width
+    # Apply professional background
+    from color_system import BACKGROUND_COLOR
+    fig.patch.set_facecolor(BACKGROUND_COLOR)
+    
+    # Create main subplots - leave space for legends on the left
+    ax = plt.subplot2grid((2, 5), (0, 1), rowspan=2, colspan=2)  # Main plot takes 2/5 width  
+    ax2 = plt.subplot2grid((2, 5), (0, 3), rowspan=2, colspan=2)  # Wind vane takes 2/5 width
     
     # Make both subplots square
     ax.set_aspect('equal')
     ax2.set_aspect('equal')
     
     return fig, ax, ax2
+
+
+def apply_professional_styling(fig, ax1, ax2):
+    """
+    Apply professional color styling to the entire visualization.
+    
+    Args:
+        fig: matplotlib figure object
+        ax1: main plot axes
+        ax2: wind vane axes
+    """
+    from color_system import BACKGROUND_COLOR, GRID_COLOR, TEXT_COLOR
+    
+    # Set figure background
+    fig.patch.set_facecolor(BACKGROUND_COLOR)
+    
+    # Style main plot
+    ax1.set_facecolor(BACKGROUND_COLOR)
+    ax1.grid(True, alpha=0.3, linewidth=0.5, color=GRID_COLOR, zorder=0)
+    
+    # Remove tick marks but keep grid
+    ax1.set_xticks([])
+    ax1.set_yticks([])
+    
+    # Style spines
+    for spine in ax1.spines.values():
+        spine.set_color(TEXT_COLOR)
+        spine.set_linewidth(0.8)
+    
+    # Style wind vane (keep white background for contrast)
+    ax2.set_facecolor('white')
+    
+    # Style wind vane spines
+    for spine in ax2.spines.values():
+        spine.set_color(TEXT_COLOR)
+        spine.set_linewidth(0.5)
+        
+    # Wind vane title styling
+    ax2.set_title("Wind Vane", fontsize=14, color=TEXT_COLOR, pad=15, weight='bold')
 
 
 def save_figure_frames(fig, output_dir, num_frames=5):

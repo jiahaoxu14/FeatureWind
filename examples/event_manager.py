@@ -241,13 +241,16 @@ def create_reliable_event_system(fig, ax1, ax2, ui_controller, system, col_label
     event_manager = EventManager(fig, ax1, ax2, ui_controller)
     event_manager.set_grid_resolution(grid_res)
     
-    # Create wind vane update callback
+    # Create wind vane update callback with family support
     def wind_vane_update_callback(mouse_data):
-        """Callback for updating wind vane based on mouse position."""
+        """Callback for updating wind vane with family-based colors."""
         try:
             import visualization_core
+            # Check if family assignments are stored in system
+            family_assignments = system.get('family_assignments', None)
+            
             visualization_core.update_wind_vane(ax2, mouse_data, system, col_labels, 
-                                              grad_indices, feature_colors)
+                                              grad_indices, feature_colors, family_assignments)
         except Exception as e:
             print(f"Wind vane callback error: {e}")
     

@@ -3,6 +3,7 @@ Particle system module for FeatureWind.
 
 This module handles particle physics, including adaptive RK4 integration,
 particle reseeding, and trajectory management for flow field visualization.
+Enhanced with family-based coloring system.
 """
 
 import numpy as np
@@ -327,13 +328,205 @@ def reinitialize_particles(system):
             lt[i] = 0
 
 
-def update_particle_visualization(system, velocity):
+def get_dominant_feature_at_position(position, system):
     """
-    Update particle visualization (line segments and colors).
+    Get the dominant feature at a given position.
+    
+    Args:
+        position (np.ndarray): Position coordinates [x, y]
+        system (dict): Particle system dictionary
+        
+    Returns:
+        int: Index of dominant feature, or -1 if none
+    """
+    if 'cell_dominant_features' not in system:
+        return -1
+        
+    xmin, xmax, ymin, ymax = config.bounding_box
+    cell_dominant_features = system['cell_dominant_features']
+    grid_res = cell_dominant_features.shape[0]
+    
+    # Convert position to grid cell indices
+    if xmin <= position[0] <= xmax and ymin <= position[1] <= ymax:
+        cell_j = int((position[0] - xmin) / (xmax - xmin) * grid_res)
+        cell_i = int((position[1] - ymin) / (ymax - ymin) * grid_res)
+        
+        # Clamp to valid range
+        cell_i = max(0, min(grid_res - 1, cell_i))
+        cell_j = max(0, min(grid_res - 1, cell_j))
+        
+        return cell_dominant_features[cell_i, cell_j]
+    
+    return -1
+
+
+def get_magnitude_at_position(position, feature_idx, system):
+    """
+    Get gradient magnitude for a specific feature at a position.
+    
+    Args:
+        position (np.ndarray): Position coordinates [x, y]
+        feature_idx (int): Feature index
+        system (dict): Particle system dictionary
+        
+    Returns:
+        float: Gradient magnitude at position
+    """
+    if ('grid_u_all_feats' not in system or 'grid_v_all_feats' not in system or 
+        feature_idx < 0):
+        return 0.0
+        
+    xmin, xmax, ymin, ymax = config.bounding_box
+    grid_u_all_feats = system['grid_u_all_feats']
+    grid_v_all_feats = system['grid_v_all_feats']
+    grid_res = grid_u_all_feats.shape[1]
+    
+    if feature_idx >= grid_u_all_feats.shape[0]:
+        return 0.0
+    
+    # Convert position to grid cell indices
+    if xmin <= position[0] <= xmax and ymin <= position[1] <= ymax:
+        cell_j = int((position[0] - xmin) / (xmax - xmin) * grid_res)
+        cell_i = int((position[1] - ymin) / (ymax - ymin) * grid_res)
+        
+        # Clamp to valid range
+        cell_i = max(0, min(grid_res - 1, cell_i))
+        cell_j = max(0, min(grid_res - 1, cell_j))
+        
+        u_val = grid_u_all_feats[feature_idx, cell_i, cell_j]
+        v_val = grid_v_all_feats[feature_idx, cell_i, cell_j]
+        
+        return np.sqrt(u_val**2 + v_val**2)
+    
+    return 0.0
+
+
+def get_dominance_at_position(position, feature_idx, system):
+    """
+    Get dominance/uncertainty measure for a feature at a position.
+    
+    Args:
+        position (np.ndarray): Position coordinates [x, y] 
+        feature_idx (int): Feature index
+        system (dict): Particle system dictionary
+        
+    Returns:
+        float: Dominance value (0-1, higher = more dominant)
+    """
+    if 'cell_soft_dominance' not in system or feature_idx < 0:
+        # Fallback: use hard dominance
+        dominant_feat = get_dominant_feature_at_position(position, system)
+        return 1.0 if dominant_feat == feature_idx else 0.3
+        
+    xmin, xmax, ymin, ymax = config.bounding_box
+    cell_soft_dominance = system['cell_soft_dominance']
+    
+    if cell_soft_dominance is None or feature_idx >= cell_soft_dominance.shape[2]:
+        return 0.5  # Neutral dominance
+    
+    grid_res = cell_soft_dominance.shape[0]
+    
+    # Convert position to grid cell indices
+    if xmin <= position[0] <= xmax and ymin <= position[1] <= ymax:
+        cell_j = int((position[0] - xmin) / (xmax - xmin) * grid_res)
+        cell_i = int((position[1] - ymin) / (ymax - ymin) * grid_res)
+        
+        # Clamp to valid range
+        cell_i = max(0, min(grid_res - 1, cell_i))
+        cell_j = max(0, min(grid_res - 1, cell_j))
+        
+        return cell_soft_dominance[cell_i, cell_j, feature_idx]
+    
+    return 0.5
+
+
+def update_particle_colors_family_based(system, family_assignments=None, feature_colors=None):
+    """
+    Update particle colors based on family assignment, magnitude, and dominance.
+    
+    Args:
+        system (dict): Particle system dictionary
+        family_assignments (np.ndarray, optional): Family ID for each feature
+        feature_colors (list, optional): Hex colors for each feature
+        
+    Returns:
+        np.ndarray: RGBA colors for each particle
+    """
+    particle_positions = system['particle_positions']
+    n_particles = len(particle_positions)
+    
+    # Initialize colors array
+    particle_colors = np.zeros((n_particles, 4))  # RGBA
+    
+    if family_assignments is None or feature_colors is None:
+        # Fallback: use speed-based grayscale coloring
+        if 'last_velocity' in system:
+            speeds = np.linalg.norm(system['last_velocity'], axis=1)
+            max_speed = speeds.max() + 1e-9
+            normalized_speeds = speeds / max_speed
+            
+            for i in range(n_particles):
+                intensity = 0.3 + 0.7 * normalized_speeds[i]
+                particle_colors[i] = [0, 0, 0, intensity]
+        else:
+            particle_colors[:] = [0, 0, 0, 0.5]  # Default black with 50% alpha
+        
+        return particle_colors
+    
+    # Import color utilities
+    from color_system import hex_to_rgb, create_lightness_ramp, create_alpha_for_dominance
+    
+    # Get maximum magnitudes for each feature (for normalization)
+    max_magnitudes = {}
+    if 'grid_u_all_feats' in system and 'grid_v_all_feats' in system:
+        grid_u_all_feats = system['grid_u_all_feats']
+        grid_v_all_feats = system['grid_v_all_feats']
+        
+        for feat_idx in range(len(family_assignments)):
+            if feat_idx < grid_u_all_feats.shape[0]:
+                magnitude_grid = np.sqrt(grid_u_all_feats[feat_idx]**2 + grid_v_all_feats[feat_idx]**2)
+                max_magnitudes[feat_idx] = magnitude_grid.max()
+            else:
+                max_magnitudes[feat_idx] = 1.0
+    
+    # Color each particle based on its dominant feature
+    for i, position in enumerate(particle_positions):
+        dominant_feature = get_dominant_feature_at_position(position, system)
+        
+        if dominant_feature >= 0 and dominant_feature < len(feature_colors):
+            # Get base family color
+            base_color = feature_colors[dominant_feature]
+            
+            # Get local gradient magnitude for lightness modulation
+            magnitude = get_magnitude_at_position(position, dominant_feature, system)
+            max_magnitude = max_magnitudes.get(dominant_feature, 1.0)
+            
+            # Create magnitude-modulated color (lightness ramp)
+            magnitude_color = create_lightness_ramp(base_color, magnitude, max_magnitude)
+            rgb = hex_to_rgb(magnitude_color)
+            
+            # Get dominance for alpha modulation
+            dominance = get_dominance_at_position(position, dominant_feature, system)
+            alpha = create_alpha_for_dominance(dominance, min_alpha=0.3, max_alpha=0.9)
+            
+            particle_colors[i] = [*rgb, alpha]
+            
+        else:
+            # No dominant feature or invalid feature - use neutral gray
+            particle_colors[i] = [0.5, 0.5, 0.5, 0.3]
+    
+    return particle_colors
+
+
+def update_particle_visualization(system, velocity, family_assignments=None, feature_colors=None):
+    """
+    Update particle visualization with family-based coloring.
     
     Args:
         system (dict): Particle system dictionary
         velocity (np.ndarray): Current particle velocities
+        family_assignments (np.ndarray, optional): Family assignments for features
+        feature_colors (list, optional): Hex colors for features
         
     Returns:
         tuple: Updated line collection
@@ -351,24 +544,39 @@ def update_particle_visualization(system, velocity):
     # Compute speeds for alpha fade
     speeds = np.linalg.norm(velocity, axis=1)
     max_speed = speeds.max() + 1e-9  # avoid division by zero
+    
+    # Store velocity in system for color computation
+    system['last_velocity'] = velocity
 
-    # Use black color for all particles
+    # Get family-based colors for particles
+    if family_assignments is not None and feature_colors is not None:
+        particle_colors = update_particle_colors_family_based(system, family_assignments, feature_colors)
+    else:
+        # Fallback: speed-based grayscale coloring  
+        particle_colors = np.zeros((n_active, 4))
+        for i in range(n_active):
+            intensity = 0.3 + 0.7 * (speeds[i] / max_speed)
+            particle_colors[i] = [0, 0, 0, intensity]  # Black with speed-based alpha
+
+    # Build trail segments with family-based colors
     for i in range(n_active):
-        # All particles are black regardless of grid cell or feature
-        r, g, b = 0, 0, 0  # Black color
-        alpha_part = speeds[i] / max_speed
+        # Use particle's family-based color
+        r, g, b, base_alpha = particle_colors[i]
+        
+        # Modulate alpha by speed for additional visual feedback
+        speed_alpha = speeds[i] / max_speed
 
         for t in range(tail_gap):
             seg_idx = i * tail_gap + t
             segments[seg_idx, 0, :] = his[i, t, :]
             segments[seg_idx, 1, :] = his[i, t + 1, :]
 
-            # Combine alpha with any additional fade for the tail
+            # Age-based fade for trail effect
             age_factor = (t+1) / tail_gap
-
-            # Multiply them
+            
+            # Combined alpha: base dominance * speed * age * fade factor
             alpha_min = 0.15
-            alpha_final = max(alpha_min, alpha_part * age_factor * config.ALPHA_FADE_FACTOR)
+            alpha_final = max(alpha_min, base_alpha * speed_alpha * age_factor * config.ALPHA_FADE_FACTOR)
 
             # Assign the final RGBA
             colors_rgba[seg_idx] = [r, g, b, alpha_final]
@@ -377,6 +585,34 @@ def update_particle_visualization(system, velocity):
     lc_.set_colors(colors_rgba)
     
     return (lc_,)
+
+
+def update_particles_with_families(system, interp_u_sum=None, interp_v_sum=None, 
+                                  grid_u_sum=None, grid_v_sum=None, grid_res=None,
+                                  family_assignments=None, feature_colors=None):
+    """
+    Enhanced particle update function with family-based coloring.
+    
+    Args:
+        system (dict): Particle system dictionary
+        interp_u_sum, interp_v_sum: Velocity interpolators
+        grid_u_sum, grid_v_sum: Velocity grids
+        grid_res (int): Grid resolution
+        family_assignments (np.ndarray): Family assignments for features
+        feature_colors (list): Hex colors for features
+        
+    Returns:
+        tuple: Updated line collection with family colors
+    """
+    # First do standard physics update
+    result = update_particles(system, interp_u_sum, interp_v_sum, grid_u_sum, grid_v_sum, grid_res)
+    
+    # Then update visualization with family colors
+    if 'last_velocity' in system:
+        velocity = system['last_velocity']
+        return update_particle_visualization(system, velocity, family_assignments, feature_colors)
+    
+    return result
 
 
 def update_particles(system, interp_u_sum=None, interp_v_sum=None, 

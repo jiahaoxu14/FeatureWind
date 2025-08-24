@@ -126,24 +126,46 @@ def main():
     grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (grid_res, grid_res)
     grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (grid_res, grid_res)
     
-    # Step 4: Setup colors and visualization elements
-    print("Setting up colors and visualization...")
+    # Step 4: Feature clustering and family-based color assignment
+    print("Clustering features by directional similarity...")
     
-    # Generate colors for features using config
-    feature_colors = [config.get_feature_color(i, len(col_labels)) for i in range(min(config.MAX_FEATURES_WITH_COLORS, len(col_labels)))]
-    print("Feature colors:", feature_colors[:6])  # Show first 6
+    # Import the new clustering and color modules
+    import feature_clustering
+    import color_system
     
-    # Build initial mapping for selected features to RGBA for particle coloring
-    # Only top 6 features get colors, others are excluded from coloring
+    # Determine number of families: use actual count if ≤6, otherwise fix to 6
+    n_features = len(col_labels)
+    n_families = min(n_features, config.MAX_FEATURE_FAMILIES)
+    
+    if n_features <= 6:
+        print(f"Using {n_families} families (one per feature)")
+    else:
+        print(f"Using fixed {n_families} families for {n_features} features (optimal color distinction)")
+    
+    # Perform feature clustering based on vector field directional similarity  
+    family_assignments, similarity_matrix, clustering_metrics = feature_clustering.cluster_features_by_direction(
+        grid_u_all_feats, grid_v_all_feats, n_families=n_families
+    )
+    
+    # Assign Paul Tol colors to families
+    feature_colors = color_system.assign_family_colors(family_assignments)
+    
+    print(f"✓ Clustered {len(col_labels)} features into {n_families} families")
+    print(f"Family assignments: {dict(zip(range(len(col_labels)), family_assignments))}")
+    print(f"Clustering quality - Silhouette: {clustering_metrics['silhouette']:.3f}")
+    
+    # Analyze the feature families
+    family_analysis = feature_clustering.analyze_feature_families(
+        family_assignments, col_labels, similarity_matrix
+    )
+    
+    # Build feature color mapping for backward compatibility
     config.real_feature_rgba = {}
-    for i, feat_idx in enumerate(grad_indices):
-        if i < config.MAX_FEATURES_WITH_COLORS and feat_idx < len(feature_colors):
-            color_hex = feature_colors[i]
-            # Convert hex to RGBA (assuming hex format)
+    for i, feat_idx in enumerate(range(len(col_labels))):
+        if feat_idx < len(feature_colors):
+            color_hex = feature_colors[feat_idx]
             if color_hex.startswith('#'):
-                r = int(color_hex[1:3], 16) / 255.0
-                g = int(color_hex[3:5], 16) / 255.0
-                b = int(color_hex[5:7], 16) / 255.0
+                r, g, b = color_system.hex_to_rgb(color_hex)
                 config.real_feature_rgba[feat_idx] = (r, g, b, 1.0)
     
     # Step 5: Create particle system
@@ -164,9 +186,21 @@ def main():
         'interp_argmax': interp_argmax
     })
     
-    # Step 6: Setup figure and visualization
-    print("Setting up figure and visualization...")
+    # Step 6: Setup figure with professional styling and legends
+    print("Setting up figure with professional styling...")
     fig, ax1, ax2 = visualization_core.setup_figure_layout()
+    
+    # Apply professional styling
+    visualization_core.apply_professional_styling(fig, ax1, ax2)
+    
+    # Create comprehensive legend system
+    import legend_manager
+    legend_axes = legend_manager.create_comprehensive_legend(
+        fig, family_assignments, col_labels, feature_colors, 
+        legend_position='upper_left', show_instructions=True
+    )
+    
+    print(f"✓ Created {len(legend_axes)} legend components")
     
     # Prepare the main subplot
     lc = system['linecoll']
@@ -175,6 +209,10 @@ def main():
     
     # Prepare the wind vane subplot
     visualization_core.prepare_wind_vane_subplot(ax2)
+    
+    # Store family info in system for particle coloring and UI
+    system['family_assignments'] = family_assignments
+    system['feature_colors'] = feature_colors
     
     # Step 7: Setup UI controls
     print("Setting up UI controls...")
@@ -186,10 +224,14 @@ def main():
     # Setup reliable mouse interactions using the enhanced event system
     import event_manager
     
-    # Create reliable event handling system (replaces conflicting event handlers)
+    # Create reliable event handling system with family colors
     event_mgr = event_manager.create_reliable_event_system(
         fig, ax1, ax2, ui_controller, system, col_labels, grad_indices, feature_colors, grid_res
     )
+    
+    # Store additional family info in event manager for wind vane updates
+    if hasattr(event_mgr, 'set_family_info'):
+        event_mgr.set_family_info(family_assignments, feature_colors)
     
     # Step 8: Animation setup with enhanced performance monitoring
     print("Setting up animation with performance monitoring...")
@@ -197,14 +239,21 @@ def main():
     animation_frame_count = 0
     
     def update_frame(frame):
-        """Enhanced animation update function with performance monitoring."""
+        """Enhanced animation update function with family-based coloring."""
         nonlocal animation_frame_count
         animation_frame_count += 1
         
         try:
-            # Update particles
-            result = particle_system.update_particles(
-                system, interp_u_sum, interp_v_sum, grid_u_sum, grid_v_sum, grid_res)
+            # Update particles with family-based coloring
+            if hasattr(particle_system, 'update_particles_with_families'):
+                # Use enhanced particle update with family coloring
+                result = particle_system.update_particles_with_families(
+                    system, interp_u_sum, interp_v_sum, grid_u_sum, grid_v_sum, 
+                    grid_res, family_assignments, feature_colors)
+            else:
+                # Fallback to standard particle update
+                result = particle_system.update_particles(
+                    system, interp_u_sum, interp_v_sum, grid_u_sum, grid_v_sum, grid_res)
             
             # Periodic performance check (every 150 frames ~ 5 seconds at 30 FPS)
             if animation_frame_count % 150 == 0:
@@ -214,6 +263,11 @@ def main():
                 if hasattr(event_mgr, 'failed_updates') and event_mgr.failed_updates > 10:
                     print("⚠ High interaction failure rate detected!")
                     print("Tips: 1) Move mouse slower, 2) Check system performance, 3) Try F5 to refresh")
+                    
+                # Print family clustering info occasionally
+                if animation_frame_count % 450 == 0:  # Every ~15 seconds
+                    print(f"🎨 Using {len(np.unique(family_assignments))} feature families")
+                    print(f"   Clustering quality: {clustering_metrics['silhouette']:.3f}")
             
             return result
             
@@ -252,17 +306,31 @@ def main():
     fig.canvas.mpl_connect('key_press_event', on_key_press)
     
     # Show the interactive visualization
-    print("Starting enhanced interactive visualization...")
+    print("\n" + "="*70)
+    print("🎨 FEATUREWIND: Enhanced Family-Based Visualization")
+    print("="*70)
+    print(f"✓ Dataset: {len(valid_points)} points, {len(col_labels)} features")
+    print(f"✓ Feature families: {n_families} groups (clustering quality: {clustering_metrics['silhouette']:.3f})")
+    print(f"✓ Color system: Paul Tol palette with perceptual encoding")
+    print(f"✓ Visualization: {config.DEFAULT_NUM_PARTICLES} particles, {grid_res}x{grid_res} grid")
+    
     print("\n📊 Interface Controls:")
     print("- Use radio buttons to switch between Top-K and Direction-Conditioned modes")
     print("- In Top-K mode: Use the slider to select number of features")
     print("- In Direction-Conditioned mode: Click on grid cells and use angle/magnitude sliders")
     print("- Move mouse over the main plot to see feature vectors in the wind vane")
+    
+    print("\n🎨 Color Encoding:")
+    print("- Hue: Feature family (similar flow patterns)")
+    print("- Lightness: Gradient magnitude (dark=weak, light=strong)")
+    print("- Alpha: Dominance/uncertainty (faint=uncertain, solid=dominant)")
+    
     print("\n🔧 Troubleshooting:")
     print("- If interactions stop working, press F5 or R to refresh")
     print("- Press P to check performance stats")
     print("- Press H for keyboard shortcuts help")
     print("- If problems persist, move mouse slower or check system performance")
+    print("="*70)
     
     plt.show()
 
