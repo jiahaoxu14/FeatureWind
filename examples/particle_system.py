@@ -628,8 +628,35 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
     # Store velocity in system for color computation
     system['last_velocity'] = velocity
 
-    # Get family-based colors for particles
-    if family_assignments is not None and feature_colors is not None:
+    # Get colors for particles based on mode
+    import config
+    single_feature_mode = hasattr(config, 'adaptive_velocity_enabled') and hasattr(config, 'k') and config.k == 1
+    
+    if single_feature_mode:
+        # Single feature mode - use uniform color for the single feature
+        if family_assignments is not None and feature_colors is not None and len(feature_colors) > 0:
+            # Use the color of the single feature
+            single_feature_color = feature_colors[0]  # First (and only) feature color
+            # Convert hex to RGB if needed
+            if isinstance(single_feature_color, str) and single_feature_color.startswith('#'):
+                import color_system
+                r, g, b = color_system.hex_to_rgb(single_feature_color)
+            else:
+                r, g, b = single_feature_color[:3] if len(single_feature_color) >= 3 else (0, 0, 0)
+            
+            # All particles get the same color with speed-based alpha
+            particle_colors = np.zeros((n_active, 4))
+            for i in range(n_active):
+                intensity = 0.5 + 0.5 * (speeds[i] / max_speed)  # Alpha based on speed
+                particle_colors[i] = [r, g, b, intensity]
+        else:
+            # Fallback to blue for single feature
+            particle_colors = np.zeros((n_active, 4))
+            for i in range(n_active):
+                intensity = 0.5 + 0.5 * (speeds[i] / max_speed)
+                particle_colors[i] = [0.2, 0.4, 0.8, intensity]  # Blue with speed-based alpha
+    elif family_assignments is not None and feature_colors is not None:
+        # Multi-feature mode - use family-based coloring
         particle_colors = update_particle_colors_family_based(system, family_assignments, feature_colors)
     else:
         # Fallback: speed-based grayscale coloring  
@@ -667,7 +694,43 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
     lc_.set_segments(segments)
     lc_.set_colors(colors_rgba)
     
+    # Apply adaptive appearance scaling for weak winds
+    if hasattr(config, 'velocity_scale_factor'):
+        scale_particle_appearance(lc_, config.actual_flow_magnitude, config.velocity_scale_factor)
+    
     return (lc_,)
+
+
+def scale_particle_appearance(line_collection, actual_magnitude, scale_factor):
+    """
+    Adjust particle visual properties based on wind strength.
+    
+    Args:
+        line_collection: Matplotlib LineCollection
+        actual_magnitude: Actual flow magnitude
+        scale_factor: Display scaling factor
+    """
+    if scale_factor > 3.0:
+        # Very weak wind - make particles more visible
+        line_widths = 2.0  # Thicker lines
+        alpha_boost = 1.5  # More opaque
+    elif scale_factor > 1.5:
+        # Weak wind - slightly enhanced
+        line_widths = 1.5
+        alpha_boost = 1.2
+    else:
+        # Normal wind - standard appearance  
+        line_widths = 1.0
+        alpha_boost = 1.0
+    
+    line_collection.set_linewidths(line_widths)
+    
+    # Adjust alpha values
+    current_colors = line_collection.get_colors()
+    if len(current_colors) > 0:
+        adjusted_colors = current_colors.copy()
+        adjusted_colors[:, 3] = np.clip(current_colors[:, 3] * alpha_boost, 0, 1)
+        line_collection.set_colors(adjusted_colors)
 
 
 def update_particles_with_families(system, interp_u_sum=None, interp_v_sum=None, 
@@ -696,6 +759,30 @@ def update_particles_with_families(system, interp_u_sum=None, interp_v_sum=None,
         return update_particle_visualization(system, velocity, family_assignments, feature_colors)
     
     return result
+
+
+def compute_adaptive_trail_length(avg_velocity_magnitude):
+    """
+    Adjust trail length based on velocity magnitude for visibility.
+    
+    Args:
+        avg_velocity_magnitude: Average velocity magnitude
+        
+    Returns:
+        int: Adaptive trail length
+    """
+    if not config.ADAPTIVE_TRAIL_LENGTH:
+        return config.BASE_TRAIL_LENGTH
+    
+    # Longer trails for slower particles, shorter for faster
+    if avg_velocity_magnitude < 0.01:
+        return config.MAX_TRAIL_LENGTH
+    elif avg_velocity_magnitude < 0.05:
+        return int(config.BASE_TRAIL_LENGTH * 1.5)
+    elif avg_velocity_magnitude > 0.2:
+        return config.MIN_TRAIL_LENGTH
+    else:
+        return config.BASE_TRAIL_LENGTH
 
 
 def update_particles(system, interp_u_sum=None, interp_v_sum=None, 
@@ -765,6 +852,30 @@ def update_particles(system, interp_u_sum=None, interp_v_sum=None,
     
     # Use the current velocity after integration for accurate coloring
     velocity = final_velocity if final_velocity is not None else get_velocity(pp)
+    
+    # Adaptive trail length based on velocity magnitude
+    if config.ADAPTIVE_TRAIL_LENGTH:
+        avg_velocity_mag = np.linalg.norm(velocity, axis=1).mean()
+        desired_trail_length = compute_adaptive_trail_length(avg_velocity_mag)
+        
+        # Resize history if needed
+        current_trail_length = his.shape[1] - 1
+        if desired_trail_length != current_trail_length:
+            # Create new history array with desired length
+            new_histories = np.full((len(pp), desired_trail_length + 1, 2), np.nan)
+            
+            # Copy as much existing history as possible
+            copy_length = min(current_trail_length, desired_trail_length)
+            if copy_length > 0:
+                new_histories[:, -(copy_length+1):] = his[:, -(copy_length+1):]
+            
+            # Ensure current position is preserved
+            new_histories[:, -1, :] = pp
+            
+            # Update system
+            system['histories'] = new_histories
+            system['tail_gap'] = desired_trail_length
+            his = new_histories
 
     # Shift history
     his[:, :-1, :] = his[:, 1:, :]
@@ -777,5 +888,5 @@ def update_particles(system, interp_u_sum=None, interp_v_sum=None,
     if grid_res is not None:
         density_aware_reseed(system, grid_res)
 
-    # Update visualization
+    # Update visualization with adaptive appearance
     return update_particle_visualization(system, velocity)
