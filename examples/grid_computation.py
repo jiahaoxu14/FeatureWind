@@ -181,8 +181,6 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
     
     # Compute adaptive threshold based on local point density
     threshold = compute_adaptive_threshold(positions, kdtree)
-    print(f"Adaptive distance threshold: {threshold:.4f} (based on local density)")
-    print(f"  Data points: {len(positions)}, using {min(config.KNN_K, len(positions))}-NN distances")
     
     # Interpolate velocity fields for the top-k features
     grid_u_feats, grid_v_feats = [], []
@@ -228,16 +226,6 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
             # Get magnitudes directly from cell centers (no averaging needed)
             cell_mags = grid_mag_all_feats[:, i, j]
             
-            # Debug specific problematic cell (if needed)
-            if i == 27 and j == 11:
-                print(f"\nDebugging grid cell (27,11):")
-                print("Cell magnitudes for all features:")
-                sorted_indices = np.argsort(-cell_mags)  # Sort by magnitude descending
-                for rank, feat_idx in enumerate(sorted_indices[:10]):  # Show top 10
-                    if feat_idx < len(col_labels):
-                        print(f"  Rank {rank+1}: Feature {feat_idx} ({col_labels[feat_idx]}): {cell_mags[feat_idx]:.6f}")
-                    else:
-                        print(f"  Rank {rank+1}: Feature {feat_idx} (out of range): {cell_mags[feat_idx]:.6f}")
             
             # Compute soft dominance using temperature-based softmax
             softmax_probs, dominant_idx = compute_soft_dominance(cell_mags)
@@ -248,20 +236,6 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
             # Store the dominant feature (still need one for compatibility)
             cell_dominant_features[i, j] = dominant_idx
     
-    print("Cell dominant features shape:", cell_dominant_features.shape)
-    
-    # Debug: Print statistics about dominant features
-    unique_features, counts = np.unique(cell_dominant_features, return_counts=True)
-    print("Dominant features found in grid cells:")
-    for feat_idx, count in zip(unique_features, counts):
-        if feat_idx < len(col_labels):
-            print(f"  Feature {feat_idx} ({col_labels[feat_idx]}): {count} cells")
-        else:
-            print(f"  Feature {feat_idx} (index out of range): {count} cells")
-    
-    # Cell center coordinates information
-    print("Cell centers x range:", cell_centers_x[0], "to", cell_centers_x[-1])
-    print("Cell centers y range:", cell_centers_y[0], "to", cell_centers_y[-1])
     
     # Save the dominant feature grids
     np.savetxt(os.path.join(output_dir, "cell_dominant_features.csv"), 
@@ -315,7 +289,6 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, outp
     
     # Compute adaptive threshold based on local point density
     threshold = compute_adaptive_threshold(positions, kdtree)
-    print(f"Adaptive distance threshold (alt): {threshold:.4f} (based on local density)")
     
     # For each feature, interpolate the velocity fields onto the grid
     grid_u_all, grid_v_all = [], []

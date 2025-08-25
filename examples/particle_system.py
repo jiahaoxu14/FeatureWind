@@ -474,7 +474,7 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
         return particle_colors
     
     # Import color utilities
-    from color_system import hex_to_rgb, create_lightness_ramp, create_alpha_for_dominance
+    from color_system import hex_to_rgb
     
     # Get maximum magnitudes for each feature (for normalization)
     max_magnitudes = {}
@@ -494,20 +494,21 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
         dominant_feature = get_dominant_feature_at_position(position, system)
         
         if dominant_feature >= 0 and dominant_feature < len(feature_colors):
-            # Get base family color
+            # Get base family color - use directly without lightness modulation for consistency
             base_color = feature_colors[dominant_feature]
+            rgb = hex_to_rgb(base_color)
             
-            # Get local gradient magnitude for lightness modulation
+            # Get local gradient magnitude for alpha modulation instead of lightness
             magnitude = get_magnitude_at_position(position, dominant_feature, system)
             max_magnitude = max_magnitudes.get(dominant_feature, 1.0)
+            magnitude_factor = magnitude / max_magnitude if max_magnitude > 0 else 1.0
             
-            # Create magnitude-modulated color (lightness ramp)
-            magnitude_color = create_lightness_ramp(base_color, magnitude, max_magnitude)
-            rgb = hex_to_rgb(magnitude_color)
-            
-            # Get dominance for alpha modulation
+            # Get dominance for additional alpha modulation
             dominance = get_dominance_at_position(position, dominant_feature, system)
-            alpha = create_alpha_for_dominance(dominance, min_alpha=0.3, max_alpha=0.9)
+            
+            # Combine magnitude and dominance for alpha (not lightness)
+            alpha = 0.3 + 0.6 * magnitude_factor * dominance
+            alpha = min(0.9, max(0.3, alpha))
             
             particle_colors[i] = [*rgb, alpha]
             
@@ -574,9 +575,12 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
             # Age-based fade for trail effect
             age_factor = (t+1) / tail_gap
             
-            # Combined alpha: base dominance * speed * age * fade factor
-            alpha_min = 0.15
-            alpha_final = max(alpha_min, base_alpha * speed_alpha * age_factor * config.ALPHA_FADE_FACTOR)
+            # Dynamic alpha with better range: combines speed and age multiplicatively
+            # But with higher base to maintain visibility
+            alpha_min = 0.25
+            # Use power function for more dramatic speed differences
+            speed_factor = speed_alpha ** 0.7  # Power < 1 compresses low values less
+            alpha_final = max(alpha_min, min(1.0, 0.4 + 0.6 * speed_factor * age_factor))
 
             # Assign the final RGBA
             colors_rgba[seg_idx] = [r, g, b, alpha_final]

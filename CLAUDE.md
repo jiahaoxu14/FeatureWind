@@ -29,6 +29,12 @@ Contains both legacy and modular visualization implementations:
 - `visualization_core.py`: Plotting, figure management, and rendering
 - `ui_controls.py`: Interactive widgets and user interface management
 
+#### **Recent Advanced Features**
+- `color_system.py`: Paul Tol's colorblind-safe palette with LCH color space
+- `event_manager.py`: Centralized event handling for reliable mouse/keyboard interaction
+- `feature_clustering.py`: Hierarchical clustering for feature family grouping
+- `legend_manager.py`: Dynamic legend management with family-based organization
+
 #### **Legacy Files**
 - `main.py`: Original monolithic implementation (92,385+ characters)
 - `generate_tangent_map.py`: Preprocessing script for creating `.tmap` files
@@ -456,9 +462,70 @@ def optimize_features_for_constraints(self):
     self.apply_feature_combination(current_features)
 ```
 
-### **Phase 7: Animation Loop** (`main_modular.py`)
+### **Phase 7: Advanced Features** (Recent Additions)
 
-#### Step 7.1: Frame Update Function
+#### Feature Family Clustering (`feature_clustering.py`)
+```python
+def cluster_features_hierarchically(gradient_vectors, n_families=6):
+    # Compute feature similarity using cosine distance
+    feature_sims = compute_feature_similarity_matrix(gradient_vectors)
+    
+    # Hierarchical clustering with Ward linkage
+    linkage_matrix = hierarchy.linkage(1 - feature_sims, method='ward')
+    
+    # Cut dendrogram to get n_families clusters
+    family_assignments = hierarchy.fcluster(linkage_matrix, n_families, criterion='maxclust')
+    
+    return family_assignments, linkage_matrix
+```
+
+**Purpose**: Groups related features into families for coordinated visualization and analysis.
+
+#### Color System (`color_system.py`)
+```python
+# Paul Tol's colorblind-safe palette
+PAUL_TOL_FAMILIES = [
+    "#4477AA",  # Blue - Family 0
+    "#EE6677",  # Red - Family 1  
+    "#228833",  # Green - Family 2
+    "#CCBB44",  # Yellow - Family 3
+    "#66CCEE",  # Cyan - Family 4
+    "#AA3377"   # Purple - Family 5
+]
+
+def encode_magnitude_in_lightness(base_color, magnitude, max_magnitude):
+    # Convert to LCH color space for perceptually uniform lightness
+    lch = rgb_to_lch(base_color)
+    # Map magnitude to lightness (L* in [30, 90])
+    lch[0] = 30 + (magnitude / max_magnitude) * 60
+    return lch_to_rgb(lch)
+```
+
+**Key Insight**: LCH color space provides perceptually uniform transitions for data visualization.
+
+#### Event Manager (`event_manager.py`)
+```python
+class EventManager:
+    def __init__(self):
+        self.mouse_handlers = []
+        self.key_handlers = []
+        self.update_handlers = []
+        
+    def on_mouse_move(self, event):
+        # Centralized mouse event handling with error recovery
+        for handler in self.mouse_handlers:
+            try:
+                handler(event)
+            except Exception as e:
+                print(f"Handler error: {e}")
+                continue
+```
+
+**Purpose**: Provides robust event handling with error isolation to prevent UI freezes.
+
+### **Phase 8: Animation Loop** (`main_modular.py`)
+
+#### Step 8.1: Frame Update Function
 ```python
 def update_frame(frame):
     # Called once per animation frame (typically 30 FPS)
@@ -469,7 +536,7 @@ def update_frame(frame):
 anim = FuncAnimation(fig, update_frame, frames=1000, interval=30, blit=False)
 ```
 
-#### Step 7.2: Trail Visualization Update
+#### Step 8.2: Trail Visualization Update
 ```python
 def update_particle_visualization(system, velocity):
     # Build line segments connecting trajectory points

@@ -58,10 +58,10 @@ class EventManager:
             click_cid = self.fig.canvas.mpl_connect('button_press_event', self._on_mouse_click)
             
             self.connected_handlers = [motion_cid, click_cid]
-            print("✓ Event handlers connected successfully")
+            pass  # Event handlers connected
             
         except Exception as e:
-            print(f"✗ Failed to connect event handlers: {e}")
+            pass  # Failed to connect event handlers
             self.failed_updates += 1
     
     def disconnect_events(self):
@@ -88,7 +88,7 @@ class EventManager:
             
         except Exception as e:
             self.failed_updates += 1
-            print(f"Mouse move error: {e}")
+            pass  # Silently handle mouse move error
             # Don't propagate exceptions to avoid breaking the event loop
     
     def _on_mouse_click(self, event):
@@ -106,7 +106,7 @@ class EventManager:
             
         except Exception as e:
             self.failed_updates += 1
-            print(f"Mouse click error: {e}")
+            pass  # Silently handle mouse click error
     
     def _handle_mouse_move_safe(self, event):
         """Safe mouse movement handling with error recovery."""
@@ -140,7 +140,7 @@ class EventManager:
                 try:
                     self.wind_vane_callback(self.mouse_data)
                 except Exception as e:
-                    print(f"Wind vane update error: {e}")
+                    pass  # Silently handle wind vane update error
             
             # Thread-safe canvas update with timing control
             self._safe_canvas_update()
@@ -151,7 +151,7 @@ class EventManager:
             try:
                 self.ui_controller.handle_mouse_click(event)
             except Exception as e:
-                print(f"UI controller click error: {e}")
+                pass  # Silently handle UI controller click error
                 self.failed_updates += 1
     
     def _safe_canvas_update(self):
@@ -169,7 +169,7 @@ class EventManager:
                 self._last_canvas_update = current_time
                 
         except Exception as e:
-            print(f"Canvas update error: {e}")
+            pass  # Silently handle canvas update error
             self.failed_updates += 1
     
     def set_wind_vane_callback(self, callback):
@@ -252,21 +252,19 @@ def create_reliable_event_system(fig, ax1, ax2, ui_controller, system, col_label
             visualization_core.update_wind_vane(ax2, mouse_data, system, col_labels, 
                                               grad_indices, feature_colors, family_assignments)
         except Exception as e:
-            print(f"Wind vane callback error: {e}")
+            pass  # Silently handle wind vane callback error
     
     # Set the callback and connect events
     event_manager.set_wind_vane_callback(wind_vane_update_callback)
     event_manager.connect_events()
     
-    print("✓ Reliable event system initialized")
     
     # Performance monitoring setup
     def periodic_performance_check():
         """Check performance periodically."""
         stats = event_manager.get_performance_stats()
         if stats and stats['failure_rate_percent'] > 5.0:
-            print(f"⚠ High interaction failure rate detected: {stats['failure_rate_percent']:.1f}%")
-            print("Tip: Try reducing mouse movement speed or check for system load")
+            pass  # Silently handle high failure rate
     
     # You can call periodic_performance_check() from your animation loop if desired
     

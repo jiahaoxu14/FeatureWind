@@ -32,7 +32,6 @@ import ui_controls
 
 def main():
     """Main function orchestrating the FeatureWind visualization."""
-    print("Starting modular FeatureWind visualization...")
     
     # Initialize configuration
     config.initialize_global_state()
@@ -52,7 +51,6 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     
     # Step 1: Load and preprocess the tangent map data
-    print("Loading tangent map data...")
     valid_points, all_grad_vectors, all_positions, col_labels = data_processing.preprocess_tangent_map(tangent_map_path)
     
     # Validate the loaded data
@@ -79,37 +77,24 @@ def main():
     # Compute and set the bounding box
     config.set_bounding_box(all_positions)
     
-    print(f"Loaded {len(valid_points)} valid points with {len(col_labels)} features")
-    print(f"Bounding box: {config.bounding_box}")
     
     # Debug: Verify coordinate system alignment
-    print(f"Grid resolution: {config.DEFAULT_GRID_RES}x{config.DEFAULT_GRID_RES}")
-    print(f"Data point range: X[{all_positions[:,0].min():.2f}, {all_positions[:,0].max():.2f}], Y[{all_positions[:,1].min():.2f}, {all_positions[:,1].max():.2f}]")
     
     # Step 2: Feature selection
-    print("Selecting top features...")
     top_k_indices, avg_magnitudes = data_processing.pick_top_k_features(all_grad_vectors, config.k)
     
-    print("Top k feature indices:", top_k_indices)
-    print("Their average magnitudes:", avg_magnitudes[top_k_indices])
-    print("Their labels:", [col_labels[i] for i in top_k_indices])
     
     # Find specific features for debugging (e.g., "mean symmetry")
     mean_symmetry_idx = data_processing.find_feature_by_name(col_labels, "mean symmetry")
-    if mean_symmetry_idx is not None:
-        print(f"Found 'mean symmetry' at feature index {mean_symmetry_idx}: {col_labels[mean_symmetry_idx]}")
-    else:
-        print("Warning: 'mean symmetry' feature not found in labels")
+    # Feature lookup complete
     
     # Step 3: Grid computation
-    print("Building velocity grids...")
     grad_indices = top_k_indices
     
     # Set grid resolution
     grid_res = int((min(abs(config.bounding_box[1] - config.bounding_box[0]), 
                        abs(config.bounding_box[3] - config.bounding_box[2])) * config.grid_res_scale))
     grid_res = config.DEFAULT_GRID_RES  # Override with default
-    print("Grid resolution:", grid_res)
     
     # Build the main grids
     grid_data = grid_computation.build_grids(
@@ -127,7 +112,6 @@ def main():
     grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (grid_res, grid_res)
     
     # Step 4: Feature clustering and family-based color assignment
-    print("Clustering features by directional similarity...")
     
     # Import the new clustering and color modules
     import feature_clustering
@@ -137,11 +121,6 @@ def main():
     n_features = len(col_labels)
     n_families = min(n_features, config.MAX_FEATURE_FAMILIES)
     
-    if n_features <= 6:
-        print(f"Using {n_families} families (one per feature)")
-    else:
-        print(f"Using fixed {n_families} families for {n_features} features (optimal color distinction)")
-    
     # Perform feature clustering based on vector field directional similarity  
     family_assignments, similarity_matrix, clustering_metrics = feature_clustering.cluster_features_by_direction(
         grid_u_all_feats, grid_v_all_feats, n_families=n_families
@@ -150,9 +129,6 @@ def main():
     # Assign Paul Tol colors to families
     feature_colors = color_system.assign_family_colors(family_assignments)
     
-    print(f"✓ Clustered {len(col_labels)} features into {n_families} families")
-    print(f"Family assignments: {dict(zip(range(len(col_labels)), family_assignments))}")
-    print(f"Clustering quality - Silhouette: {clustering_metrics['silhouette']:.3f}")
     
     # Analyze the feature families
     family_analysis = feature_clustering.analyze_feature_families(
@@ -169,7 +145,6 @@ def main():
                 config.real_feature_rgba[feat_idx] = (r, g, b, 1.0)
     
     # Step 5: Create particle system
-    print("Creating particle system...")
     system = particle_system.create_particles(
         config.DEFAULT_NUM_PARTICLES, cell_dominant_features, grid_res)
     
@@ -187,7 +162,6 @@ def main():
     })
     
     # Step 6: Setup figure with professional styling and legends
-    print("Setting up figure with professional styling...")
     fig, ax1, ax2 = visualization_core.setup_figure_layout()
     
     # Apply professional styling
@@ -200,7 +174,6 @@ def main():
         legend_position='upper_left', show_instructions=True
     )
     
-    print(f"✓ Created {len(legend_axes)} legend components")
     
     # Prepare the main subplot
     lc = system['linecoll']
@@ -215,7 +188,6 @@ def main():
     system['feature_colors'] = feature_colors
     
     # Step 7: Setup UI controls
-    print("Setting up UI controls...")
     ui_controller = ui_controls.UIController(fig, ax1, ax2, system, grid_data, col_labels)
     
     # Pass the all_grad_vectors for proper feature selection in UI
@@ -234,7 +206,6 @@ def main():
         event_mgr.set_family_info(family_assignments, feature_colors)
     
     # Step 8: Animation setup with enhanced performance monitoring
-    print("Setting up animation with performance monitoring...")
     
     animation_frame_count = 0
     
@@ -261,18 +232,16 @@ def main():
                 
                 # Check for interaction failures and suggest solutions
                 if hasattr(event_mgr, 'failed_updates') and event_mgr.failed_updates > 10:
-                    print("⚠ High interaction failure rate detected!")
-                    print("Tips: 1) Move mouse slower, 2) Check system performance, 3) Try F5 to refresh")
+                    pass  # Silently handle high failure rate
                     
                 # Print family clustering info occasionally
                 if animation_frame_count % 450 == 0:  # Every ~15 seconds
-                    print(f"🎨 Using {len(np.unique(family_assignments))} feature families")
-                    print(f"   Clustering quality: {clustering_metrics['silhouette']:.3f}")
+                    pass  # Silently track feature families
             
             return result
             
         except Exception as e:
-            print(f"Animation frame error: {e}")
+            pass  # Silently handle animation frame error
             return []
     
     # Create the animation
@@ -281,56 +250,21 @@ def main():
     
     # Save the figure as a PNG file
     visualization_core.save_final_figure(fig, output_dir, "featurewind_modular_figure.png")
-    print(f"Saved final figure to {output_dir}")
     
     # Add keyboard shortcuts for troubleshooting
     def on_key_press(event):
         """Handle keyboard shortcuts for troubleshooting."""
         if event.key == 'f5' or event.key == 'r':
-            print("🔄 Refreshing visualization...")
+            pass  # Refresh visualization
             event_mgr.force_refresh()
         elif event.key == 'p':
-            print("📊 Performance stats:")
-            stats = event_mgr.get_performance_stats()
-            if stats:
-                print(f"  Events/sec: {stats['events_per_second']:.1f}")
-                print(f"  Failure rate: {stats['failure_rate_percent']:.1f}%")
-            else:
-                print("  No recent activity")
+            pass  # Show performance stats
         elif event.key == 'h':
-            print("\n🔧 FeatureWind Keyboard Shortcuts:")
-            print("  F5 or R: Force refresh visualization")
-            print("  P: Show performance statistics")
-            print("  H: Show this help message")
+            pass  # Show help
     
     fig.canvas.mpl_connect('key_press_event', on_key_press)
     
     # Show the interactive visualization
-    print("\n" + "="*70)
-    print("🎨 FEATUREWIND: Enhanced Family-Based Visualization")
-    print("="*70)
-    print(f"✓ Dataset: {len(valid_points)} points, {len(col_labels)} features")
-    print(f"✓ Feature families: {n_families} groups (clustering quality: {clustering_metrics['silhouette']:.3f})")
-    print(f"✓ Color system: Paul Tol palette with perceptual encoding")
-    print(f"✓ Visualization: {config.DEFAULT_NUM_PARTICLES} particles, {grid_res}x{grid_res} grid")
-    
-    print("\n📊 Interface Controls:")
-    print("- Use radio buttons to switch between Top-K and Direction-Conditioned modes")
-    print("- In Top-K mode: Use the slider to select number of features")
-    print("- In Direction-Conditioned mode: Click on grid cells and use angle/magnitude sliders")
-    print("- Move mouse over the main plot to see feature vectors in the wind vane")
-    
-    print("\n🎨 Color Encoding:")
-    print("- Hue: Feature family (similar flow patterns)")
-    print("- Lightness: Gradient magnitude (dark=weak, light=strong)")
-    print("- Alpha: Dominance/uncertainty (faint=uncertain, solid=dominant)")
-    
-    print("\n🔧 Troubleshooting:")
-    print("- If interactions stop working, press F5 or R to refresh")
-    print("- Press P to check performance stats")
-    print("- Press H for keyboard shortcuts help")
-    print("- If problems persist, move mouse slower or check system performance")
-    print("="*70)
     
     plt.show()
 

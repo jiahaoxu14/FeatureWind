@@ -229,12 +229,10 @@ def create_comprehensive_legend(fig, family_assignments, col_labels, feature_col
         fig, family_assignments, col_labels, feature_colors, legend_position
     )
     
-    # Create magnitude legend
-    sample_color = feature_colors[0] if feature_colors else None
-    legend_axes['magnitude'] = create_magnitude_legend(fig, sample_color)
-    
-    # Create dominance legend
-    legend_axes['dominance'] = create_dominance_legend(fig)
+    # Magnitude and dominance legends removed per user request
+    # sample_color = feature_colors[0] if feature_colors else None
+    # legend_axes['magnitude'] = create_magnitude_legend(fig, sample_color)
+    # legend_axes['dominance'] = create_dominance_legend(fig)
     
     # Add usage instructions if requested
     if show_instructions:

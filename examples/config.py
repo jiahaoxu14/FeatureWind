@@ -39,7 +39,7 @@ try:
     ]
 except ImportError:
     COLORCET_AVAILABLE = False
-    print("Warning: colorcet not available. Using fallback colors.")
+    pass  # Silently use fallback colors
     # Fallback to expanded Tableau-like palette
     GLASBEY_COLORS = [
         "#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948",
@@ -65,7 +65,7 @@ MAX_SAFE_VELOCITY = 10.0  # Maximum velocity magnitude per frame to prevent runa
 # UI and visualization parameters
 MARKER_STYLES = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h', 'H', '+', 'x']
 DPI = 300  # For saved figures
-ALPHA_FADE_FACTOR = 0.7  # For particle trail alpha
+ALPHA_FADE_FACTOR = 1.0  # For particle trail alpha (set to 1.0 for better visibility)
 
 # Direction-conditioned mode parameters
 DEFAULT_ANGLE = 0.0  # degrees

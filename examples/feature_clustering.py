@@ -30,8 +30,6 @@ def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families
     n_features = grid_u_all_feats.shape[0]
     grid_res = grid_u_all_feats.shape[1]
     
-    print(f"Clustering {n_features} features into {n_families} families...")
-    print(f"Vector field grid resolution: {grid_res}x{grid_res}")
     
     # Combine U and V components into vector fields
     vector_fields = np.stack([grid_u_all_feats, grid_v_all_feats], axis=-1)  # (M, grid_res, grid_res, 2)
@@ -39,7 +37,6 @@ def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families
     # Initialize pairwise similarity matrix
     similarity_matrix = np.zeros((n_features, n_features))
     
-    print("Computing pairwise directional similarities...")
     
     # Compute pairwise directional similarity
     for i in range(n_features):
@@ -79,10 +76,8 @@ def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families
             
             similarity_matrix[i, j] = similarity_matrix[j, i] = avg_similarity
     
-    print(f"Similarity matrix computed. Range: [{similarity_matrix.min():.3f}, {similarity_matrix.max():.3f}]")
     
     # Perform spectral clustering
-    print(f"Performing spectral clustering with {n_families} clusters...")
     
     try:
         clustering = SpectralClustering(
@@ -96,7 +91,7 @@ def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families
         family_assignments = clustering.fit_predict(similarity_matrix)
         
     except Exception as e:
-        print(f"Warning: Spectral clustering failed ({e}). Using fallback k-means clustering...")
+        pass  # Use fallback k-means clustering
         # Fallback to distance-based clustering
         distance_matrix = 1 - similarity_matrix
         from sklearn.cluster import KMeans
@@ -119,7 +114,7 @@ def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families
         clustering_metrics['silhouette'] = silhouette
         
     except Exception as e:
-        print(f"Warning: Could not compute silhouette score: {e}")
+        pass  # Could not compute silhouette score
         clustering_metrics['silhouette'] = 0.0
     
     # Compute within-cluster similarity (higher is better)
@@ -151,11 +146,6 @@ def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families
     # Print results
     unique_families, family_counts = np.unique(family_assignments, return_counts=True)
     
-    print(f"✓ Clustering completed!")
-    print(f"  Created {len(unique_families)} families with sizes: {dict(zip(unique_families, family_counts))}")
-    print(f"  Silhouette score: {clustering_metrics['silhouette']:.3f}")
-    print(f"  Within-cluster similarity: {clustering_metrics['avg_within_cluster_similarity']:.3f}")
-    print(f"  Between-cluster similarity: {clustering_metrics['avg_between_cluster_similarity']:.3f}")
     
     return family_assignments, similarity_matrix, clustering_metrics
 
@@ -235,10 +225,6 @@ def analyze_feature_families(family_assignments, col_labels, similarity_matrix=N
         'family_representatives': {}
     }
     
-    print(f"\n📊 Feature Family Analysis:")
-    print(f"Total features: {n_features}")
-    print(f"Number of families: {len(unique_families)}")
-    
     for family_id in unique_families:
         family_mask = (family_assignments == family_id)
         family_indices = np.where(family_mask)[0]
@@ -249,17 +235,6 @@ def analyze_feature_families(family_assignments, col_labels, similarity_matrix=N
         analysis['family_sizes'][family_id] = family_size
         analysis['family_members'][family_id] = family_features
         
-        print(f"\n  Family {family_id} ({family_size} features):")
-        
-        # Show first few feature names (truncated for readability)
-        display_features = [name[:20] + "..." if len(name) > 20 else name 
-                          for name in family_features[:5]]
-        if len(family_features) > 5:
-            display_features.append(f"... and {len(family_features)-5} more")
-        
-        for feat_name in display_features:
-            print(f"    • {feat_name}")
-        
         # Find representative feature (most similar to others in family)
         if similarity_matrix is not None and family_size > 1:
             family_similarities = similarity_matrix[np.ix_(family_indices, family_indices)]
@@ -267,7 +242,6 @@ def analyze_feature_families(family_assignments, col_labels, similarity_matrix=N
             representative_idx = family_indices[np.argmax(avg_similarities)]
             representative_name = col_labels[representative_idx]
             analysis['family_representatives'][family_id] = representative_name
-            print(f"    → Representative: {representative_name}")
     
     return analysis
 

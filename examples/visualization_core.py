@@ -62,7 +62,6 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
 
     # Collect all labels from valid_points
     unique_labels = sorted(set(p.tmap_label for p in valid_points))
-    print("Unique labels:", unique_labels)
 
     # Define multiple distinct markers
     markers = config.MARKER_STYLES
@@ -172,10 +171,6 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
         cell_dominant_features = system['cell_dominant_features']
         dominant_feature = cell_dominant_features[cell_i, cell_j]
     
-    # Debug: Print wind vane cell information
-    print(f"\nWind vane showing grid cell ({cell_i}, {cell_j})")
-    print(f"Dominant feature: {dominant_feature}")
-    print(f"Number of vectors: {len(vectors_all)}")
     
     # Place grid cell point at center of Wind Vane
     # Draw grid cell marker in Wind Vane (always at center)
@@ -193,8 +188,6 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
     # Calculate dynamic scaling to use 90% of canvas
     max_canvas_radius = 0.63  # 90% of 0.7 radius (enlarged wind vane)
     
-    # Debug: Show which features are being considered in wind vane
-    print(f"Selected features for wind vane: {selected_features}")
     
     # Only include selected top-k features in wind vane
     vectors_selected = []
@@ -306,10 +299,10 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                                         alpha=0.7)
                         ax2.add_patch(ellipse)
                     except Exception as e:
-                        print(f"Error calculating covariance ellipse: {e}")
+                        pass  # Silently skip covariance ellipse on error
                         
             except Exception as e:
-                print(f"Error calculating convex hull: {e}")
+                pass  # Silently skip convex hull on error
         
         # Determine which endpoints are on the convex hull boundary
         if len(all_endpoints) >= 3:
@@ -346,18 +339,16 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             else:
                 continue  # Skip zero-magnitude vectors
             
-            # Use family-based colors with perceptual encoding
+            # Use family-based colors directly without lightness modification for consistency
             if feat_idx < len(feature_colors):
                 base_color = feature_colors[feat_idx]
                 
                 # Import color utilities for family-based coloring
                 try:
-                    from color_system import hex_to_rgb, create_lightness_ramp, create_alpha_for_dominance
+                    from color_system import hex_to_rgb
                     
-                    # Calculate magnitude-modulated lightness
-                    max_mag = max(mags_selected) if mags_selected else 1.0
-                    magnitude_color = create_lightness_ramp(base_color, vector_magnitude, max_mag)
-                    base_r, base_g, base_b = hex_to_rgb(magnitude_color)
+                    # Use base color directly without lightness ramp to match particle colors
+                    base_r, base_g, base_b = hex_to_rgb(base_color)
                     
                     # Get dominance for alpha modulation
                     if 'cell_soft_dominance' in system and system['cell_soft_dominance'] is not None:
@@ -369,8 +360,11 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                     else:
                         dominance = 1.0 if feat_idx == dominant_feature else 0.5
                     
-                    # Create alpha for dominance
-                    base_alpha = create_alpha_for_dominance(dominance, min_alpha=0.4, max_alpha=0.9)
+                    # Scale alpha based on magnitude AND dominance
+                    max_mag = max(mags_selected) if mags_selected else 1.0
+                    magnitude_factor = vector_magnitude / max_mag if max_mag > 0 else 1.0
+                    base_alpha = 0.3 + 0.6 * magnitude_factor * dominance
+                    base_alpha = min(0.9, max(0.3, base_alpha))
                     
                     # Add uncertainty visualization through desaturation if available
                     uncertainty_factor = 1.0  # Default: no desaturation
