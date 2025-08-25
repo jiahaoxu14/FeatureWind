@@ -212,7 +212,8 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
     sum_magnitude = np.linalg.norm(sum_vector)
     
     # Only show masked if the SUM has no flow (matching particle behavior)
-    is_masked_cell = sum_magnitude < 1e-6
+    # Use same threshold as particle system for consistency
+    is_masked_cell = sum_magnitude < 1e-12
     
     # Show masked cell indication if the sum vector has no flow
     if is_masked_cell:
@@ -259,7 +260,34 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 'neg_end': neg_end
             })
         
-        if len(all_endpoints) >= 3:
+        # Handle degenerate cases for convex hull
+        if len(vectors_selected) == 1:
+            # Single feature case - draw special visualization
+            vector = vectors_selected[0]
+            scaled_vector = np.array(vector) * scale_factor
+            color = feature_colors[features_selected[0]] if features_selected[0] < len(feature_colors) else 'black'
+            
+            # Draw bidirectional arrow
+            ax2.arrow(0, 0, scaled_vector[0], scaled_vector[1], 
+                     head_width=0.05, head_length=0.05, 
+                     fc=color, ec=color, linewidth=2, alpha=0.8, zorder=8)
+            ax2.arrow(0, 0, -scaled_vector[0], -scaled_vector[1], 
+                     head_width=0.05, head_length=0.05, 
+                     fc=color, ec=color, linewidth=2, alpha=0.8, zorder=8)
+            
+            # Draw magnitude circle
+            from matplotlib.patches import Circle
+            magnitude_circle = Circle((0, 0), radius=np.linalg.norm(scaled_vector),
+                                     fill=False, color=color, linewidth=1.5, 
+                                     linestyle='--', alpha=0.4, zorder=7)
+            ax2.add_patch(magnitude_circle)
+            
+            # Add feature label
+            ax2.text(scaled_vector[0]*1.2, scaled_vector[1]*1.2, 
+                    col_labels[features_selected[0]][:20], 
+                    ha='center', va='center', fontsize=9, color=color)
+            
+        elif len(all_endpoints) >= 3:
             try:
                 # Calculate convex hull
                 hull = ConvexHull(all_endpoints)
@@ -271,7 +299,19 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 # ax2.add_patch(hull_polygon)  # Hidden per user request
                 
             except Exception as e:
-                pass  # Silently skip convex hull on error
+                # Collinear points - draw ribbon visualization
+                if len(vectors_selected) == 2:
+                    # Two features - draw both arrows
+                    for i, (vector, feat_idx) in enumerate(zip(vectors_selected, features_selected)):
+                        scaled_vector = np.array(vector) * scale_factor
+                        color = feature_colors[feat_idx] if feat_idx < len(feature_colors) else 'black'
+                        
+                        ax2.arrow(0, 0, scaled_vector[0], scaled_vector[1], 
+                                 head_width=0.04, head_length=0.04, 
+                                 fc=color, ec=color, linewidth=1.5, alpha=0.7, zorder=8-i)
+                        ax2.arrow(0, 0, -scaled_vector[0], -scaled_vector[1], 
+                                 head_width=0.04, head_length=0.04, 
+                                 fc=color, ec=color, linewidth=1.5, alpha=0.7, zorder=8-i)
         
         # Draw wind vane arrow showing the sum vector (actual flow direction)
         # This is drawn regardless of convex hull success

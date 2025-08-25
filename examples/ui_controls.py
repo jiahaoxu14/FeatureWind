@@ -57,19 +57,27 @@ class UIController:
         
     def setup_ui_controls(self):
         """Setup all UI controls and widgets."""
-        # Hide mode selection - only Top-K Mode available
-        # ax_mode = self.fig.add_axes([0.05, 0.02, 0.25, 0.06])
-        # self.mode_radio = RadioButtons(ax_mode, ('Top-K Mode', 'Direction-Conditioned Mode'))
-        # self.mode_radio.set_active(0)  # Start with Top-K mode
-        # self.mode_radio.on_clicked(self.switch_mode)
+        # Check if we're in single feature mode
+        single_feature_mode = getattr(self, 'single_feature_mode', False)
         
-        # Top-K Mode Controls
-        # Slider for selecting k in Top k mode
-        ax_k = self.fig.add_axes([0.35, 0.02, 0.30, 0.03])
-        initial_k = len(self.grad_indices)
-        self.k_slider = Slider(ax_k, 'Top k Features', 1, len(self.col_labels), 
-                              valinit=initial_k, valfmt='%d', facecolor='lightgreen', alpha=0.7)
-        self.k_slider.on_changed(self.update_top_k_features)
+        if single_feature_mode:
+            # Single Feature Mode - show feature name instead of slider
+            ax_feature_label = self.fig.add_axes([0.35, 0.02, 0.30, 0.03])
+            ax_feature_label.axis('off')
+            feature_name = getattr(self, 'single_feature_name', 'Unknown Feature')
+            ax_feature_label.text(0.5, 0.5, f'Single Feature: {feature_name}', 
+                                 ha='center', va='center', fontsize=11, 
+                                 bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.7))
+            self.ax_k = ax_feature_label  # Store for consistency
+        else:
+            # Top-K Mode Controls
+            # Slider for selecting k in Top k mode
+            ax_k = self.fig.add_axes([0.35, 0.02, 0.30, 0.03])
+            initial_k = len(self.grad_indices)
+            self.k_slider = Slider(ax_k, 'Top k Features', 1, len(self.col_labels), 
+                                  valinit=initial_k, valfmt='%d', facecolor='lightgreen', alpha=0.7)
+            self.k_slider.on_changed(self.update_top_k_features)
+            self.ax_k = ax_k
         
         # Direction-Conditioned Mode Controls (hidden)
         # ax_angle = self.fig.add_axes([0.70, 0.06, 0.25, 0.03])

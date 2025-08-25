@@ -8,7 +8,7 @@ settings used throughout the FeatureWind visualization system.
 import numpy as np
 
 # Global configuration variables
-velocity_scale = 0.04
+velocity_scale = 0.04  # Original stable value
 grid_res_scale = 0.15
 k = None  # Number of top features (will be set dynamically)
 bounding_box = None  # Will be computed dynamically
@@ -24,7 +24,10 @@ TAIL_LENGTH = 10  # number of position history points
 
 # Animation parameters
 ANIMATION_FRAMES = 1000
-ANIMATION_INTERVAL = 30  # milliseconds between frames
+ANIMATION_INTERVAL = 16  # milliseconds between frames (60 FPS)
+
+# Window title
+WINDOW_TITLE = "FeatureWind Visualization"
 
 # Color palettes and visualization constants
 try:

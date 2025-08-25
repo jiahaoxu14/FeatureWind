@@ -8,6 +8,8 @@ visualization, and UI controls.
 
 Usage:
     python main_modular.py
+    python main_modular.py --feature "mean radius"
+    python main_modular.py --feature "worst perimeter"
 
 This script provides the same functionality as the original main.py but with
 improved modularity, maintainability, and extensibility.
@@ -17,6 +19,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -30,18 +33,74 @@ import visualization_core
 import ui_controls
 
 
+def parse_arguments():
+    """Parse command-line arguments for visualization modes."""
+    parser = argparse.ArgumentParser(
+        description='FeatureWind - Visualize feature flow fields',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python main_modular.py                      # Default: top 5 features
+  python main_modular.py --top-k 10           # Top 10 features
+  python main_modular.py --top-k all          # All features
+  python main_modular.py --feature "mean radius"  # Single feature mode
+  python main_modular.py --list-features      # List available features
+        """
+    )
+    
+    # Create mutually exclusive group for feature vs top-k mode
+    mode_group = parser.add_mutually_exclusive_group()
+    
+    mode_group.add_argument(
+        '--feature', '-f',
+        type=str,
+        default=None,
+        help='Visualize a single feature by name (partial match supported)'
+    )
+    
+    mode_group.add_argument(
+        '--top-k', '-k',
+        type=str,
+        default='5',
+        help='Number of top features to visualize (integer or "all", default: 5)'
+    )
+    
+    parser.add_argument(
+        '--list-features', '-l',
+        action='store_true',
+        help='List all available features and exit'
+    )
+    
+    parser.add_argument(
+        '--tangent-map', '-t',
+        type=str,
+        default=None,
+        help='Path to tangent map file (default: breast_cancer.tmap)'
+    )
+    
+    return parser.parse_args()
+
+
 def main():
     """Main function orchestrating the FeatureWind visualization."""
+    
+    # Parse command-line arguments
+    args = parse_arguments()
     
     # Initialize configuration
     config.initialize_global_state()
     
     # Setup paths relative to repository root
     repo_root = os.path.join(os.path.dirname(__file__), '..')
-    tangent_map_path = os.path.join(repo_root, config.DEFAULT_TANGENT_MAP)
-    if not os.path.exists(tangent_map_path):
-        # Fallback to breast_cancer.tmap if the configured file doesn't exist
-        tangent_map_path = os.path.join(repo_root, 'tangentmaps', 'breast_cancer.tmap')
+    
+    # Determine tangent map path
+    if args.tangent_map:
+        tangent_map_path = args.tangent_map
+    else:
+        tangent_map_path = os.path.join(repo_root, config.DEFAULT_TANGENT_MAP)
+        if not os.path.exists(tangent_map_path):
+            # Fallback to breast_cancer.tmap if the configured file doesn't exist
+            tangent_map_path = os.path.join(repo_root, 'tangentmaps', 'breast_cancer.tmap')
     
     output_dir = os.path.join(repo_root, 'output')
     if not os.path.exists(output_dir):
@@ -55,6 +114,16 @@ def main():
     
     # Validate the loaded data
     data_processing.validate_data(valid_points, all_grad_vectors, all_positions, col_labels)
+    
+    # Handle --list-features option
+    if args.list_features:
+        print("\nAvailable features:")
+        print("-" * 40)
+        for i, feature in enumerate(col_labels):
+            print(f"{i:3d}: {feature}")
+        print("-" * 40)
+        print(f"Total: {len(col_labels)} features")
+        sys.exit(0)
     
     # Analyze gradient magnitudes and auto-scale velocity if needed
     magnitudes = np.linalg.norm(all_grad_vectors, axis=2)
@@ -70,9 +139,26 @@ def main():
         scale_factor = target_avg_magnitude / avg_magnitude
         config.velocity_scale = config.velocity_scale * scale_factor
     
-    # Set global configuration values
-    config.k = len(col_labels)  # Use all features initially
-    # config.k = 5  # Uncomment to limit to top 5 features
+    # Parse top-k value from arguments
+    if args.feature is None:  # Top-K mode
+        if args.top_k.lower() == 'all':
+            config.k = len(col_labels)
+            print(f"Visualizing all {len(col_labels)} features")
+        else:
+            try:
+                config.k = int(args.top_k)
+                if config.k < 1:
+                    config.k = 1
+                elif config.k > len(col_labels):
+                    config.k = len(col_labels)
+                    print(f"Note: Only {len(col_labels)} features available, using all")
+                else:
+                    print(f"Visualizing top {config.k} features")
+            except ValueError:
+                print(f"Warning: Invalid top-k value '{args.top_k}', using default of 5")
+                config.k = 5
+    else:
+        config.k = 1  # Single feature mode
     
     # Compute and set the bounding box
     config.set_bounding_box(all_positions)
@@ -81,15 +167,38 @@ def main():
     # Debug: Verify coordinate system alignment
     
     # Step 2: Feature selection
-    top_k_indices, avg_magnitudes = data_processing.pick_top_k_features(all_grad_vectors, config.k)
+    single_feature_mode = args.feature is not None
+    single_feature_name = args.feature
     
-    
-    # Find specific features for debugging (e.g., "mean symmetry")
-    mean_symmetry_idx = data_processing.find_feature_by_name(col_labels, "mean symmetry")
-    # Feature lookup complete
+    if single_feature_mode:
+        # Single feature mode
+        feature_idx = data_processing.find_feature_by_name(col_labels, single_feature_name)
+        if feature_idx == -1:
+            print(f"\nError: Feature '{single_feature_name}' not found!")
+            print("\nDid you mean one of these?")
+            # Show partial matches
+            matches = [f for f in col_labels if single_feature_name.lower() in f.lower()]
+            for match in matches[:5]:
+                print(f"  - {match}")
+            print("\nUse --list-features to see all available features.")
+            sys.exit(1)
+        
+        grad_indices = [feature_idx]
+        avg_magnitudes = np.linalg.norm(all_grad_vectors[:, feature_idx, :], axis=1).mean()
+        print(f"\nSingle Feature Mode: {col_labels[feature_idx]}")
+        
+        # Update window title
+        config.WINDOW_TITLE = f"FeatureWind - Single Feature: {col_labels[feature_idx]}"
+    else:
+        # Top-K mode
+        top_k_indices, avg_magnitudes = data_processing.pick_top_k_features(all_grad_vectors, config.k)
+        grad_indices = top_k_indices
+        if config.k == len(col_labels):
+            config.WINDOW_TITLE = f"FeatureWind - All {len(col_labels)} Features"
+        else:
+            config.WINDOW_TITLE = f"FeatureWind - Top {len(grad_indices)} Features"
     
     # Step 3: Grid computation
-    grad_indices = top_k_indices
     
     # Set grid resolution
     grid_res = int((min(abs(config.bounding_box[1] - config.bounding_box[0]), 
@@ -164,6 +273,9 @@ def main():
     # Step 6: Setup figure with professional styling and legends
     fig, ax1, ax2 = visualization_core.setup_figure_layout()
     
+    # Set window title
+    fig.canvas.manager.set_window_title(config.WINDOW_TITLE)
+    
     # Apply professional styling
     visualization_core.apply_professional_styling(fig, ax1, ax2)
     
@@ -192,6 +304,12 @@ def main():
     
     # Pass the all_grad_vectors for proper feature selection in UI
     ui_controller.all_grad_vectors = all_grad_vectors
+    
+    # Set single feature mode in UI controller
+    ui_controller.single_feature_mode = single_feature_mode
+    if single_feature_mode:
+        ui_controller.single_feature_name = col_labels[grad_indices[0]]
+        ui_controller.single_feature_idx = grad_indices[0]
     
     # Setup reliable mouse interactions using the enhanced event system
     import event_manager
