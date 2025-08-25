@@ -251,18 +251,8 @@ def main():
     # Save the figure as a PNG file
     visualization_core.save_final_figure(fig, output_dir, "featurewind_modular_figure.png")
     
-    # Add keyboard shortcuts for troubleshooting
-    def on_key_press(event):
-        """Handle keyboard shortcuts for troubleshooting."""
-        if event.key == 'f5' or event.key == 'r':
-            pass  # Refresh visualization
-            event_mgr.force_refresh()
-        elif event.key == 'p':
-            pass  # Show performance stats
-        elif event.key == 'h':
-            pass  # Show help
-    
-    fig.canvas.mpl_connect('key_press_event', on_key_press)
+    # Keyboard shortcuts handled by event manager
+    # fig.canvas.mpl_connect('key_press_event', on_key_press)
     
     # Show the interactive visualization
     

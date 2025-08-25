@@ -57,11 +57,11 @@ class UIController:
         
     def setup_ui_controls(self):
         """Setup all UI controls and widgets."""
-        # Mode selection radio buttons
-        ax_mode = self.fig.add_axes([0.05, 0.02, 0.25, 0.06])
-        self.mode_radio = RadioButtons(ax_mode, ('Top-K Mode', 'Direction-Conditioned Mode'))
-        self.mode_radio.set_active(0)  # Start with Top-K mode
-        self.mode_radio.on_clicked(self.switch_mode)
+        # Hide mode selection - only Top-K Mode available
+        # ax_mode = self.fig.add_axes([0.05, 0.02, 0.25, 0.06])
+        # self.mode_radio = RadioButtons(ax_mode, ('Top-K Mode', 'Direction-Conditioned Mode'))
+        # self.mode_radio.set_active(0)  # Start with Top-K mode
+        # self.mode_radio.on_clicked(self.switch_mode)
         
         # Top-K Mode Controls
         # Slider for selecting k in Top k mode
@@ -71,37 +71,27 @@ class UIController:
                               valinit=initial_k, valfmt='%d', facecolor='lightgreen', alpha=0.7)
         self.k_slider.on_changed(self.update_top_k_features)
         
-        # Direction-Conditioned Mode Controls
-        # Angle slider for direction specification
-        ax_angle = self.fig.add_axes([0.70, 0.06, 0.25, 0.03])
-        self.angle_slider = Slider(ax_angle, 'Direction (°)', 0, 360, valinit=config.DEFAULT_ANGLE, 
-                                  valfmt='%.0f°', facecolor='lightblue', alpha=0.7)
-        self.angle_slider.on_changed(self.update_direction_constraints)
+        # Direction-Conditioned Mode Controls (hidden)
+        # ax_angle = self.fig.add_axes([0.70, 0.06, 0.25, 0.03])
+        # self.angle_slider = Slider(ax_angle, 'Direction (°)', 0, 360, valinit=config.DEFAULT_ANGLE, 
+        #                           valfmt='%.0f°', facecolor='lightblue', alpha=0.7)
+        # self.angle_slider.on_changed(self.update_direction_constraints)
         
-        # Magnitude slider for desired flow strength
-        ax_magnitude = self.fig.add_axes([0.70, 0.02, 0.25, 0.03])
-        self.magnitude_slider = Slider(ax_magnitude, 'Magnitude', 0.1, 2.0, valinit=config.DEFAULT_MAGNITUDE, 
-                                      valfmt='%.1f', facecolor='lightcoral', alpha=0.7)
-        self.magnitude_slider.on_changed(self.update_direction_constraints)
+        # ax_magnitude = self.fig.add_axes([0.70, 0.02, 0.25, 0.03])
+        # self.magnitude_slider = Slider(ax_magnitude, 'Magnitude', 0.1, 2.0, valinit=config.DEFAULT_MAGNITUDE, 
+        #                               valfmt='%.1f', facecolor='lightcoral', alpha=0.7)
+        # self.magnitude_slider.on_changed(self.update_direction_constraints)
         
-        # Status text for direction-conditioned mode
-        self.ax_status = self.fig.add_axes([0.35, 0.06, 0.30, 0.03])
-        self.ax_status.text(0.5, 0.5, 'Select grid cells and specify direction', 
-                           ha='center', va='center', fontsize=10, 
-                           bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.7))
-        self.ax_status.set_xlim(0, 1)
-        self.ax_status.set_ylim(0, 1)
-        self.ax_status.axis('off')
-        
-        # Initially hide direction-conditioned controls
-        ax_angle.set_visible(False)
-        ax_magnitude.set_visible(False)
-        self.ax_status.set_visible(False)
+        # self.ax_status = self.fig.add_axes([0.35, 0.06, 0.30, 0.03])
+        # self.ax_status.text(0.5, 0.5, 'Select grid cells and specify direction', 
+        #                    ha='center', va='center', fontsize=10, 
+        #                    bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.7))
+        # self.ax_status.set_xlim(0, 1)
+        # self.ax_status.set_ylim(0, 1)
+        # self.ax_status.axis('off')
         
         # Store axes for visibility control
         self.ax_k = ax_k
-        self.ax_angle = ax_angle
-        self.ax_magnitude = ax_magnitude
         
     def switch_mode(self, label):
         """Handle mode switching between Top-K and Direction-Conditioned modes."""

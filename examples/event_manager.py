@@ -39,10 +39,10 @@ class EventManager:
         self.failed_updates = 0
         self.last_performance_report = time.time()
         
-        # Debouncing parameters
-        self.MOUSE_DEBOUNCE_MS = 50   # Minimum time between mouse updates (20 FPS)
-        self.CLICK_DEBOUNCE_MS = 100  # Minimum time between click updates
-        self.CANVAS_UPDATE_MS = 33    # Target 30 FPS for canvas updates
+        # Debouncing parameters - reduced for better responsiveness
+        self.MOUSE_DEBOUNCE_MS = 16   # Minimum time between mouse updates (60 FPS)
+        self.CLICK_DEBOUNCE_MS = 50   # Minimum time between click updates
+        self.CANVAS_UPDATE_MS = 16    # Target 60 FPS for canvas updates
         
         # Connected event handlers
         self.connected_handlers = []
@@ -52,16 +52,25 @@ class EventManager:
         # Disconnect any existing handlers first
         self.disconnect_events()
         
+        # Clear all existing callbacks to avoid conflicts  
+        try:
+            # Clear motion and button press callbacks specifically
+            if hasattr(self.fig.canvas.callbacks, 'callbacks'):
+                self.fig.canvas.callbacks.callbacks.get('motion_notify_event', []).clear()
+                self.fig.canvas.callbacks.callbacks.get('button_press_event', []).clear()
+        except (AttributeError, KeyError):
+            pass  # Fallback if callback structure is different
+        
         # Connect our centralized handlers
         try:
             motion_cid = self.fig.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
             click_cid = self.fig.canvas.mpl_connect('button_press_event', self._on_mouse_click)
             
             self.connected_handlers = [motion_cid, click_cid]
-            pass  # Event handlers connected
+            print("✓ Event handlers connected successfully")
             
         except Exception as e:
-            pass  # Failed to connect event handlers
+            print(f"✗ Failed to connect event handlers: {e}")
             self.failed_updates += 1
     
     def disconnect_events(self):
