@@ -264,11 +264,11 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 # Calculate convex hull
                 hull = ConvexHull(all_endpoints)
                 
-                # Draw convex hull
+                # Calculate convex hull for boundary detection (but don't draw it)
                 hull_points = np.array(all_endpoints)[hull.vertices]
-                hull_polygon = plt.Polygon(hull_points, fill=True, alpha=0.1, 
-                                         facecolor='lightblue', edgecolor='blue', linewidth=1)
-                ax2.add_patch(hull_polygon)
+                # hull_polygon = plt.Polygon(hull_points, fill=True, alpha=0.1, 
+                #                          facecolor='lightblue', edgecolor='blue', linewidth=1)
+                # ax2.add_patch(hull_polygon)  # Hidden per user request
                 
             except Exception as e:
                 pass  # Silently skip convex hull on error
@@ -285,10 +285,23 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             else:
                 flow_direction = np.array([1, 0])  # Default direction for zero flow
             
-            # Alpha encoding for magnitude (0.3 to 0.9 range)  
-            # Clamp to valid alpha range [0, 1]
-            alpha_ratio = min(1.0, sum_magnitude / max_mag) if max_mag > 0 else 0.0
-            magnitude_alpha = max(0.3, min(0.9, 0.3 + 0.6 * alpha_ratio))
+            # Alpha encoding for magnitude - simpler approach with wider variation
+            # Use logarithmic scaling to get more variation in the visible range
+            import math
+            
+            # Use log scaling for better variation across magnitude range
+            if sum_magnitude > 1e-6:
+                # Scale based on log of sum magnitude for better dynamic range
+                log_magnitude = math.log10(max(0.1, sum_magnitude))  # Avoid log(0)
+                # Map log range roughly [-1, 2] to alpha range [0.2, 1.0]
+                alpha_ratio = (log_magnitude + 1.0) / 3.0  # Normalize log range
+                alpha_ratio = max(0.0, min(1.0, alpha_ratio))  # Clamp to [0, 1]
+            else:
+                alpha_ratio = 0.0
+            
+            # Wider alpha range for more dramatic variation: 0.2 to 1.0
+            magnitude_alpha = max(0.2, min(1.0, 0.2 + 0.8 * alpha_ratio))
+            
             
             # Wind vane components with FIXED geometry - clearly distinct from thin feature vectors
             perp_direction = np.array([-flow_direction[1], flow_direction[0]])  # Perpendicular
@@ -418,12 +431,17 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                         arrowprops=dict(arrowstyle='->', color=neg_color, lw=1.5,
                                       shrinkA=0, shrinkB=0, alpha=neg_color[3]))
             
-            # Add feature labels at endpoints (only for significant vectors)
-            if vector_magnitude > max_mag * 0.3:  # Only label vectors > 30% of max magnitude
-                if feat_idx < len(col_labels):
-                    label = col_labels[feat_idx][:8]  # Truncate long labels
+            # Add feature labels ONLY for vectors on convex hull boundary
+            if (pos_on_hull or neg_on_hull) and feat_idx < len(col_labels):
+                label = col_labels[feat_idx][:8]  # Truncate long labels
+                
+                # Label the endpoint that's actually on the hull
+                if pos_on_hull:
                     ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1, label,
-                            fontsize=8, ha='center', va='center', alpha=0.7)
+                            fontsize=8, ha='center', va='center', alpha=0.8)
+                elif neg_on_hull:
+                    ax2.text(info['neg_end'][0] * 1.1, info['neg_end'][1] * 1.1, label,
+                            fontsize=8, ha='center', va='center', alpha=0.8)
 
 
 def setup_figure_layout():
