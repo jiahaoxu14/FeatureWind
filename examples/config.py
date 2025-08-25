@@ -18,7 +18,7 @@ real_feature_rgba = {}  # Feature to RGBA mapping for particles
 DEFAULT_GRID_RES = 40
 
 # Particle system parameters
-DEFAULT_NUM_PARTICLES = 2000
+DEFAULT_NUM_PARTICLES = 1200  # Reduced from 2000 for better performance
 PARTICLE_LIFETIME = 100  # frames
 TAIL_LENGTH = 10  # number of position history points
 
@@ -30,7 +30,7 @@ BASE_TRAIL_LENGTH = 10
 
 # Animation parameters
 ANIMATION_FRAMES = 1000
-ANIMATION_INTERVAL = 8  # milliseconds between frames (120 FPS)
+ANIMATION_INTERVAL = 30  # milliseconds between frames (33 FPS - optimized for performance)
 
 # Window title
 WINDOW_TITLE = "FeatureWind Visualization"

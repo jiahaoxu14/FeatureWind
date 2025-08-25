@@ -57,7 +57,7 @@ def create_particles(num_particles=None, cell_dominant_features=None, grid_res=N
 def get_velocity_at_positions(positions, system, interp_u_sum=None, interp_v_sum=None, 
                             grid_u_sum=None, grid_v_sum=None, grid_res=None):
     """
-    Get velocity at particle positions using interpolation or grid lookup.
+    Get velocity at particle positions using optimized vectorized interpolation.
     
     Args:
         positions (np.ndarray): Particle positions, shape (N, 2)
@@ -70,46 +70,51 @@ def get_velocity_at_positions(positions, system, interp_u_sum=None, interp_v_sum
         np.ndarray: Velocity vectors at positions, shape (N, 2)
     """
     xmin, xmax, ymin, ymax = config.bounding_box
+    n_particles = len(positions)
+    
+    # Pre-allocate velocity array for better memory performance
+    velocity = np.zeros((n_particles, 2))
+    
+    # Vectorized coordinate swapping for interpolation (swap x,y to y,x)
+    positions_yx = positions[:, [1, 0]]
     
     # Always prefer smooth bilinear interpolation for consistent motion
     if 'interp_u_sum' in system and 'interp_v_sum' in system:
         # Direction-conditioned mode: use updated interpolators from system
         current_interp_u = system['interp_u_sum']
         current_interp_v = system['interp_v_sum']
-        # Fix coordinate order: interpolators expect (y, x) but we have (x, y)
-        U = current_interp_u(positions[:, [1, 0]])  # Swap to (y, x)
-        V = current_interp_v(positions[:, [1, 0]])  # Swap to (y, x)
+        # Single vectorized call per component
+        velocity[:, 0] = current_interp_u(positions_yx)
+        velocity[:, 1] = current_interp_v(positions_yx)
     elif interp_u_sum is not None and interp_v_sum is not None:
-        # Top-K mode: use original interpolators
-        # Fix coordinate order: interpolators expect (y, x) but we have (x, y)
-        U = interp_u_sum(positions[:, [1, 0]])  # Swap to (y, x)
-        V = interp_v_sum(positions[:, [1, 0]])  # Swap to (y, x)
+        # Top-K mode: use original interpolators  
+        # Single vectorized call per component
+        velocity[:, 0] = interp_u_sum(positions_yx)
+        velocity[:, 1] = interp_v_sum(positions_yx)
     else:
-        # Fallback: direct grid indexing (should rarely be used)
+        # Fallback: vectorized grid indexing
         if 'grid_u_sum' in system and 'grid_v_sum' in system:
             current_grid_u = system['grid_u_sum']
             current_grid_v = system['grid_v_sum']
-            # Convert positions to grid cell indices
+            # Vectorized grid cell index computation
             cell_i_indices = np.clip(((positions[:, 1] - ymin) / (ymax - ymin) * grid_res).astype(int), 0, grid_res - 1)
             cell_j_indices = np.clip(((positions[:, 0] - xmin) / (xmax - xmin) * grid_res).astype(int), 0, grid_res - 1)
-            # Sample velocity directly from grid cells
-            U = current_grid_u[cell_i_indices, cell_j_indices]
-            V = current_grid_v[cell_i_indices, cell_j_indices]
-        else:
-            # No velocity field available
-            U = np.zeros(len(positions))
-            V = np.zeros(len(positions))
+            # Vectorized velocity sampling
+            velocity[:, 0] = current_grid_u[cell_i_indices, cell_j_indices]
+            velocity[:, 1] = current_grid_v[cell_i_indices, cell_j_indices]
     
-    velocity = np.column_stack((U, V)) * config.velocity_scale
+    # Apply velocity scaling
+    velocity *= config.velocity_scale
     
-    # Add safety check to prevent runaway particles
+    # Vectorized safety check to prevent runaway particles
     velocity_magnitudes = np.linalg.norm(velocity, axis=1)
     max_safe_velocity = config.MAX_SAFE_VELOCITY
     
-    # Clip velocities that are too large
-    mask = velocity_magnitudes > max_safe_velocity
-    if np.any(mask):
-        velocity[mask] = velocity[mask] / velocity_magnitudes[mask, np.newaxis] * max_safe_velocity
+    # Vectorized velocity clipping
+    exceed_mask = velocity_magnitudes > max_safe_velocity
+    if np.any(exceed_mask):
+        # Normalize and scale in one operation
+        velocity[exceed_mask] *= (max_safe_velocity / velocity_magnitudes[exceed_mask, np.newaxis])
         
     return velocity
 
@@ -328,9 +333,48 @@ def reinitialize_particles(system):
             lt[i] = 0
 
 
+def get_dominant_features_vectorized(positions, system):
+    """
+    Get dominant features for multiple positions using vectorized operations.
+    
+    Args:
+        positions (np.ndarray): Position coordinates, shape (N, 2)
+        system (dict): Particle system dictionary
+        
+    Returns:
+        np.ndarray: Dominant feature indices, shape (N,), -1 for invalid positions
+    """
+    if 'cell_dominant_features' not in system or len(positions) == 0:
+        return np.full(len(positions), -1)
+        
+    xmin, xmax, ymin, ymax = config.bounding_box
+    cell_dominant_features = system['cell_dominant_features']
+    grid_res = cell_dominant_features.shape[0]
+    
+    # Vectorized position to grid conversion
+    x_coords = positions[:, 0]
+    y_coords = positions[:, 1]
+    
+    # Check bounds
+    in_bounds = ((x_coords >= xmin) & (x_coords <= xmax) & 
+                 (y_coords >= ymin) & (y_coords <= ymax))
+    
+    # Vectorized grid cell computation
+    cell_j_indices = np.clip(((x_coords - xmin) / (xmax - xmin) * grid_res).astype(int), 0, grid_res - 1)
+    cell_i_indices = np.clip(((y_coords - ymin) / (ymax - ymin) * grid_res).astype(int), 0, grid_res - 1)
+    
+    # Initialize result with -1 for out-of-bounds positions
+    result = np.full(len(positions), -1)
+    
+    # Sample dominant features for in-bounds positions
+    result[in_bounds] = cell_dominant_features[cell_i_indices[in_bounds], cell_j_indices[in_bounds]]
+    
+    return result
+
+
 def get_dominant_feature_at_position(position, system):
     """
-    Get the dominant feature at a given position.
+    Get the dominant feature at a given position (wrapper for backwards compatibility).
     
     Args:
         position (np.ndarray): Position coordinates [x, y]
@@ -339,25 +383,7 @@ def get_dominant_feature_at_position(position, system):
     Returns:
         int: Index of dominant feature, or -1 if none
     """
-    if 'cell_dominant_features' not in system:
-        return -1
-        
-    xmin, xmax, ymin, ymax = config.bounding_box
-    cell_dominant_features = system['cell_dominant_features']
-    grid_res = cell_dominant_features.shape[0]
-    
-    # Convert position to grid cell indices
-    if xmin <= position[0] <= xmax and ymin <= position[1] <= ymax:
-        cell_j = int((position[0] - xmin) / (xmax - xmin) * grid_res)
-        cell_i = int((position[1] - ymin) / (ymax - ymin) * grid_res)
-        
-        # Clamp to valid range
-        cell_i = max(0, min(grid_res - 1, cell_i))
-        cell_j = max(0, min(grid_res - 1, cell_j))
-        
-        return cell_dominant_features[cell_i, cell_j]
-    
-    return -1
+    return get_dominant_features_vectorized(position.reshape(1, 2), system)[0]
 
 
 def get_directional_dominant_feature_at_position(position, velocity_direction, system):
@@ -504,7 +530,7 @@ def get_dominance_at_position(position, feature_idx, system):
 
 def update_particle_colors_family_based(system, family_assignments=None, feature_colors=None):
     """
-    Update particle colors based on family assignment, magnitude, and dominance.
+    Update particle colors based on family assignment, magnitude, and dominance (optimized).
     
     Args:
         system (dict): Particle system dictionary
@@ -517,19 +543,19 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
     particle_positions = system['particle_positions']
     n_particles = len(particle_positions)
     
-    # Initialize colors array
+    # Pre-allocate colors array
     particle_colors = np.zeros((n_particles, 4))  # RGBA
     
     if family_assignments is None or feature_colors is None:
-        # Fallback: use speed-based grayscale coloring
+        # Fallback: vectorized speed-based grayscale coloring
         if 'last_velocity' in system:
             speeds = np.linalg.norm(system['last_velocity'], axis=1)
             max_speed = speeds.max() + 1e-9
             normalized_speeds = speeds / max_speed
             
-            for i in range(n_particles):
-                intensity = 0.3 + 0.7 * normalized_speeds[i]
-                particle_colors[i] = [0, 0, 0, intensity]
+            # Vectorized intensity calculation
+            particle_colors[:, 3] = 0.3 + 0.7 * normalized_speeds  # Alpha only
+            # RGB stays 0 for black
         else:
             particle_colors[:] = [0, 0, 0, 0.5]  # Default black with 50% alpha
         
@@ -538,67 +564,85 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
     # Import color utilities
     from color_system import hex_to_rgb
     
-    # Get maximum magnitudes for each feature (for normalization)
+    # Pre-compute maximum magnitudes for each feature (cache for efficiency)
     max_magnitudes = {}
     if 'grid_u_all_feats' in system and 'grid_v_all_feats' in system:
         grid_u_all_feats = system['grid_u_all_feats']
         grid_v_all_feats = system['grid_v_all_feats']
         
-        for feat_idx in range(len(family_assignments)):
-            if feat_idx < grid_u_all_feats.shape[0]:
-                magnitude_grid = np.sqrt(grid_u_all_feats[feat_idx]**2 + grid_v_all_feats[feat_idx]**2)
-                max_magnitudes[feat_idx] = magnitude_grid.max()
-            else:
-                max_magnitudes[feat_idx] = 1.0
+        # Vectorized magnitude computation for all features at once
+        magnitude_grids = np.sqrt(grid_u_all_feats**2 + grid_v_all_feats**2)
+        max_magnitudes = {feat_idx: magnitude_grids[feat_idx].max() 
+                         for feat_idx in range(min(len(family_assignments), magnitude_grids.shape[0]))}
     
-    # Color each particle based on its directionally dominant feature
-    # Get particle velocities for directional analysis
+    # Get dominant features for all particles at once (vectorized)
     velocities = system.get('last_velocity', None)
     
-    for i, position in enumerate(particle_positions):
-        # Use directional contribution if velocity is available
-        if velocities is not None and i < len(velocities):
-            velocity = velocities[i]
-            speed = np.linalg.norm(velocity)
-            
-            if speed > 1e-8:
-                # Use directional contribution coloring
-                velocity_direction = velocity / speed  # Normalize to unit vector
-                dominant_feature = get_directional_dominant_feature_at_position(position, velocity_direction, system)
-            else:
-                # Fallback to magnitude-based for stationary particles
-                dominant_feature = get_dominant_feature_at_position(position, system)
-        else:
-            # Fallback to magnitude-based coloring if no velocity data
-            dominant_feature = get_dominant_feature_at_position(position, system)
+    if velocities is not None:
+        # Use vectorized approach for particles with significant velocity
+        speeds = np.linalg.norm(velocities, axis=1)
+        significant_speed_mask = speeds > 1e-8
         
-        if dominant_feature >= 0 and dominant_feature < len(feature_colors):
-            # Get base family color - use directly without lightness modulation for consistency
-            base_color = feature_colors[dominant_feature]
+        # For high-speed particles, we'd need directional analysis (keeping original approach for accuracy)
+        # For low-speed particles, use magnitude-based dominance
+        dominant_features = get_dominant_features_vectorized(particle_positions, system)
+        
+        # Process high-speed particles individually (fewer operations)
+        for i in np.where(significant_speed_mask)[0]:
+            velocity = velocities[i]
+            velocity_direction = velocity / speeds[i]
+            dominant_features[i] = get_directional_dominant_feature_at_position(
+                particle_positions[i], velocity_direction, system)
+    else:
+        # All particles use magnitude-based dominance
+        dominant_features = get_dominant_features_vectorized(particle_positions, system)
+    
+    # Vectorized color assignment
+    valid_feature_mask = (dominant_features >= 0) & (dominant_features < len(feature_colors))
+    valid_indices = np.where(valid_feature_mask)[0]
+    
+    if len(valid_indices) > 0:
+        # Process valid particles in batches
+        valid_features = dominant_features[valid_indices]
+        
+        for feat_idx in np.unique(valid_features):
+            feat_mask = valid_features == feat_idx
+            particle_indices = valid_indices[feat_mask]
+            
+            # Get base color for this feature
+            base_color = feature_colors[feat_idx]
             rgb = hex_to_rgb(base_color)
             
-            # Get local gradient magnitude for alpha modulation instead of lightness
-            magnitude = get_magnitude_at_position(position, dominant_feature, system)
-            max_magnitude = max_magnitudes.get(dominant_feature, 1.0)
-            magnitude_factor = magnitude / max_magnitude if max_magnitude > 0 else 1.0
+            # Vectorized alpha computation
+            max_magnitude = max_magnitudes.get(feat_idx, 1.0)
+            if max_magnitude > 0:
+                # Get magnitudes for these particles (could be optimized further)
+                magnitudes = np.array([get_magnitude_at_position(particle_positions[i], feat_idx, system) 
+                                     for i in particle_indices])
+                magnitude_factors = magnitudes / max_magnitude
+            else:
+                magnitude_factors = np.ones(len(particle_indices))
             
-            # Get dominance for additional alpha modulation
-            dominance = get_dominance_at_position(position, dominant_feature, system)
+            # Get dominance values (could be vectorized)
+            dominances = np.array([get_dominance_at_position(particle_positions[i], feat_idx, system)
+                                 for i in particle_indices])
             
-            # Combine magnitude and dominance for alpha (not lightness)
-            alpha = 0.3 + 0.6 * magnitude_factor * dominance
-            alpha = min(0.9, max(0.3, alpha))
+            # Vectorized alpha calculation
+            alphas = 0.3 + 0.6 * magnitude_factors * dominances
+            alphas = np.clip(alphas, 0.3, 0.9)
             
-            particle_colors[i] = [*rgb, alpha]
-            
-        else:
-            # No dominant feature or invalid feature - use neutral gray
-            particle_colors[i] = [0.5, 0.5, 0.5, 0.3]
+            # Assign colors
+            particle_colors[particle_indices, :3] = rgb
+            particle_colors[particle_indices, 3] = alphas
+    
+    # Handle invalid features with neutral gray
+    invalid_mask = ~valid_feature_mask
+    particle_colors[invalid_mask] = [0.5, 0.5, 0.5, 0.3]
     
     return particle_colors
 
 
-def update_particle_visualization(system, velocity, family_assignments=None, feature_colors=None):
+def update_particle_visualization(system, velocity, family_assignments=None, feature_colors=None, grad_indices=None):
     """
     Update particle visualization with family-based coloring.
     
@@ -607,6 +651,7 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
         velocity (np.ndarray): Current particle velocities
         family_assignments (np.ndarray, optional): Family assignments for features
         feature_colors (list, optional): Hex colors for features
+        grad_indices (list, optional): Selected feature indices for single feature mode
         
     Returns:
         tuple: Updated line collection
@@ -634,9 +679,17 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
     
     if single_feature_mode:
         # Single feature mode - use uniform color for the single feature
-        if family_assignments is not None and feature_colors is not None and len(feature_colors) > 0:
-            # Use the color of the single feature
-            single_feature_color = feature_colors[0]  # First (and only) feature color
+        if (family_assignments is not None and feature_colors is not None and 
+            grad_indices is not None and len(grad_indices) > 0 and len(feature_colors) > 0):
+            
+            # Use the color of the actual selected feature (not just index 0)
+            selected_feature_idx = grad_indices[0]  # The actual feature index selected
+            if selected_feature_idx < len(feature_colors):
+                single_feature_color = feature_colors[selected_feature_idx]
+            else:
+                # Fallback if index is out of range - use first color
+                single_feature_color = feature_colors[0]
+            
             # Convert hex to RGB if needed
             if isinstance(single_feature_color, str) and single_feature_color.startswith('#'):
                 import color_system
@@ -650,7 +703,7 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
                 intensity = 0.5 + 0.5 * (speeds[i] / max_speed)  # Alpha based on speed
                 particle_colors[i] = [r, g, b, intensity]
         else:
-            # Fallback to blue for single feature
+            # Fallback to blue for single feature when color data isn't available
             particle_colors = np.zeros((n_active, 4))
             for i in range(n_active):
                 intensity = 0.5 + 0.5 * (speeds[i] / max_speed)
@@ -735,7 +788,7 @@ def scale_particle_appearance(line_collection, actual_magnitude, scale_factor):
 
 def update_particles_with_families(system, interp_u_sum=None, interp_v_sum=None, 
                                   grid_u_sum=None, grid_v_sum=None, grid_res=None,
-                                  family_assignments=None, feature_colors=None):
+                                  family_assignments=None, feature_colors=None, grad_indices=None):
     """
     Enhanced particle update function with family-based coloring.
     
@@ -746,6 +799,7 @@ def update_particles_with_families(system, interp_u_sum=None, interp_v_sum=None,
         grid_res (int): Grid resolution
         family_assignments (np.ndarray): Family assignments for features
         feature_colors (list): Hex colors for features
+        grad_indices (list): Selected feature indices for single feature mode
         
     Returns:
         tuple: Updated line collection with family colors
@@ -756,7 +810,7 @@ def update_particles_with_families(system, interp_u_sum=None, interp_v_sum=None,
     # Then update visualization with family colors
     if 'last_velocity' in system:
         velocity = system['last_velocity']
-        return update_particle_visualization(system, velocity, family_assignments, feature_colors)
+        return update_particle_visualization(system, velocity, family_assignments, feature_colors, grad_indices)
     
     return result
 
@@ -816,7 +870,7 @@ def update_particles(system, interp_u_sum=None, interp_v_sum=None,
     target_total_time = 1.0
     current_pos = pp.copy()
     
-    max_steps = 10  # Prevent infinite loops
+    max_steps = 5   # Reduced from 10 for better performance while maintaining RK4 accuracy
     step_count = 0
     final_velocity = None  # Store final velocity for accurate coloring
     
@@ -889,4 +943,9 @@ def update_particles(system, interp_u_sum=None, interp_v_sum=None,
         density_aware_reseed(system, grid_res)
 
     # Update visualization with adaptive appearance
-    return update_particle_visualization(system, velocity)
+    # Extract grad_indices from system if available for single feature mode color alignment
+    grad_indices = system.get('grad_indices', None)
+    family_assignments = system.get('family_assignments', None) 
+    feature_colors = system.get('feature_colors', None)
+    
+    return update_particle_visualization(system, velocity, family_assignments, feature_colors, grad_indices)

@@ -355,6 +355,7 @@ def main():
     # Store family info in system for particle coloring and UI
     system['family_assignments'] = family_assignments
     system['feature_colors'] = feature_colors
+    system['grad_indices'] = grad_indices  # Store selected feature indices for color alignment
     
     # Step 7: Setup UI controls
     ui_controller = ui_controls.UIController(fig, ax1, ax2, system, grid_data, col_labels)
@@ -395,7 +396,7 @@ def main():
                 # Use enhanced particle update with family coloring
                 result = particle_system.update_particles_with_families(
                     system, interp_u_sum, interp_v_sum, grid_u_sum, grid_v_sum, 
-                    grid_res, family_assignments, feature_colors)
+                    grid_res, family_assignments, feature_colors, grad_indices)
             else:
                 # Fallback to standard particle update
                 result = particle_system.update_particles(
