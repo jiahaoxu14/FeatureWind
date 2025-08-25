@@ -30,7 +30,7 @@ BASE_TRAIL_LENGTH = 10
 
 # Animation parameters
 ANIMATION_FRAMES = 1000
-ANIMATION_INTERVAL = 16  # milliseconds between frames (60 FPS)
+ANIMATION_INTERVAL = 8  # milliseconds between frames (120 FPS)
 
 # Window title
 WINDOW_TITLE = "FeatureWind Visualization"

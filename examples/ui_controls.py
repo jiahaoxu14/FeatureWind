@@ -70,13 +70,17 @@ class UIController:
                                  bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.7))
             self.ax_k = ax_feature_label  # Store for consistency
         else:
-            # Top-K Mode Controls
-            # Slider for selecting k in Top k mode
+            # Top-K Mode Controls (hidden per user request)
+            # ax_k = self.fig.add_axes([0.35, 0.02, 0.30, 0.03])
+            # initial_k = len(self.grad_indices)
+            # self.k_slider = Slider(ax_k, 'Top k Features', 1, len(self.col_labels), 
+            #                       valinit=initial_k, valfmt='%d', facecolor='lightgreen', alpha=0.7)
+            # self.k_slider.on_changed(self.update_top_k_features)
+            # self.ax_k = ax_k
+            
+            # Create invisible placeholder for consistency
             ax_k = self.fig.add_axes([0.35, 0.02, 0.30, 0.03])
-            initial_k = len(self.grad_indices)
-            self.k_slider = Slider(ax_k, 'Top k Features', 1, len(self.col_labels), 
-                                  valinit=initial_k, valfmt='%d', facecolor='lightgreen', alpha=0.7)
-            self.k_slider.on_changed(self.update_top_k_features)
+            ax_k.set_visible(False)
             self.ax_k = ax_k
         
         # Direction-Conditioned Mode Controls (hidden)
