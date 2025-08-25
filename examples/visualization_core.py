@@ -179,14 +179,14 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
     
     # Place grid cell point at center of Wind Vane
     # Draw grid cell marker in Wind Vane (always at center)
-    # Use color of dominant feature
+    # Use color of magnitude-dominant feature for center marker
     if (dominant_feature >= 0 and dominant_feature < len(selected_features) and
         dominant_feature < len(feature_colors)):
-        dominant_color = feature_colors[dominant_feature]
+        center_marker_color = feature_colors[dominant_feature]
     else:
-        dominant_color = 'black'
+        center_marker_color = 'black'
     
-    ax2.scatter(0, 0, c=dominant_color, s=80, marker='s', edgecolor='black', 
+    ax2.scatter(0, 0, c=center_marker_color, s=80, marker='s', edgecolor='black', 
                linewidth=2, zorder=10, label=f'Cell ({cell_i},{cell_j})')
     
     # Draw gradient vector arrows for each feature in the grid cell
@@ -284,6 +284,24 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 flow_direction = sum_vector / sum_magnitude  # Pure direction, no magnitude influence
             else:
                 flow_direction = np.array([1, 0])  # Default direction for zero flow
+            
+            # Find the feature with highest contribution in the flow direction
+            directional_contributions = []
+            for i, (vector, feat_idx) in enumerate(zip(vectors_selected, features_selected)):
+                # Calculate dot product with flow direction (projection)
+                contribution = np.dot(vector, flow_direction)
+                directional_contributions.append((contribution, feat_idx))
+            
+            # Find feature with highest directional contribution
+            if directional_contributions:
+                best_contribution, best_feature_idx = max(directional_contributions, key=lambda x: x[0])
+                # Use color of the feature that contributes most in flow direction
+                if best_feature_idx < len(feature_colors):
+                    dominant_color = feature_colors[best_feature_idx]
+                else:
+                    dominant_color = 'black'
+            else:
+                dominant_color = 'black'
             
             # Alpha encoding for magnitude - simpler approach with wider variation
             # Use logarithmic scaling to get more variation in the visible range
@@ -496,8 +514,8 @@ def apply_professional_styling(fig, ax1, ax2):
         spine.set_color(TEXT_COLOR)
         spine.set_linewidth(0.8)
     
-    # Style wind vane (keep white background for contrast)
-    ax2.set_facecolor('white')
+    # Style wind vane - align with main plot background
+    ax2.set_facecolor(BACKGROUND_COLOR)
     
     # Style wind vane spines
     for spine in ax2.spines.values():
