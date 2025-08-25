@@ -171,7 +171,7 @@ def main():
     import legend_manager
     legend_axes = legend_manager.create_comprehensive_legend(
         fig, family_assignments, col_labels, feature_colors, 
-        legend_position='upper_left', show_instructions=True
+        legend_position='upper_left', show_instructions=False
     )
     
     

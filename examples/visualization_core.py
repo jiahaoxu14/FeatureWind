@@ -339,8 +339,9 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             else:
                 continue  # Skip zero-magnitude vectors
             
-            # Use family-based colors directly without lightness modification for consistency
-            if feat_idx < len(feature_colors):
+            # Only use color for vectors on the convex hull boundary
+            if (pos_on_hull or neg_on_hull) and feat_idx < len(feature_colors):
+                # Vector is on hull boundary - use feature color
                 base_color = feature_colors[feat_idx]
                 
                 # Import color utilities for family-based coloring
@@ -350,48 +351,16 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                     # Use base color directly without lightness ramp to match particle colors
                     base_r, base_g, base_b = hex_to_rgb(base_color)
                     
-                    # Get dominance for alpha modulation
-                    if 'cell_soft_dominance' in system and system['cell_soft_dominance'] is not None:
-                        cell_soft_dom = system['cell_soft_dominance']
-                        if feat_idx < cell_soft_dom.shape[2]:
-                            dominance = cell_soft_dom[cell_i, cell_j, feat_idx]
-                        else:
-                            dominance = 1.0 if feat_idx == dominant_feature else 0.5
-                    else:
-                        dominance = 1.0 if feat_idx == dominant_feature else 0.5
-                    
-                    # Scale alpha based on magnitude AND dominance
+                    # Scale alpha based on magnitude
                     max_mag = max(mags_selected) if mags_selected else 1.0
                     magnitude_factor = vector_magnitude / max_mag if max_mag > 0 else 1.0
-                    base_alpha = 0.3 + 0.6 * magnitude_factor * dominance
-                    base_alpha = min(0.9, max(0.3, base_alpha))
                     
-                    # Add uncertainty visualization through desaturation if available
-                    uncertainty_factor = 1.0  # Default: no desaturation
-                    if 'cell_soft_dominance' in system and system['cell_soft_dominance'] is not None:
-                        cell_soft_dom = system['cell_soft_dominance']
-                        if cell_soft_dom.shape[2] > 1:  # Only if we have multiple features
-                            probs = cell_soft_dom[cell_i, cell_j, :]
-                            # Compute entropy: higher entropy = more uncertainty
-                            entropy = -np.sum(probs * np.log(probs + 1e-8))
-                            max_entropy = np.log(len(probs))  # Maximum possible entropy
-                            normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
-                            
-                            # Convert entropy to desaturation factor: high uncertainty = more desaturation
-                            uncertainty_factor = 0.6 + 0.4 * (1.0 - normalized_entropy)  # Range [0.6, 1.0]
+                    # Higher alpha for hull vectors to make them prominent
+                    pos_alpha = 0.9 if pos_on_hull else 0.3
+                    neg_alpha = 0.9 if neg_on_hull else 0.3
                     
-                    # Apply desaturation by blending with neutral gray
-                    gray_value = 0.5  # Mid-gray
-                    desaturated_r = base_r * uncertainty_factor + gray_value * (1 - uncertainty_factor)
-                    desaturated_g = base_g * uncertainty_factor + gray_value * (1 - uncertainty_factor)  
-                    desaturated_b = base_b * uncertainty_factor + gray_value * (1 - uncertainty_factor)
-                    
-                    # Adjust alpha based on convex hull membership (visual emphasis)
-                    pos_alpha = base_alpha * (1.0 if pos_on_hull else 0.7)
-                    neg_alpha = base_alpha * (0.8 if neg_on_hull else 0.5)
-                    
-                    pos_color = (desaturated_r, desaturated_g, desaturated_b, pos_alpha)
-                    neg_color = (desaturated_r, desaturated_g, desaturated_b, neg_alpha)
+                    pos_color = (base_r, base_g, base_b, pos_alpha)
+                    neg_color = (base_r, base_g, base_b, neg_alpha)
                     
                 except ImportError:
                     # Fallback if color_system is not available
@@ -400,23 +369,23 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                         base_g = int(base_color[3:5], 16) / 255.0
                         base_b = int(base_color[5:7], 16) / 255.0
                         
-                        max_mag = max(mags_selected) if mags_selected else 1.0
-                        mag_intensity = 0.3 + 0.7 * (vector_magnitude / max_mag)
-                        dominance_boost = 1.3 if feat_idx == dominant_feature else 1.0
-                        intensity = min(1.0, mag_intensity * dominance_boost)
-                        
-                        pos_alpha = intensity * (0.9 if pos_on_hull else 0.6)
-                        neg_alpha = intensity * (0.7 if neg_on_hull else 0.4)
+                        pos_alpha = 0.9 if pos_on_hull else 0.3
+                        neg_alpha = 0.9 if neg_on_hull else 0.3
                         
                         pos_color = (base_r, base_g, base_b, pos_alpha)
                         neg_color = (base_r, base_g, base_b, neg_alpha)
                     else:
-                        pos_color = (0, 0, 0, 0.6)
-                        neg_color = (0.3, 0.3, 0.3, 0.4)
+                        # Use gray for non-hull vectors
+                        pos_color = (0.6, 0.6, 0.6, 0.9 if pos_on_hull else 0.3)
+                        neg_color = (0.6, 0.6, 0.6, 0.9 if neg_on_hull else 0.3)
             else:
-                # Fallback colors for invalid feature indices
-                pos_color = (0.5, 0.5, 0.5, 0.6)
-                neg_color = (0.3, 0.3, 0.3, 0.4)
+                # Vector is NOT on hull boundary - use gray color
+                gray_value = 0.6
+                # Lower alpha for non-hull vectors
+                pos_alpha = 0.2
+                neg_alpha = 0.2
+                pos_color = (gray_value, gray_value, gray_value, pos_alpha)
+                neg_color = (gray_value, gray_value, gray_value, neg_alpha)
             
             # Draw vector arrows
             ax2.annotate('', xy=info['pos_end'], xytext=(0, 0),

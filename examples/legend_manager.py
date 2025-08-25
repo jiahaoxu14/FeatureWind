@@ -27,11 +27,12 @@ def create_family_legend(fig, family_assignments, col_labels, feature_colors,
         matplotlib.axes.Axes: legend axes object
     """
     # Define legend positions
+    # Larger legend area to accommodate all features
     positions = {
-        'upper_left': [0.02, 0.80, 0.18, 0.16],
-        'upper_right': [0.78, 0.80, 0.18, 0.16], 
-        'lower_left': [0.02, 0.05, 0.18, 0.16],
-        'lower_right': [0.78, 0.05, 0.18, 0.16]
+        'upper_left': [0.01, 0.15, 0.22, 0.80],  # Taller legend on the left
+        'upper_right': [0.77, 0.15, 0.22, 0.80], 
+        'lower_left': [0.01, 0.05, 0.22, 0.40],
+        'lower_right': [0.77, 0.05, 0.22, 0.40]
     }
     
     pos = positions.get(legend_position, positions['upper_left'])
@@ -65,42 +66,43 @@ def create_family_legend(fig, family_assignments, col_labels, feature_colors,
             'name': family_name,
             'color': representative_color,
             'size': len(family_features),
-            'sample_features': family_features[:2]  # Show first 2 as examples
+            'all_features': family_features  # Show all features
         })
     
     # Sort families by size (largest first) for better visual hierarchy
     family_info.sort(key=lambda x: x['size'], reverse=True)
     
-    # Draw family legend
-    n_families = len(family_info)
-    item_height = 0.12
+    # Draw family legend with all features
+    current_y = 0.95  # Start from top
     
-    for i, info in enumerate(family_info):
-        y_pos = 1.0 - (i + 0.5) * item_height
-        
+    for info in family_info:
         # Color patch
-        color_patch = Rectangle((0.02, y_pos - item_height/4), 0.08, item_height/2, 
+        color_patch = Rectangle((0.02, current_y - 0.04), 0.03, 0.03, 
                                facecolor=info['color'], alpha=0.8, edgecolor='black', linewidth=0.5)
         ax_families.add_patch(color_patch)
         
-        # Family name and count
-        ax_families.text(0.12, y_pos, f"{info['name']} ({info['size']})", 
-                        fontsize=8, va='center', weight='bold')
+        # Family header
+        ax_families.text(0.06, current_y - 0.025, f"Family {info['id']} ({info['size']} features):", 
+                        fontsize=7, va='center', weight='bold')
+        current_y -= 0.05
         
-        # Sample feature names (if multiple features)
-        if info['size'] > 1:
-            sample_text = ", ".join([f[:8] + "..." if len(f) > 8 else f 
-                                   for f in info['sample_features']])
-            if len(info['sample_features']) < info['size']:
-                sample_text += f", +{info['size'] - len(info['sample_features'])} more"
-            
-            ax_families.text(0.12, y_pos - item_height/3, sample_text, 
-                           fontsize=6, va='center', alpha=0.7, style='italic')
+        # List all features in this family
+        for feature_name in info['all_features']:
+            # Truncate long names but show more characters
+            display_name = feature_name[:20] + "..." if len(feature_name) > 20 else feature_name
+            ax_families.text(0.08, current_y, f"• {display_name}", 
+                           fontsize=6, va='top', alpha=0.8)
+            current_y -= 0.025
+        
+        # Add spacing between families
+        current_y -= 0.02
     
+    # Adjust y-limits to fit content
+    min_y = min(current_y - 0.05, 0)
     ax_families.set_xlim(0, 1)
-    ax_families.set_ylim(0, 1)
+    ax_families.set_ylim(min_y, 1)
     ax_families.axis('off')
-    ax_families.set_title("Feature Families", fontsize=10, fontweight='bold', pad=10)
+    ax_families.set_title("Feature Families", fontsize=9, fontweight='bold', pad=5)
     
     return ax_families
 
