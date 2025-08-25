@@ -7,7 +7,7 @@ components for feature flow visualization.
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle, Ellipse
+from matplotlib.patches import Rectangle
 from scipy.spatial import ConvexHull
 import config
 
@@ -129,14 +129,19 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
         feature_colors: Colors for features (family-based)
         family_assignments: Optional array of family assignments for features
     """
-    # Clear previous aggregate visualization
-    for artist in ax2.collections + ax2.patches:
+    # Clear previous visualization completely
+    for artist in ax2.collections + ax2.patches + ax2.lines:
         if hasattr(artist, 'remove'):
             artist.remove()
     
-    # Clear previous text and annotations
+    # Clear previous text and annotations (including annotation arrows)
     for text in ax2.texts:
         text.remove()
+    
+    # Clear annotation arrows specifically
+    for child in ax2.get_children():
+        if hasattr(child, 'arrow_patch'):
+            child.remove()
     
     if 'grid_cell' not in mouse_data or mouse_data['grid_cell'] is None:
         return
@@ -234,7 +239,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
         
         for i, (vector, mag, feat_idx) in enumerate(zip(vectors_selected, mags_selected, features_selected)):
             # Skip truly zero vectors for cleaner visualization
-            if mag < 1e-8:
+            if mag < 1e-12:  # More lenient threshold
                 continue
                 
             # Scale the gradient vector to match the consistent magnitude
@@ -262,53 +267,69 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 # Draw convex hull
                 hull_points = np.array(all_endpoints)[hull.vertices]
                 hull_polygon = plt.Polygon(hull_points, fill=True, alpha=0.1, 
-                                         color='lightblue', edgecolor='blue', linewidth=1)
+                                         facecolor='lightblue', edgecolor='blue', linewidth=1)
                 ax2.add_patch(hull_polygon)
                 
-                # Calculate and draw covariance ellipse based on vector directions
-                # Collect the actual vector directions (not endpoints)
-                vector_directions = []
-                for info in vector_info:
-                    # Use the scaled vector direction
-                    scaled_vector = info['vector']
-                    vector_directions.append(scaled_vector)
-                
-                if len(vector_directions) >= 2:
-                    vector_directions = np.array(vector_directions)
-                    
-                    try:
-                        # Calculate covariance matrix of vector directions
-                        cov_matrix = np.cov(vector_directions.T)
-                        
-                        # Eigendecomposition for ellipse parameters
-                        eigenvalues, eigenvectors = np.linalg.eigh(cov_matrix)
-                        
-                        # Sort eigenvalues and eigenvectors in descending order
-                        # (eigh returns them in ascending order)
-                        order = eigenvalues.argsort()[::-1]
-                        eigenvalues = eigenvalues[order]
-                        eigenvectors = eigenvectors[:, order]
-                        
-                        # Calculate ellipse parameters (scaled smaller to fit inside convex hull)
-                        ellipse_scale = 0.8  # Make ellipse 80% of the span
-                        width = 2 * np.sqrt(eigenvalues[0]) * ellipse_scale
-                        height = 2 * np.sqrt(eigenvalues[1]) * ellipse_scale
-                        
-                        # Calculate angle of rotation (in degrees) using the major axis eigenvector
-                        # Use the eigenvector corresponding to the largest eigenvalue (index 0 after sorting)
-                        major_eigenvector = eigenvectors[:, 0]
-                        angle = np.arctan2(major_eigenvector[1], major_eigenvector[0]) * 180 / np.pi
-                        
-                        # Create ellipse centered at Wind Vane center with dominant feature color
-                        ellipse = Ellipse((0, 0), width, height, angle=angle,
-                                        fill=False, color=dominant_color, linewidth=1.5, linestyle='--',
-                                        alpha=0.7)
-                        ax2.add_patch(ellipse)
-                    except Exception as e:
-                        pass  # Silently skip covariance ellipse on error
-                        
             except Exception as e:
                 pass  # Silently skip convex hull on error
+        
+        # Draw wind vane arrow showing the sum vector (actual flow direction)
+        # This is drawn regardless of convex hull success
+        if sum_magnitude > 1e-6 and len(vectors_selected) > 0:
+            # Create traditional wind vane with TRULY fixed geometry and alpha-based magnitude encoding
+            vane_length = 0.35  # Fixed radius (0.7 diameter fits well in unit circle)
+            
+            # Get ONLY the direction (unit vector) from sum vector - ignore magnitude for positioning
+            if sum_magnitude > 1e-8:
+                flow_direction = sum_vector / sum_magnitude  # Pure direction, no magnitude influence
+            else:
+                flow_direction = np.array([1, 0])  # Default direction for zero flow
+            
+            # Alpha encoding for magnitude (0.3 to 0.9 range)  
+            # Clamp to valid alpha range [0, 1]
+            alpha_ratio = min(1.0, sum_magnitude / max_mag) if max_mag > 0 else 0.0
+            magnitude_alpha = max(0.3, min(0.9, 0.3 + 0.6 * alpha_ratio))
+            
+            # Wind vane components with FIXED geometry - clearly distinct from thin feature vectors
+            perp_direction = np.array([-flow_direction[1], flow_direction[0]])  # Perpendicular
+            
+            # 1. Main shaft (thick central line) - much thicker than feature vectors
+            shaft_length = vane_length * 0.8  # 80% of radius
+            shaft_start = -flow_direction * shaft_length * 0.5
+            shaft_end = flow_direction * shaft_length * 0.5
+            ax2.plot([shaft_start[0], shaft_end[0]], [shaft_start[1], shaft_end[1]], 
+                    color=dominant_color, linewidth=6, alpha=magnitude_alpha, 
+                    solid_capstyle='round', zorder=20)  # Much thicker than feature vectors
+            
+            # 2. Large arrow head (pointing in flow direction) - fixed position at radius
+            arrow_head_pos = flow_direction * vane_length  # Fixed at vane_length radius
+            arrow_size = vane_length * 0.4  # Larger arrow head
+            
+            arrow_vertices = np.array([
+                arrow_head_pos,  # Tip at fixed radius
+                arrow_head_pos - flow_direction * arrow_size + perp_direction * arrow_size * 0.5,  # Left base
+                arrow_head_pos - flow_direction * arrow_size - perp_direction * arrow_size * 0.5   # Right base
+            ])
+            
+            arrow_triangle = plt.Polygon(arrow_vertices, color=dominant_color, 
+                                       alpha=magnitude_alpha, zorder=21)
+            ax2.add_patch(arrow_triangle)
+            
+            # 3. Large flag tail (showing flow origin) - fixed position opposite to arrow
+            flag_center = -flow_direction * vane_length  # Fixed at opposite end
+            flag_size = vane_length * 0.35  # Large flag
+            
+            # Create rectangular flag
+            flag_vertices = np.array([
+                flag_center + perp_direction * flag_size * 0.5,  # Top
+                flag_center + perp_direction * flag_size * 0.5 + flow_direction * flag_size * 0.6,  # Top-right
+                flag_center - perp_direction * flag_size * 0.5 + flow_direction * flag_size * 0.6,  # Bottom-right
+                flag_center - perp_direction * flag_size * 0.5,  # Bottom
+            ])
+            
+            flag_rectangle = plt.Polygon(flag_vertices, color=dominant_color, 
+                                       alpha=magnitude_alpha * 0.8, zorder=21)
+            ax2.add_patch(flag_rectangle)
         
         # Determine which endpoints are on the convex hull boundary
         if len(all_endpoints) >= 3:
@@ -356,10 +377,6 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                     
                     # Use base color directly without lightness ramp to match particle colors
                     base_r, base_g, base_b = hex_to_rgb(base_color)
-                    
-                    # Scale alpha based on magnitude
-                    max_mag = max(mags_selected) if mags_selected else 1.0
-                    magnitude_factor = vector_magnitude / max_mag if max_mag > 0 else 1.0
                     
                     # Higher alpha for hull vectors to make them prominent
                     pos_alpha = 0.9 if pos_on_hull else 0.3
