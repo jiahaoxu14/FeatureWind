@@ -194,21 +194,23 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
     mags_selected = []
     features_selected = []
     
-    # Check if this cell is masked (all vectors are zero or near-zero)
-    total_magnitude = sum(mags_all)
-    is_masked_cell = total_magnitude < 1e-6
-    
+    # Collect vectors for selected features only
+    # Include even small vectors to show complete picture
     for i, feat_idx in enumerate(selected_features):
         if feat_idx < len(vectors_all):
-            # Use consistent cell-center magnitude (same as optimization)
-            mag = mags_all[feat_idx]
-            if mag > 1e-8:  # Only show non-zero vectors
-                vectors_selected.append(vectors_all[feat_idx])
-                mags_selected.append(mag)
-                features_selected.append(feat_idx)
+            vectors_selected.append(vectors_all[feat_idx])
+            mags_selected.append(mags_all[feat_idx])
+            features_selected.append(feat_idx)
     
-    # Show masked cell indication if no vectors are present
-    if is_masked_cell or len(vectors_selected) == 0:
+    # Calculate the sum vector (what actually drives particles)
+    sum_vector = np.sum(vectors_selected, axis=0) if vectors_selected else np.array([0, 0])
+    sum_magnitude = np.linalg.norm(sum_vector)
+    
+    # Only show masked if the SUM has no flow (matching particle behavior)
+    is_masked_cell = sum_magnitude < 1e-6
+    
+    # Show masked cell indication if the sum vector has no flow
+    if is_masked_cell:
         # Draw a visual indication that this cell is masked/has no flow
         ax2.text(0, 0, 'MASKED\nCELL', ha='center', va='center', 
                 fontsize=12, color='red', weight='bold', alpha=0.7)
@@ -231,6 +233,10 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
         vector_info = []
         
         for i, (vector, mag, feat_idx) in enumerate(zip(vectors_selected, mags_selected, features_selected)):
+            # Skip truly zero vectors for cleaner visualization
+            if mag < 1e-8:
+                continue
+                
             # Scale the gradient vector to match the consistent magnitude
             scaled_vector = np.array(vector) * scale_factor
             
@@ -293,9 +299,9 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                         major_eigenvector = eigenvectors[:, 0]
                         angle = np.arctan2(major_eigenvector[1], major_eigenvector[0]) * 180 / np.pi
                         
-                        # Create ellipse centered at Wind Vane center
+                        # Create ellipse centered at Wind Vane center with dominant feature color
                         ellipse = Ellipse((0, 0), width, height, angle=angle,
-                                        fill=False, color='red', linewidth=1.5, linestyle='--',
+                                        fill=False, color=dominant_color, linewidth=1.5, linestyle='--',
                                         alpha=0.7)
                         ax2.add_patch(ellipse)
                     except Exception as e:
