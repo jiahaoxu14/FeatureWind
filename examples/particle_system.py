@@ -360,6 +360,68 @@ def get_dominant_feature_at_position(position, system):
     return -1
 
 
+def get_directional_dominant_feature_at_position(position, velocity_direction, system):
+    """
+    Get the feature that contributes most to the particle's movement direction.
+    
+    Args:
+        position (np.ndarray): Position coordinates [x, y]
+        velocity_direction (np.ndarray): Normalized velocity direction [dx, dy]
+        system (dict): Particle system dictionary
+        
+    Returns:
+        int: Index of directionally dominant feature, or -1 if none
+    """
+    if ('grid_u_all_feats' not in system or 'grid_v_all_feats' not in system or 
+        np.linalg.norm(velocity_direction) < 1e-8):
+        return -1
+        
+    xmin, xmax, ymin, ymax = config.bounding_box
+    grid_u_all_feats = system['grid_u_all_feats']
+    grid_v_all_feats = system['grid_v_all_feats']
+    
+    num_features = grid_u_all_feats.shape[0]
+    grid_res = grid_u_all_feats.shape[1]
+    
+    # Convert position to grid cell indices
+    if xmin <= position[0] <= xmax and ymin <= position[1] <= ymax:
+        cell_j = int((position[0] - xmin) / (xmax - xmin) * grid_res)
+        cell_i = int((position[1] - ymin) / (ymax - ymin) * grid_res)
+        
+        # Clamp to valid range
+        cell_i = max(0, min(grid_res - 1, cell_i))
+        cell_j = max(0, min(grid_res - 1, cell_j))
+        
+        # Get all feature vectors at this position using vectorized operations
+        u_vals = grid_u_all_feats[:, cell_i, cell_j]  # Shape: (num_features,)
+        v_vals = grid_v_all_feats[:, cell_i, cell_j]  # Shape: (num_features,)
+        feature_vectors = np.column_stack([u_vals, v_vals])  # Shape: (num_features, 2)
+        
+        # Calculate magnitudes for all features at once
+        magnitudes = np.linalg.norm(feature_vectors, axis=1)
+        
+        # Filter out zero vectors
+        valid_mask = magnitudes > 1e-8
+        if not np.any(valid_mask):
+            return -1
+        
+        # Calculate directional contributions for all valid features at once
+        contributions = np.dot(feature_vectors[valid_mask], velocity_direction)
+        
+        # Find the best contribution among valid features
+        if len(contributions) > 0:
+            best_idx_among_valid = np.argmax(contributions)
+            # Map back to original feature index
+            valid_indices = np.where(valid_mask)[0]
+            best_feature_idx = valid_indices[best_idx_among_valid]
+        else:
+            best_feature_idx = -1
+        
+        return best_feature_idx
+    
+    return -1
+
+
 def get_magnitude_at_position(position, feature_idx, system):
     """
     Get gradient magnitude for a specific feature at a position.
@@ -489,9 +551,26 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
             else:
                 max_magnitudes[feat_idx] = 1.0
     
-    # Color each particle based on its dominant feature
+    # Color each particle based on its directionally dominant feature
+    # Get particle velocities for directional analysis
+    velocities = system.get('last_velocity', None)
+    
     for i, position in enumerate(particle_positions):
-        dominant_feature = get_dominant_feature_at_position(position, system)
+        # Use directional contribution if velocity is available
+        if velocities is not None and i < len(velocities):
+            velocity = velocities[i]
+            speed = np.linalg.norm(velocity)
+            
+            if speed > 1e-8:
+                # Use directional contribution coloring
+                velocity_direction = velocity / speed  # Normalize to unit vector
+                dominant_feature = get_directional_dominant_feature_at_position(position, velocity_direction, system)
+            else:
+                # Fallback to magnitude-based for stationary particles
+                dominant_feature = get_dominant_feature_at_position(position, system)
+        else:
+            # Fallback to magnitude-based coloring if no velocity data
+            dominant_feature = get_dominant_feature_at_position(position, system)
         
         if dominant_feature >= 0 and dominant_feature < len(feature_colors):
             # Get base family color - use directly without lightness modulation for consistency
