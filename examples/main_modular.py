@@ -7,9 +7,8 @@ It orchestrates all the components: data processing, grid computation, particle 
 visualization, and UI controls.
 
 Usage:
-    python main_modular.py
-    python main_modular.py --feature "mean radius"
-    python main_modular.py --feature "worst perimeter"
+    python main_modular.py --tangent-map tangentmaps/breast_cancer.tmap --top-k 5
+    python main_modular.py --tangent-map tangentmaps/breast_cancer.tmap --feature "mean radius"
 
 This script provides the same functionality as the original main.py but with
 improved modularity, maintainability, and extensibility.
@@ -34,17 +33,16 @@ import ui_controls
 
 
 def parse_arguments():
-    """Parse command-line arguments for visualization modes."""
+    """Parse command-line arguments for visualization modes (CLI only)."""
     parser = argparse.ArgumentParser(
         description='FeatureWind - Visualize feature flow fields',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main_modular.py                      # Default: top 5 features
-  python main_modular.py --top-k 10           # Top 10 features
-  python main_modular.py --top-k all          # All features
-  python main_modular.py --feature "mean radius"  # Single feature mode
-  python main_modular.py --list-features      # List available features
+  python main_modular.py --tangent-map tangentmaps/breast_cancer.tmap --top-k 10
+  python main_modular.py --tangent-map tangentmaps/breast_cancer.tmap --top-k all
+  python main_modular.py --tangent-map tangentmaps/breast_cancer.tmap --feature "mean radius"
+  python main_modular.py --tangent-map tangentmaps/breast_cancer.tmap --list-features
         """
     )
     
@@ -61,8 +59,8 @@ Examples:
     mode_group.add_argument(
         '--top-k', '-k',
         type=str,
-        default='5',
-        help='Number of top features to visualize (integer or "all", default: 5)'
+        default=None,
+        help='Number of top features to visualize (integer or "all"). Required if --feature not provided.'
     )
     
     parser.add_argument(
@@ -74,8 +72,8 @@ Examples:
     parser.add_argument(
         '--tangent-map', '-t',
         type=str,
-        default=None,
-        help='Path to tangent map file (default: breast_cancer.tmap)'
+        required=True,
+        help='Path to tangent map file (required)'
     )
     
     return parser.parse_args()
@@ -93,14 +91,13 @@ def main():
     # Setup paths relative to repository root
     repo_root = os.path.join(os.path.dirname(__file__), '..')
     
-    # Determine tangent map path
-    if args.tangent_map:
-        tangent_map_path = args.tangent_map
-    else:
-        tangent_map_path = os.path.join(repo_root, config.DEFAULT_TANGENT_MAP)
-        if not os.path.exists(tangent_map_path):
-            # Fallback to breast_cancer.tmap if the configured file doesn't exist
-            tangent_map_path = os.path.join(repo_root, 'tangentmaps', 'breast_cancer.tmap')
+    # Determine tangent map path (CLI required; no legacy fallback)
+    tangent_map_path = args.tangent_map
+    if not os.path.isabs(tangent_map_path):
+        tangent_map_path = os.path.join(repo_root, tangent_map_path)
+    if not os.path.exists(tangent_map_path):
+        print(f"Error: Tangent map not found at '{tangent_map_path}'. Provide a valid path with --tangent-map.")
+        sys.exit(2)
     
     output_dir = os.path.join(repo_root, 'output')
     if not os.path.exists(output_dir):
@@ -139,9 +136,17 @@ def main():
         scale_factor = target_avg_magnitude / avg_magnitude
         config.velocity_scale = config.velocity_scale * scale_factor
     
+    # Enforce CLI-only mode selection
+    if not args.feature and not args.top_k and not args.list_features:
+        print("Error: specify either --feature NAME or --top-k N|all (or use --list-features).")
+        sys.exit(2)
+
     # Parse top-k value from arguments
     if args.feature is None:  # Top-K mode
-        if args.top_k.lower() == 'all':
+        if args.top_k is None:
+            print("Error: --top-k is required when --feature is not provided.")
+            sys.exit(2)
+        if isinstance(args.top_k, str) and args.top_k.lower() == 'all':
             config.k = len(col_labels)
             print(f"Visualizing all {len(col_labels)} features")
         else:
@@ -155,8 +160,8 @@ def main():
                 else:
                     print(f"Visualizing top {config.k} features")
             except ValueError:
-                print(f"Warning: Invalid top-k value '{args.top_k}', using default of 5")
-                config.k = 5
+                print(f"Error: Invalid --top-k value '{args.top_k}'. Use an integer or 'all'.")
+                sys.exit(2)
     else:
         config.k = 1  # Single feature mode
     
