@@ -549,10 +549,9 @@ def apply_professional_styling(fig, ax1, ax2):
     ax1.set_xticks([])
     ax1.set_yticks([])
     
-    # Style spines
+    # Remove spines (borders)
     for spine in ax1.spines.values():
-        spine.set_color(TEXT_COLOR)
-        spine.set_linewidth(0.8)
+        spine.set_visible(False)
     
     # Style wind vane - align with main plot background
     ax2.set_facecolor(BACKGROUND_COLOR)

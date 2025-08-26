@@ -15,7 +15,7 @@ bounding_box = None  # Will be computed dynamically
 real_feature_rgba = {}  # Feature to RGBA mapping for particles
 
 # Default grid resolution
-DEFAULT_GRID_RES = 40
+DEFAULT_GRID_RES = 10
 
 # Particle system parameters
 DEFAULT_NUM_PARTICLES = 1200  # Reduced from 2000 for better performance
