@@ -49,24 +49,17 @@ class EventManager:
         
     def connect_events(self):
         """Connect all event handlers in a coordinated way."""
-        # Disconnect any existing handlers first
-        self.disconnect_events()
-        
-        # Clear all existing callbacks to avoid conflicts  
-        try:
-            # Clear motion and button press callbacks specifically
-            if hasattr(self.fig.canvas.callbacks, 'callbacks'):
-                self.fig.canvas.callbacks.callbacks.get('motion_notify_event', []).clear()
-                self.fig.canvas.callbacks.callbacks.get('button_press_event', []).clear()
-        except (AttributeError, KeyError):
-            pass  # Fallback if callback structure is different
-        
-        # Connect our centralized handlers
+        # Avoid duplicate connections; only connect once
+        if getattr(self, "_is_connected", False):
+            return
+
+        # Connect our centralized handlers (without clearing global registries)
         try:
             motion_cid = self.fig.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
             click_cid = self.fig.canvas.mpl_connect('button_press_event', self._on_mouse_click)
             
             self.connected_handlers = [motion_cid, click_cid]
+            self._is_connected = True
             print("✓ Event handlers connected successfully")
             
         except Exception as e:
@@ -81,6 +74,7 @@ class EventManager:
             except Exception as e:
                 print(f"Warning: Failed to disconnect handler {cid}: {e}")
         self.connected_handlers.clear()
+        self._is_connected = False
     
     def _on_mouse_move(self, event):
         """Centralized mouse movement handler with debouncing."""
