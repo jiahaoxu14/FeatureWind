@@ -58,13 +58,6 @@ except ImportError:
     ]
 
 # Grid computation parameters
-ADAPTIVE_THRESHOLD_PERCENTILE = 75
-KNN_K = 5  # For adaptive threshold computation
-GAUSSIAN_SIGMA = 0.3  # For smooth masking
-MAGNITUDE_THRESHOLD = 0.01
-
-# Distance-based masking parameters
-DISTANCE_MASK_FACTOR = 3.0  # Multiplier for median nearest-neighbor distance
 MASK_BUFFER_FACTOR = 0    # Buffer size around data points for interpolation (in cell units)
 
 # Particle physics parameters
