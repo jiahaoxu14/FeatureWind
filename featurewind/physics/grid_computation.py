@@ -13,34 +13,6 @@ from scipy.ndimage import gaussian_filter, binary_closing
 from .. import config
 
 
-def compute_adaptive_threshold(positions, kdtree, percentile=None):
-    """
-    Compute adaptive threshold based on local point density.
-    
-    Args:
-        positions (np.ndarray): Data point positions, shape (N, 2)
-        kdtree (cKDTree): KD-tree built from positions
-        percentile (int, optional): Percentile for threshold computation
-        
-    Returns:
-        float: Adaptive threshold value
-    """
-    if percentile is None:
-        percentile = config.ADAPTIVE_THRESHOLD_PERCENTILE
-    
-    # Get k-nearest neighbor distances for each point
-    k = min(config.KNN_K, len(positions))  # Use 5-NN or fewer if dataset is small
-    if k <= 1:
-        # Fallback for very small datasets
-        xmin, xmax, ymin, ymax = config.bounding_box
-        return max(abs(xmax - xmin), abs(ymax - ymin)) * 0.1
-    
-    distances, _ = kdtree.query(positions, k=k+1)  # k+1 because first is self
-    local_densities = distances[:, 1:].mean(axis=1)  # Average k-NN distance per point
-    
-    # Use a percentile of local densities as threshold
-    adaptive_threshold = np.percentile(local_densities, percentile)
-    return adaptive_threshold
 
 
 def create_grid_coordinates(grid_res):
@@ -65,65 +37,72 @@ def create_grid_coordinates(grid_res):
     return grid_x, grid_y, cell_centers_x, cell_centers_y
 
 
-def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold, dist_grid, grid_res=None):
+def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y):
     """
-    Interpolate a single feature's vectors onto the grid with masking.
+    Interpolate a single feature's vectors onto the grid with grid cell boundary-aware masking.
     
     Args:
         positions (np.ndarray): Data point positions, shape (N, 2)
         vectors (np.ndarray): Feature vectors at data points, shape (N, 2)
         grid_x, grid_y (np.ndarray): Grid coordinate meshes
-        threshold (float): Distance threshold for masking
-        dist_grid (np.ndarray): Distance to nearest data point for each grid cell
         
     Returns:
         tuple: (grid_u, grid_v) - interpolated velocity components
     """
-    # Interpolate each component onto the grid with smooth transitions
+    # Interpolate each component onto the grid
     grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='linear', fill_value=0.0)
     grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='linear', fill_value=0.0)
     
-    # Create mask to avoid masking cells that contain actual data points
-    contains_data_mask = np.zeros(grid_x.shape, dtype=bool)
-    
-    if grid_res is None:
-        grid_res = grid_x.shape[0]  # Assume square grid
-    
-    # Check which grid cells contain actual data points
-    xmin, xmax = grid_x.min(), grid_x.max()
-    ymin, ymax = grid_y.min(), grid_y.max()
-    
-    for pos in positions:
-        # Find which grid cell this data point belongs to
-        # Note: grid indexing is [y_index, x_index] due to meshgrid convention
-        cell_i = int((pos[1] - ymin) / (ymax - ymin) * grid_res)  # Y-direction (row index)
-        cell_j = int((pos[0] - xmin) / (xmax - xmin) * grid_res)  # X-direction (column index)
-        
-        # Clamp to grid bounds
-        cell_i = max(0, min(grid_res - 1, cell_i))
-        cell_j = max(0, min(grid_res - 1, cell_j))
-        
-        # Mark this cell as containing data (using [y_index, x_index] convention)
-        contains_data_mask[cell_i, cell_j] = True
-    
-    # Create smooth mask to avoid jagged boundaries
-    magnitude_grid = np.sqrt(grid_u**2 + grid_v**2)
-    # Apply Gaussian smoothing to magnitude grid
-    smooth_magnitude = gaussian_filter(magnitude_grid, sigma=config.GAUSSIAN_SIGMA)
-    # Create distance-based mask with morphological smoothing  
-    distance_mask = dist_grid > threshold
-    # Apply morphological closing to smooth boundaries
-    smooth_mask = binary_closing(distance_mask, structure=np.ones((3,3)))
-    # Combine with magnitude-based threshold for final mask
-    # Use smoothed magnitude to avoid sharp transitions
-    magnitude_threshold = np.percentile(smooth_magnitude[~smooth_mask], 10) if np.any(~smooth_mask) else 0.0
-    magnitude_mask = smooth_magnitude < magnitude_threshold
-    
-    # Final mask: exclude distance and magnitude masks, but NEVER mask cells with actual data
-    final_mask = (smooth_mask | magnitude_mask) & (~contains_data_mask)
-    
-    grid_u[final_mask] = 0.0
-    grid_v[final_mask] = 0.0
+    # Two-stage masking: exact cell identification + minimal buffer
+    if len(positions) >= 2:
+        try:
+            xmin, xmax, ymin, ymax = config.bounding_box
+            grid_res = grid_x.shape[0]
+            
+            # Calculate cell size
+            cell_width = (xmax - xmin) / grid_res
+            cell_height = (ymax - ymin) / grid_res
+            
+            # Stage 1: Find cells containing data points (no buffer) - these are protected
+            protected_cells = np.zeros(grid_x.shape, dtype=bool)
+            for pos in positions:
+                # Find exact cell containing this point
+                i = int((pos[1] - ymin) / cell_height)
+                j = int((pos[0] - xmin) / cell_width)
+                i = max(0, min(grid_res - 1, i))
+                j = max(0, min(grid_res - 1, j))
+                protected_cells[i, j] = True
+            
+            # Stage 2: Add minimal buffer for interpolation quality
+            mask = np.ones(grid_x.shape, dtype=bool)  # True = mask out, False = keep
+            
+            for pos in positions:
+                px, py = pos[0], pos[1]
+                
+                # Use configurable buffer factor for tighter control
+                buffer_x = cell_width * config.MASK_BUFFER_FACTOR
+                buffer_y = cell_height * config.MASK_BUFFER_FACTOR
+                
+                # Find range of cells to unmask
+                i_start = max(0, int((py - buffer_y - ymin) / cell_height))
+                i_end = min(grid_res, int((py + buffer_y - ymin) / cell_height) + 1)
+                j_start = max(0, int((px - buffer_x - xmin) / cell_width))
+                j_end = min(grid_res, int((px + buffer_x - xmin) / cell_width) + 1)
+                
+                # Unmask buffer region
+                mask[i_start:i_end, j_start:j_end] = False
+            
+            # Guarantee: Protected cells are NEVER masked (even if buffer is 0)
+            mask[protected_cells] = False
+            
+            # Apply mask
+            grid_u[mask] = 0.0
+            grid_v[mask] = 0.0
+            
+        except Exception as e:
+            print(f"Two-stage masking failed: {e}, skipping masking")
+            # If masking fails, don't mask anything
+            pass
     
     return grid_u, grid_v
 
@@ -173,21 +152,12 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
     # Setup interpolation grid using cell-center convention
     grid_x, grid_y, cell_centers_x, cell_centers_y = create_grid_coordinates(grid_res)
     
-    # Build a KD-tree and determine distance to the nearest data point at each grid cell
-    kdtree = cKDTree(positions)
-    grid_points = np.column_stack((grid_x.ravel(), grid_y.ravel()))
-    distances, _ = kdtree.query(grid_points, k=1)
-    dist_grid = distances.reshape(grid_x.shape)
-    
-    # Compute adaptive threshold based on local point density
-    threshold = compute_adaptive_threshold(positions, kdtree)
-    
     # Interpolate velocity fields for the top-k features
     grid_u_feats, grid_v_feats = [], []
     for feat_idx in top_k_indices:
         # Extract the vectors for the given feature
         vectors = all_grad_vectors[:, feat_idx, :]  # shape: (#points, 2)
-        grid_u, grid_v = interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold, dist_grid, grid_res)
+        grid_u, grid_v = interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y)
         grid_u_feats.append(grid_u)
         grid_v_feats.append(grid_v)
     
@@ -206,7 +176,7 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
     for feat_idx in range(num_features):
         # Extract vectors for this feature
         vectors = all_grad_vectors[:, feat_idx, :]  # shape: (#points, 2)
-        grid_u, grid_v = interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold, dist_grid, grid_res)
+        grid_u, grid_v = interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y)
         grid_u_all_feats.append(grid_u)
         grid_v_all_feats.append(grid_v)
     
@@ -281,20 +251,11 @@ def build_grids_alternative(positions, grid_res, all_grad_vectors, k_local, outp
     
     num_features = all_grad_vectors.shape[1]
 
-    # Build a KD-tree and determine distance to the nearest data point at each grid cell
-    kdtree = cKDTree(positions)
-    grid_points = np.column_stack((grid_x.ravel(), grid_y.ravel()))
-    distances, _ = kdtree.query(grid_points, k=1)
-    dist_grid = distances.reshape(grid_x.shape)
-    
-    # Compute adaptive threshold based on local point density
-    threshold = compute_adaptive_threshold(positions, kdtree)
-    
     # For each feature, interpolate the velocity fields onto the grid
     grid_u_all, grid_v_all = [], []
     for m in range(num_features):
         vectors = all_grad_vectors[:, m, :]  # shape: (#points, 2)
-        grid_u, grid_v = interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, threshold, dist_grid, grid_res)
+        grid_u, grid_v = interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y)
         grid_u_all.append(grid_u)
         grid_v_all.append(grid_v)
     

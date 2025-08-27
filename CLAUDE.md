@@ -8,41 +8,72 @@ FeatureWind is a Python package for visualizing feature flows in high-dimensiona
 
 ## Architecture
 
-The codebase has been modularized into focused, maintainable components:
+The codebase has been reorganized into a clean, hierarchical Python package structure:
 
-### **Core Library** (`src/featurewind/`)
-Main Python package containing utilities for tangent map generation and data structures:
-- `TangentMap.py`: Generates tangent maps using dimensionality reduction (t-SNE, UMAP, etc.) with gradient computation
-- `ScalarField.py`: Reconstructs scalar fields from point gradients using finite element methods
-- `TangentPoint.py` & `TangentPointSet.py`: Data structures for managing tangent map points and their properties
-- `DimReader.py`: **Core gradient computation engine** - handles dimensionality reduction with PyTorch autograd for feature gradients
-- `tsne.py`: PyTorch-based t-SNE implementation with automatic differentiation support
+```
+FeatureWind/
+├── main_modular.py                 # Main entry point at project root
+├── featurewind/                    # Unified Python package
+│   ├── core/                       # Core computation modules
+│   ├── preprocessing/              # Data preprocessing tools
+│   ├── physics/                    # Physics simulation components
+│   ├── visualization/              # Visualization components
+│   ├── ui/                         # User interface components
+│   ├── analysis/                   # Analysis tools
+│   └── config.py                   # Global configuration
+├── data/tangentmaps/               # Pre-generated .tmap files
+├── output/{figures,csv}/           # Organized output structure
+├── scripts/                        # Utility scripts
+├── notebooks/                      # Jupyter notebooks
+└── archive/                        # Legacy implementations
+```
 
-### **Examples Directory** (`examples/`)
-Contains both legacy and modular visualization implementations:
+### **Core Package** (`featurewind/`)
+Unified Python package with logical submodules:
 
-#### **Modular Implementation** (Recommended)
-- `main_modular.py`: **Main entry point** - orchestrates all components
-- `config.py`: Configuration constants and global parameters
-- `data_processing.py`: Data loading, validation, and feature selection
-- `grid_computation.py`: Spatial discretization and velocity field construction
-- `particle_system.py`: Physics simulation with adaptive RK4 integration
-- `visualization_core.py`: Plotting, figure management, and rendering
-- `ui_controls.py`: Interactive widgets and user interface management
+#### **Core Computation** (`featurewind/core/`)
+Fundamental algorithms for tangent map generation and gradient computation:
+- **`dim_reader.py`**: **Core gradient computation engine** - PyTorch autograd for feature gradients
+- **`tangent_map.py`**: Generates tangent maps using dimensionality reduction with gradient computation
+- **`tangent_point.py`**: Data structures for managing tangent map points and their properties
+- **`tsne.py`**: PyTorch-based t-SNE implementation with automatic differentiation support
+- **`mds_torch.py`**: Multi-dimensional scaling implementation
 
-#### **Recent Advanced Features**
-- `color_system.py`: Paul Tol's colorblind-safe palette with LCH color space
-- `event_manager.py`: Centralized event handling for reliable mouse/keyboard interaction
-- `feature_clustering.py`: Hierarchical clustering for feature family grouping
-- `legend_manager.py`: Dynamic legend management with family-based organization
+#### **Preprocessing** (`featurewind/preprocessing/`)
+Data loading, validation, and tangent map generation:
+- **`data_processing.py`**: Data loading, validation, and feature selection
+- **`generate_tangent_map.py`**: CLI tool for creating `.tmap` files from CSV datasets
 
-#### **Legacy Files**
-- `main.py`: Original monolithic implementation (92,385+ characters)
-- `generate_tangent_map.py`: Preprocessing script for creating `.tmap` files
+#### **Physics Simulation** (`featurewind/physics/`)
+Particle system simulation and velocity field computation:
+- **`particle_system.py`**: Physics simulation with adaptive RK4 integration
+- **`grid_computation.py`**: Spatial discretization and velocity field construction
 
-### **Data Directories**
-- `tangentmaps/`: Pre-generated `.tmap` files containing processed tangent map data
-- `output/`: Generated visualization files, animation frames, and CSV exports
+#### **Visualization** (`featurewind/visualization/`)
+All rendering, plotting, and visual display functionality:
+- **`visualization_core.py`**: Main plotting, figure management, and rendering
+- **`color_system.py`**: Paul Tol's colorblind-safe palette with LCH color space
+- **`legend_manager.py`**: Dynamic legend management with family-based organization
+- **`wind_strength_indicator.py`**: Wind vane visualization component
+
+#### **User Interface** (`featurewind/ui/`)
+Interactive controls and event handling:
+- **`ui_controls.py`**: Interactive widgets and user interface management
+- **`event_manager.py`**: Centralized event handling for reliable mouse/keyboard interaction
+
+#### **Analysis Tools** (`featurewind/analysis/`)
+Feature analysis and clustering functionality:
+- **`feature_clustering.py`**: Hierarchical clustering for feature family grouping
+
+### **Data Organization**
+- **`data/tangentmaps/`**: Pre-generated `.tmap` files containing processed tangent map data
+- **`output/figures/`**: PNG images, static frames, and final visualizations
+- **`output/csv/`**: Grid data, dominant features, and cell classifications
+
+### **Development Tools**
+- **`scripts/`**: Utility scripts and testing tools
+- **`notebooks/`**: Interactive Jupyter notebooks for exploration
+- **`archive/`**: Legacy monolithic implementations (preserved for reference)
 
 ### **Documentation** (`docs/`)
 - `featurewind_visualization_research_paper.md`: Technical research paper on the visualization methodology
@@ -52,23 +83,57 @@ Contains both legacy and modular visualization implementations:
 
 **Run modular visualization (recommended):**
 ```bash
-python examples/main_modular.py
+python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --top-k 5
 ```
 
 **Run legacy visualization:**
 ```bash
-python examples/main.py
+python archive/main.py
 ```
 
 **Generate tangent maps from datasets:**
 ```bash
-python examples/generate_tangent_map.py <dataset.csv> tsne --target <label_column> --output <output.tmap>
+python -m featurewind.preprocessing.generate_tangent_map <dataset.csv> tsne --target <label_column> --output <output.tmap>
 ```
 
 **Generate tangent maps directly (legacy method):**
 ```bash
-python src/featurewind/TangentMap.py <input.csv> tsne
+python featurewind/core/tangent_map.py <input.csv> tsne
 ```
+
+## Import Structure
+
+### **New Import Pattern**
+After the reorganization, all imports follow the clean package hierarchy:
+
+```python
+# Main script (main_modular.py) imports:
+from featurewind import config
+from featurewind.preprocessing import data_processing
+from featurewind.physics import particle_system, grid_computation
+from featurewind.visualization import visualization_core
+from featurewind.ui import ui_controls
+from featurewind.analysis import feature_clustering
+
+# Cross-module imports within featurewind package:
+from ..core.tangent_point import TangentPoint          # From preprocessing to core
+from ..visualization.color_system import hex_to_rgb   # From physics to visualization  
+from .color_system import PAUL_TOL_FAMILIES           # Within visualization module
+```
+
+### **Key Import Changes**
+- **Main entry point**: `main_modular.py` now at project root
+- **Package imports**: All modules use `featurewind.` prefix from external code
+- **Relative imports**: Internal modules use `..` and `.` for cross-module references
+- **Path resolution**: Data and output paths relative to project root
+
+### **Module Dependencies**
+- **Core**: Self-contained (dim_reader ← tsne)
+- **Preprocessing**: Depends on core (TangentPoint, TangentMap)
+- **Physics**: Depends on config, uses visualization.color_system  
+- **Visualization**: Self-contained with internal cross-references
+- **UI**: Depends on visualization for event handling
+- **Analysis**: Self-contained
 
 ## Complete Application Workflow
 
@@ -425,54 +490,81 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
     ax2.add_patch(circle)
 ```
 
-#### Step 6.4: Interactive Controls (`ui_controls.py`)
+#### Step 6.4: CLI-Driven Feature Selection
+FeatureWind uses **command-line arguments** for feature selection rather than interactive UI controls:
+
+```bash
+# Top-K feature selection (most influential features)
+python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --top-k 5
+python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --top-k all
+
+# Single feature selection (by name with partial matching)
+python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --feature "mean radius"
+python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --feature "texture"
+
+# List available features
+python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --list-features
+```
+
+**Benefits of CLI Approach:**
+- **Reproducibility**: Exact parameters can be saved and repeated
+- **Automation**: Can be integrated into batch processing workflows
+- **Performance**: No GUI overhead during computation
+- **Documentation**: Clear parameter specification in command history
+
+#### Step 6.5: Minimal UI Elements (`ui_controls.py`)
 ```python
 class UIController:
     def setup_ui_controls(self):
-        # Mode selection: Top-K vs Direction-Conditioned
-        ax_mode = self.fig.add_axes([0.05, 0.02, 0.25, 0.06])
-        self.mode_radio = RadioButtons(ax_mode, ('Top-K Mode', 'Direction-Conditioned Mode'))
-        
-        # Top-K mode: slider for number of features
-        ax_k = self.fig.add_axes([0.35, 0.02, 0.30, 0.03])
-        self.k_slider = Slider(ax_k, 'Top k Features', 1, len(self.col_labels), valinit=5)
-        
-        # Direction-Conditioned mode: angle and magnitude sliders
-        ax_angle = self.fig.add_axes([0.70, 0.06, 0.25, 0.03])
-        self.angle_slider = Slider(ax_angle, 'Direction (°)', 0, 360, valinit=0)
-        
-        ax_magnitude = self.fig.add_axes([0.70, 0.02, 0.25, 0.03])
-        self.magnitude_slider = Slider(ax_magnitude, 'Magnitude', 0.1, 2.0, valinit=1.0)
-```
+        """Setup minimal UI elements (CLI-driven approach)."""
+        single_feature_mode = getattr(self, 'single_feature_mode', False)
 
-#### Step 6.5: Direction-Conditioned Mode
-```python
-def optimize_features_for_constraints(self):
-    # User clicks grid cells and specifies desired flow direction
-    # Algorithm finds best feature combination to match constraints
-    
-    for step in range(max_features):
-        best_candidate = None
-        best_score = -float('inf')
-        
-        # Greedy forward selection: try adding each remaining feature
-        for feat_idx in remaining_features:
-            candidate_features = current_features + [feat_idx]
-            score = self.evaluate_feature_combination(candidate_features)
-            if score > best_score:
-                best_score = score
-                best_candidate = feat_idx
-        
-        if best_candidate and best_score > current_best:
-            current_features.append(best_candidate)
+        if single_feature_mode:
+            # Display the selected feature label
+            ax_feature_label = self.fig.add_axes([0.35, 0.02, 0.30, 0.03])
+            ax_feature_label.axis('off')
+            feature_name = getattr(self, 'single_feature_name', 'Unknown Feature')
+            ax_feature_label.text(
+                0.5, 0.5, f'Single Feature: {feature_name}',
+                ha='center', va='center', fontsize=11,
+                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.7)
+            )
         else:
-            break  # No improvement
-    
-    # Apply optimized feature combination
-    self.apply_feature_combination(current_features)
+            # Invisible placeholder for consistent layout
+            ax_k = self.fig.add_axes([0.35, 0.02, 0.30, 0.03])
+            ax_k.set_visible(False)
+        # No interactive sliders - feature selection is CLI-driven
 ```
 
-### **Phase 7: Advanced Features** (Recent Additions)
+**Key Design Decision**: FeatureWind uses a **CLI-driven approach** rather than interactive UI controls. Feature selection is done via command-line arguments (`--top-k`, `--feature`) for reproducibility and automation.
+
+#### Step 6.6: Mouse Interaction System (`event_manager.py`)
+```python
+class EventManager:
+    def __init__(self, fig, ax1, ax2, ui_controller=None):
+        """Centralized event manager for reliable mouse interactions."""
+        self.fig = fig
+        self.ax1 = ax1  # Main plot axis
+        self.ax2 = ax2  # Wind vane axis
+        
+        # Event handling with debouncing
+        self.MOUSE_DEBOUNCE_MS = 16   # 60 FPS responsiveness
+        self.mouse_data = {'grid_cell': None, 'grid_res': 40}
+        
+    def on_mouse_move(self, event):
+        """Handle mouse movement for wind vane updates."""
+        if event.inaxes == self.ax1:  # Main plot area
+            # Convert mouse coordinates to grid cell
+            cell_i, cell_j = self.mouse_to_grid_cell(event.xdata, event.ydata)
+            self.mouse_data['grid_cell'] = (cell_i, cell_j)
+            
+            # Update wind vane to show local feature vectors
+            self.update_wind_vane_callback(self.mouse_data)
+```
+
+**Current Interaction**: Mouse movement over the main plot updates the **wind vane** to show local feature gradients at the cursor position.
+
+### **Phase 7: Advanced Features**
 
 #### Feature Family Clustering (`feature_clustering.py`)
 ```python
