@@ -8,4 +8,7 @@ from tangent map data representing gradients in feature space.
 __version__ = "0.1.0"
 __author__ = "Jiahao Xu"
 
-__all__ = []
+# Import main configuration
+from .config import *
+
+__all__ = ['config']

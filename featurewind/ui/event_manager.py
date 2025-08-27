@@ -117,7 +117,7 @@ class EventManager:
             return
         
         # Import config here to avoid circular imports
-        import config
+        from .. import config
         
         xmin, xmax, ymin, ymax = config.bounding_box
         grid_res = self.mouse_data['grid_res']
@@ -248,7 +248,7 @@ def create_reliable_event_system(fig, ax1, ax2, ui_controller, system, col_label
     def wind_vane_update_callback(mouse_data):
         """Callback for updating wind vane with family-based colors."""
         try:
-            import visualization_core
+            from ..visualization import visualization_core
             # Check if family assignments are stored in system
             family_assignments = system.get('family_assignments', None)
             

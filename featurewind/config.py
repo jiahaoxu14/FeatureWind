@@ -15,7 +15,7 @@ bounding_box = None  # Will be computed dynamically
 real_feature_rgba = {}  # Feature to RGBA mapping for particles
 
 # Default grid resolution
-DEFAULT_GRID_RES = 10
+DEFAULT_GRID_RES = 15
 
 # Particle system parameters
 DEFAULT_NUM_PARTICLES = 1200  # Reduced from 2000 for better performance
@@ -81,9 +81,9 @@ DEFAULT_ANGLE = 0.0  # degrees
 DEFAULT_MAGNITUDE = 1.0
 TEMPERATURE_SOFTMAX = 2.0  # Temperature for soft dominance computation
 
-# File paths (relative to examples directory)
-DEFAULT_TANGENT_MAP = 'tangentmaps/breast_cancer.tmap'
-DEFAULT_OUTPUT_DIR = '../output'
+# File paths (relative to project root)
+DEFAULT_TANGENT_MAP = 'data/tangentmaps/breast_cancer.tmap'
+DEFAULT_OUTPUT_DIR = 'output'
 
 # Feature selection limits
 MAX_FEATURES_WITH_COLORS = 6  # Only top 6 features get distinct colors

@@ -10,7 +10,7 @@ import numpy as np
 from scipy.interpolate import griddata, RegularGridInterpolator
 from scipy.spatial import cKDTree
 from scipy.ndimage import gaussian_filter, binary_closing
-import config
+from .. import config
 
 
 def compute_adaptive_threshold(positions, kdtree, percentile=None):

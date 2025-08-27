@@ -8,7 +8,7 @@ Enhanced with family-based coloring system.
 
 import numpy as np
 from matplotlib.collections import LineCollection
-import config
+from .. import config
 
 
 def create_particles(num_particles=None, cell_dominant_features=None, grid_res=None):
@@ -562,7 +562,7 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
         return particle_colors
     
     # Import color utilities
-    from color_system import hex_to_rgb
+    from ..visualization.color_system import hex_to_rgb
     
     # Pre-compute maximum magnitudes for each feature (cache for efficiency)
     max_magnitudes = {}
@@ -674,7 +674,7 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
     system['last_velocity'] = velocity
 
     # Get colors for particles based on mode
-    import config
+    from .. import config
     single_feature_mode = hasattr(config, 'adaptive_velocity_enabled') and hasattr(config, 'k') and config.k == 1
     
     if single_feature_mode:
@@ -692,7 +692,7 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
             
             # Convert hex to RGB if needed
             if isinstance(single_feature_color, str) and single_feature_color.startswith('#'):
-                import color_system
+                from ..visualization import color_system
                 r, g, b = color_system.hex_to_rgb(single_feature_color)
             else:
                 r, g, b = single_feature_color[:3] if len(single_feature_color) >= 3 else (0, 0, 0)

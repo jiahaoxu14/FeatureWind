@@ -5,7 +5,7 @@ Output the results in a JSON format.
 '''
 import numpy as np
 import sys
-import DimReader
+from . import dim_reader as DimReader
 import json
 
 projections = DimReader.projections

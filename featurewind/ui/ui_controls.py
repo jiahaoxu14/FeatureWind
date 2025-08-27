@@ -5,7 +5,7 @@ Minimal UI for CLI-driven visualization. Provides an optional single-feature
 label or a hidden placeholder to keep layout consistent.
 """
 
-import config
+from .. import config
 
 
 class UIController:

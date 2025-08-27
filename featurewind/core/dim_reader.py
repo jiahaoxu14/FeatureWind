@@ -2,7 +2,7 @@ import sys
 # import DualNum
 import csv
 import numpy as np
-from tsne import tsne
+from .tsne import tsne
 import torch
 
 class ProjectionRunner:

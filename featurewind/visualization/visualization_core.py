@@ -9,7 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from scipy.spatial import ConvexHull
-import config
+from .. import config
 
 
 def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors, lc, 
@@ -444,7 +444,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 
                 # Import color utilities for family-based coloring
                 try:
-                    from color_system import hex_to_rgb
+                    from .color_system import hex_to_rgb
                     
                     # Use base color directly without lightness ramp to match particle colors
                     base_r, base_g, base_b = hex_to_rgb(base_color)
@@ -513,7 +513,7 @@ def setup_figure_layout():
     fig = plt.figure(figsize=(18, 10))
     
     # Apply professional background
-    from color_system import BACKGROUND_COLOR
+    from .color_system import BACKGROUND_COLOR
     fig.patch.set_facecolor(BACKGROUND_COLOR)
     
     # Create main subplots - leave space for legends on the left
@@ -536,7 +536,7 @@ def apply_professional_styling(fig, ax1, ax2):
         ax1: main plot axes
         ax2: wind vane axes
     """
-    from color_system import BACKGROUND_COLOR, GRID_COLOR, TEXT_COLOR
+    from .color_system import BACKGROUND_COLOR, GRID_COLOR, TEXT_COLOR
     
     # Set figure background
     fig.patch.set_facecolor(BACKGROUND_COLOR)

@@ -6,8 +6,8 @@ This module handles loading tangent map data, preprocessing, and feature selecti
 
 import json
 import numpy as np
-from featurewind.TangentPoint import TangentPoint
-import config
+from ..core.tangent_point import TangentPoint
+from .. import config
 
 
 def preprocess_tangent_map(tangent_map_path):

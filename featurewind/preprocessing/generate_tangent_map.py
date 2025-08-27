@@ -21,8 +21,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-# Add the source directory to the Python path to import featurewind modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Import from the new package structure
 
 
 def preprocess_data(input_file, target_column=None, normalize=True, output_prefix=None):
@@ -102,11 +101,11 @@ def generate_tangent_map(input_file, method='tsne'):
     """
     print(f"Generating tangent map using {method.upper()}...")
     
-    # Find the TangentMap.py script
-    script_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'featurewind', 'TangentMap.py')
+    # Find the tangent_map.py script
+    script_path = os.path.join(os.path.dirname(__file__), '..', 'core', 'tangent_map.py')
     
     if not os.path.exists(script_path):
-        raise FileNotFoundError(f"TangentMap.py not found at {script_path}")
+        raise FileNotFoundError(f"tangent_map.py not found at {script_path}")
     
     # Run the TangentMap.py script
     cmd = ['python', script_path, input_file, method]
@@ -118,7 +117,7 @@ def generate_tangent_map(input_file, method='tsne'):
         if result.stdout:
             print("Output:", result.stdout)
     except subprocess.CalledProcessError as e:
-        print(f"Error running TangentMap.py: {e}")
+        print(f"Error running tangent_map.py: {e}")
         if e.stderr:
             print("Error output:", e.stderr)
         raise

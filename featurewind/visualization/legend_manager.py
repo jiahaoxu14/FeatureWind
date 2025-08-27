@@ -51,7 +51,7 @@ def create_family_legend(fig, family_assignments, col_labels, feature_colors,
         if len(family_feature_indices) > 0:
             representative_color = feature_colors[family_feature_indices[0]]
         else:
-            from color_system import PAUL_TOL_FAMILIES
+            from .color_system import PAUL_TOL_FAMILIES
             representative_color = PAUL_TOL_FAMILIES[family_id % len(PAUL_TOL_FAMILIES)]
         
         # Create descriptive family name
@@ -120,14 +120,14 @@ def create_magnitude_legend(fig, sample_family_color=None, legend_position='magn
         matplotlib.axes.Axes: legend axes object
     """
     if sample_family_color is None:
-        from color_system import PAUL_TOL_FAMILIES
+        from .color_system import PAUL_TOL_FAMILIES
         sample_family_color = PAUL_TOL_FAMILIES[0]  # Use blue as default
     
     # Position below family legend
     ax_magnitude = fig.add_axes([0.02, 0.64, 0.18, 0.06])
     
     try:
-        from color_system import create_lightness_ramp
+        from .color_system import create_lightness_ramp
         
         # Create gradient from dark to light
         n_steps = 50
@@ -400,7 +400,7 @@ if __name__ == "__main__":
     col_labels = [f"feature_{i}" for i in range(n_features)]
     
     # Test with sample colors
-    from color_system import PAUL_TOL_FAMILIES, assign_family_colors
+    from .color_system import PAUL_TOL_FAMILIES, assign_family_colors
     feature_colors = assign_family_colors(family_assignments)
     
     # Create test figure

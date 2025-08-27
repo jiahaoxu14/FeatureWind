@@ -7,8 +7,8 @@ It orchestrates all the components: data processing, grid computation, particle 
 visualization, and UI controls.
 
 Usage:
-    python main_modular.py --tangent-map tangentmaps/breast_cancer.tmap --top-k 5
-    python main_modular.py --tangent-map tangentmaps/breast_cancer.tmap --feature "mean radius"
+    python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --top-k 5
+    python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --feature "mean radius"
 
 This script provides the same functionality as the original main.py but with
 improved modularity, maintainability, and extensibility.
@@ -16,20 +16,17 @@ improved modularity, maintainability, and extensibility.
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
-# Import all our modular components
-import config
-import data_processing
-import grid_computation
-import particle_system
-import visualization_core
-import ui_controls
+# Import all our modular components from the new structure
+from featurewind import config
+from featurewind.preprocessing import data_processing
+from featurewind.physics import grid_computation, particle_system
+from featurewind.visualization import visualization_core
+from featurewind.ui import ui_controls
 
 
 def parse_arguments():
@@ -39,10 +36,10 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main_modular.py --tangent-map tangentmaps/breast_cancer.tmap --top-k 10
-  python main_modular.py --tangent-map tangentmaps/breast_cancer.tmap --top-k all
-  python main_modular.py --tangent-map tangentmaps/breast_cancer.tmap --feature "mean radius"
-  python main_modular.py --tangent-map tangentmaps/breast_cancer.tmap --list-features
+  python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --top-k 10
+  python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --top-k all
+  python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --feature "mean radius"
+  python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --list-features
         """
     )
     
@@ -88,8 +85,8 @@ def main():
     # Initialize configuration
     config.initialize_global_state()
     
-    # Setup paths relative to repository root
-    repo_root = os.path.join(os.path.dirname(__file__), '..')
+    # Setup paths relative to repository root (main_modular.py is now at project root)
+    repo_root = os.path.dirname(__file__)
     
     # Determine tangent map path (CLI required; no legacy fallback)
     tangent_map_path = args.tangent_map
@@ -273,8 +270,8 @@ def main():
     # Step 4: Feature clustering and family-based color assignment
     
     # Import the new clustering and color modules
-    import feature_clustering
-    import color_system
+    from featurewind.analysis import feature_clustering
+    from featurewind.visualization import color_system
     
     # Determine number of families: use actual count if ≤6, otherwise fix to 6
     n_features = len(col_labels)
@@ -330,7 +327,7 @@ def main():
     visualization_core.apply_professional_styling(fig, ax1, ax2)
     
     # Create comprehensive legend system
-    import legend_manager
+    from featurewind.visualization import legend_manager
     legend_axes = legend_manager.create_comprehensive_legend(
         fig, family_assignments, col_labels, feature_colors, 
         legend_position='upper_left', show_instructions=False
@@ -375,7 +372,7 @@ def main():
         ui_controller.single_feature_idx = grad_indices[0]
     
     # Setup reliable mouse interactions using the enhanced event system
-    import event_manager
+    from featurewind.ui import event_manager
     
     # Create reliable event handling system with family colors
     event_mgr = event_manager.create_reliable_event_system(

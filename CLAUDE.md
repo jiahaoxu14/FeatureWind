@@ -15,7 +15,8 @@ Main Python package containing utilities for tangent map generation and data str
 - `TangentMap.py`: Generates tangent maps using dimensionality reduction (t-SNE, UMAP, etc.) with gradient computation
 - `ScalarField.py`: Reconstructs scalar fields from point gradients using finite element methods
 - `TangentPoint.py` & `TangentPointSet.py`: Data structures for managing tangent map points and their properties
-- `DimReader.py`: Handles dimensionality reduction with gradient computation using PyTorch autograd
+- `DimReader.py`: **Core gradient computation engine** - handles dimensionality reduction with PyTorch autograd for feature gradients
+- `tsne.py`: PyTorch-based t-SNE implementation with automatic differentiation support
 
 ### **Examples Directory** (`examples/`)
 Contains both legacy and modular visualization implementations:
@@ -42,6 +43,10 @@ Contains both legacy and modular visualization implementations:
 ### **Data Directories**
 - `tangentmaps/`: Pre-generated `.tmap` files containing processed tangent map data
 - `output/`: Generated visualization files, animation frames, and CSV exports
+
+### **Documentation** (`docs/`)
+- `featurewind_visualization_research_paper.md`: Technical research paper on the visualization methodology
+- `gradient_computation_analysis.md`: Detailed analysis of feature gradient computation using PyTorch autograd
 
 ## Common Development Commands
 
@@ -84,12 +89,17 @@ targets = data['target']  # Optional categorical labels
 normalized_features = (features - features.min()) / (features.max() - features.min())
 ```
 
-#### Step 1.3: Tangent Map Generation (`TangentMap.py`)
+#### Step 1.3: Tangent Map Generation (`TangentMap.py` + `DimReader.py`)
 ```python
-# Apply dimensionality reduction with gradient tracking
-# Uses PyTorch autograd to compute gradients through t-SNE/UMAP
-embedding_2d, gradients = compute_embedding_with_gradients(normalized_features)
-# Save as .tmap file: {"tmap": [...], "Col_labels": [...]}
+# Apply dimensionality reduction with gradient tracking using two-stage process:
+# Stage 1: Complete t-SNE optimization without gradients (efficiency)
+# Stage 2: Single iteration with PyTorch autograd enabled for gradient computation
+pj = DimReader.ProjectionRunner(projection, params)
+pj.calculateValues(points)  # Computes 2D embedding + full Jacobian matrix
+
+# Extract gradients: ∂(x,y)/∂(feature_i) for each point and feature
+gradients = pj.grads  # Shape: (n_points, 2, n_features)
+jacobian = pj.jacobian  # Full 2n × d Jacobian matrix for advanced operations
 ```
 
 **Output**: `.tmap` files containing 2D projections + gradient vectors for each point
@@ -615,11 +625,13 @@ def update_particle_visualization(system, velocity):
 ## **Dependencies and Requirements**
 
 The project requires:
-- **PyTorch**: Automatic differentiation for gradient computation through dimensionality reduction
+- **PyTorch**: **Critical dependency** - automatic differentiation for gradient computation through dimensionality reduction
 - **NumPy/SciPy**: Numerical operations, interpolation, spatial data structures
 - **Matplotlib**: Visualization, animation, interactive widgets
 - **Scikit-learn**: Data preprocessing, normalization
 - **Optional: colorcet**: Enhanced color palettes for feature visualization
+
+**Key Note**: PyTorch is essential for the gradient computation pipeline. The `DimReader.py` module specifically requires `torch.autograd.grad()` and `requires_grad=True` tensors to compute feature gradients through the t-SNE optimization process.
 
 ## **Performance Considerations**
 
@@ -661,3 +673,19 @@ config.DEFAULT_NUM_PARTICLES = 1200  # More particles for denser visualization
 3. **Feature Competition**: Wind vane shows competing influences at boundaries
 4. **Stability**: Consistent patterns indicate reliable dimensionality reduction
 5. **Outliers**: Isolated flow patterns may indicate data anomalies
+
+## **Gradient Computation Technical Details**
+
+For detailed technical analysis of how feature gradients are computed using PyTorch automatic differentiation, see `docs/gradient_computation_analysis.md`. Key technical points:
+
+### **Mathematical Foundation**
+- **Jacobian Matrix**: Each point has a 2×d Jacobian J where J[i,j] = ∂(embedding_coordinate_i)/∂(feature_j)
+- **Two-Stage Process**: Full t-SNE optimization (no grad) + single iteration with gradients (efficiency)  
+- **Automatic Differentiation**: `torch.autograd.grad()` computes exact gradients through t-SNE computation graph
+- **Metric Tensor Operations**: Advanced geometric operations available via `compute_metric_tensor()` and `pushforward_vector()`
+
+### **Implementation Notes**
+- **Memory**: O(2n × d) storage for full Jacobian matrix
+- **Computation**: O(n × d) autograd calls per tangent map generation
+- **Numerical Stability**: Uses `retain_graph=True` and careful tensor management
+- **Error Handling**: Robust gradient computation with fallback mechanisms
