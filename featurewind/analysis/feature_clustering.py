@@ -69,7 +69,11 @@ def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families
             cosine_sim = np.sum(unit_i * unit_j, axis=-1)  # (grid_res, grid_res)
             
             # Average cosine similarity over valid regions
-            avg_similarity = np.mean(cosine_sim[valid_mask])
+            valid_cosine_values = cosine_sim[valid_mask]
+            if len(valid_cosine_values) > 0:
+                avg_similarity = np.mean(valid_cosine_values)
+            else:
+                avg_similarity = 0.0  # Default similarity for empty regions
             
             # Ensure similarity is non-negative (handle numerical issues)
             avg_similarity = max(0.0, avg_similarity)
@@ -125,10 +129,17 @@ def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families
             family_similarities = similarity_matrix[np.ix_(family_mask, family_mask)]
             # Average similarity within this family (excluding diagonal)
             mask = ~np.eye(family_similarities.shape[0], dtype=bool)
-            avg_within_similarity = np.mean(family_similarities[mask])
+            within_values = family_similarities[mask]
+            if len(within_values) > 0:
+                avg_within_similarity = np.mean(within_values)
+            else:
+                avg_within_similarity = 0.0
             within_cluster_similarities.append(avg_within_similarity)
     
-    clustering_metrics['avg_within_cluster_similarity'] = np.mean(within_cluster_similarities)
+    if within_cluster_similarities:
+        clustering_metrics['avg_within_cluster_similarity'] = np.mean(within_cluster_similarities)
+    else:
+        clustering_metrics['avg_within_cluster_similarity'] = 0.0
     
     # Compute between-cluster similarity (lower is better for separation)
     between_cluster_similarities = []
@@ -138,10 +149,14 @@ def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families
             mask_j = (family_assignments == j)
             if np.sum(mask_i) > 0 and np.sum(mask_j) > 0:
                 between_similarities = similarity_matrix[np.ix_(mask_i, mask_j)]
-                avg_between_similarity = np.mean(between_similarities)
-                between_cluster_similarities.append(avg_between_similarity)
+                if between_similarities.size > 0:
+                    avg_between_similarity = np.mean(between_similarities)
+                    between_cluster_similarities.append(avg_between_similarity)
     
-    clustering_metrics['avg_between_cluster_similarity'] = np.mean(between_cluster_similarities)
+    if between_cluster_similarities:
+        clustering_metrics['avg_between_cluster_similarity'] = np.mean(between_cluster_similarities)
+    else:
+        clustering_metrics['avg_between_cluster_similarity'] = 0.0
     
     # Print results
     unique_families, family_counts = np.unique(family_assignments, return_counts=True)
@@ -238,7 +253,10 @@ def analyze_feature_families(family_assignments, col_labels, similarity_matrix=N
         # Find representative feature (most similar to others in family)
         if similarity_matrix is not None and family_size > 1:
             family_similarities = similarity_matrix[np.ix_(family_indices, family_indices)]
-            avg_similarities = np.mean(family_similarities, axis=1)
+            if family_similarities.size > 0:
+                avg_similarities = np.mean(family_similarities, axis=1)
+            else:
+                avg_similarities = np.zeros(len(family_indices))
             representative_idx = family_indices[np.argmax(avg_similarities)]
             representative_name = col_labels[representative_idx]
             analysis['family_representatives'][family_id] = representative_name

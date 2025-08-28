@@ -17,9 +17,13 @@ improved modularity, maintainability, and extensibility.
 import sys
 import os
 import argparse
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+
+# Suppress all runtime warnings from scipy and numpy that don't affect functionality
+warnings.simplefilter('ignore', RuntimeWarning)
 
 # Import all our modular components from the new structure
 from featurewind import config
