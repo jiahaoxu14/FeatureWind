@@ -6,21 +6,21 @@ Generate a double helix with 200 points for FeatureWind case study.
 import numpy as np
 import pandas as pd
 
-def generate_double_helix_200():
-    """Generate 200 points forming a double helix structure."""
+def generate_double_helix_500():
+    """Generate 500 points forming a double helix structure with clear spatial structure."""
     
     # Parameters for the double helix
-    n_points = 200
-    n_per_helix = n_points // 2  # 100 points per helix
+    n_points = 500
+    n_per_helix = n_points // 2  # 250 points per helix
     
-    # Generate parameter t for the helix (4 full turns)
-    t1 = np.linspace(0, 4 * np.pi, n_per_helix)  # First helix
-    t2 = np.linspace(0, 4 * np.pi, n_per_helix)  # Second helix
+    # Generate parameter t for the helix (6 full turns for more structure)
+    t1 = np.linspace(0, 6 * np.pi, n_per_helix)  # First helix
+    t2 = np.linspace(0, 6 * np.pi, n_per_helix)  # Second helix
     
     # First helix (label = 0)
     x1 = np.cos(t1)
     y1 = np.sin(t1)
-    z1 = t1 / (2 * np.pi)  # Rising helix from 0 to 2
+    z1 = t1 / (2 * np.pi)  # Rising helix from 0 to 3
     labels1 = np.zeros(n_per_helix)
     
     # Second helix (label = 1) - phase shifted by π
@@ -51,11 +51,11 @@ def generate_double_helix_200():
 def main():
     """Generate and save the double helix dataset."""
     
-    print("Generating double helix with 200 points...")
-    df = generate_double_helix_200()
+    print("Generating double helix with 500 points...")
+    df = generate_double_helix_500()
     
     # Save to CSV
-    output_file = "double_helix_200.csv"
+    output_file = "double_helix_500.csv"
     df.to_csv(output_file, index=False)
     
     print(f"Dataset saved to: {output_file}")

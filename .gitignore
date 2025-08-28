@@ -43,6 +43,7 @@ output/
 *.gif
 *.mp4
 *.csv
+*.tmap
 
 # Jupyter Notebook
 .ipynb_checkpoints
