@@ -309,7 +309,8 @@ def density_aware_reseed(system, grid_res):
 
 def reinitialize_particles(system):
     """
-    Reinitialize out-of-bounds or over-age particles.
+    Reinitialize out-of-bounds, over-age, or particles in masked regions.
+    Respawn particles in areas with valid flow to avoid immediate re-masking.
     
     Args:
         system (dict): Particle system dictionary
@@ -321,14 +322,44 @@ def reinitialize_particles(system):
     
     xmin, xmax, ymin, ymax = config.bounding_box
     
+    # Get dominant features for all particles to detect masked regions
+    dominant_features = get_dominant_features_vectorized(pp, system)
+    
+    # Create a list of valid respawn locations (cells with flow)
+    valid_respawn_locations = []
+    if 'cell_dominant_features' in system:
+        cell_dominant_features = system['cell_dominant_features']
+        grid_res = cell_dominant_features.shape[0]
+        
+        # Find all grid cells that have valid flow (not -1)
+        for i in range(grid_res):
+            for j in range(grid_res):
+                if cell_dominant_features[i, j] != -1:
+                    # Convert grid cell to world coordinates (cell center)
+                    x_center = xmin + (j + 0.5) / grid_res * (xmax - xmin)
+                    y_center = ymin + (i + 0.5) / grid_res * (ymax - ymin)
+                    valid_respawn_locations.append([x_center, y_center])
+    
+    # Fallback: if no valid locations found, use random positions
+    if not valid_respawn_locations:
+        valid_respawn_locations = [[np.random.uniform(xmin, xmax), np.random.uniform(ymin, ymax)] for _ in range(10)]
+    
     for i in range(len(pp)):
         x, y = pp[i]
+        # Check for out-of-bounds, over-age, or in masked region (dominant_features == -1)
         if (x < xmin or x > xmax or y < ymin or y > ymax
-            or lt[i] > max_lifetime):
-            pp[i] = [
-                np.random.uniform(xmin, xmax),
-                np.random.uniform(ymin, ymax)
-            ]
+            or lt[i] > max_lifetime
+            or dominant_features[i] == -1):
+            
+            # Choose a random valid location with some jitter
+            base_location = valid_respawn_locations[np.random.randint(len(valid_respawn_locations))]
+            jitter_x = np.random.uniform(-0.1, 0.1) * (xmax - xmin) / 40  # Small jitter
+            jitter_y = np.random.uniform(-0.1, 0.1) * (ymax - ymin) / 40
+            
+            new_x = np.clip(base_location[0] + jitter_x, xmin, xmax)
+            new_y = np.clip(base_location[1] + jitter_y, ymin, ymax)
+            
+            pp[i] = [new_x, new_y]
             his[i] = pp[i]
             lt[i] = 0
 
@@ -553,11 +584,11 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
             max_speed = speeds.max() + 1e-9
             normalized_speeds = speeds / max_speed
             
-            # Vectorized intensity calculation
-            particle_colors[:, 3] = 0.3 + 0.7 * normalized_speeds  # Alpha only
-            # RGB stays 0 for black
+            # Use blue color instead of black to avoid gray particles
+            particle_colors[:, :3] = [0.2, 0.4, 0.8]  # Blue RGB
+            particle_colors[:, 3] = 0.3 + 0.7 * normalized_speeds  # Alpha based on speed
         else:
-            particle_colors[:] = [0, 0, 0, 0.5]  # Default black with 50% alpha
+            particle_colors[:] = [0.2, 0.4, 0.8, 0.5]  # Default blue with 50% alpha
         
         return particle_colors
     
@@ -635,9 +666,20 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
             particle_colors[particle_indices, :3] = rgb
             particle_colors[particle_indices, 3] = alphas
     
-    # Handle invalid features with neutral gray
+    # Handle invalid features: respawn these particles immediately instead of coloring gray
     invalid_mask = ~valid_feature_mask
-    particle_colors[invalid_mask] = [0.5, 0.5, 0.5, 0.3]
+    if np.any(invalid_mask):
+        # Force immediate respawn by setting lifetime to exceed max
+        invalid_indices = np.where(invalid_mask)[0]
+        for idx in invalid_indices:
+            system['particle_lifetimes'][idx] = system['max_lifetime'] + 1
+        
+        # For this frame, give them a temporary feature color to avoid gray
+        if len(feature_colors) > 0:
+            # Use the first available feature color as temporary
+            temp_rgb = hex_to_rgb(feature_colors[0])
+            particle_colors[invalid_mask, :3] = temp_rgb
+            particle_colors[invalid_mask, 3] = 0.5  # Medium alpha
     
     return particle_colors
 
@@ -712,11 +754,11 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
         # Multi-feature mode - use family-based coloring
         particle_colors = update_particle_colors_family_based(system, family_assignments, feature_colors)
     else:
-        # Fallback: speed-based grayscale coloring  
+        # Fallback: use blue coloring instead of grayscale to avoid gray particles
         particle_colors = np.zeros((n_active, 4))
         for i in range(n_active):
             intensity = 0.3 + 0.7 * (speeds[i] / max_speed)
-            particle_colors[i] = [0, 0, 0, intensity]  # Black with speed-based alpha
+            particle_colors[i] = [0.2, 0.4, 0.8, intensity]  # Blue with speed-based alpha
 
     # Build trail segments with family-based colors
     for i in range(n_active):
@@ -941,6 +983,9 @@ def update_particles(system, interp_u_sum=None, interp_v_sum=None,
     # Density/divergence-aware reseeding for temporal coherence
     if grid_res is not None:
         density_aware_reseed(system, grid_res)
+
+    # Recalculate velocity after particle repositioning to ensure correct coloring
+    velocity = get_velocity(pp)
 
     # Update visualization with adaptive appearance
     # Extract grad_indices from system if available for single feature mode color alignment
