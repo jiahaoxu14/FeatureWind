@@ -584,11 +584,11 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
             max_speed = speeds.max() + 1e-9
             normalized_speeds = speeds / max_speed
             
-            # Use blue color instead of black to avoid gray particles
-            particle_colors[:, :3] = [0.2, 0.4, 0.8]  # Blue RGB
-            particle_colors[:, 3] = 0.3 + 0.7 * normalized_speeds  # Alpha based on speed
+            # Vectorized intensity calculation
+            particle_colors[:, 3] = 0.3 + 0.7 * normalized_speeds  # Alpha only
+            # RGB stays 0 for black
         else:
-            particle_colors[:] = [0.2, 0.4, 0.8, 0.5]  # Default blue with 50% alpha
+            particle_colors[:] = [0, 0, 0, 0.5]  # Default black with 50% alpha
         
         return particle_colors
     
@@ -666,20 +666,29 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
             particle_colors[particle_indices, :3] = rgb
             particle_colors[particle_indices, 3] = alphas
     
-    # Handle invalid features: respawn these particles immediately instead of coloring gray
+    # Handle invalid features: mark for respawn but color them reasonably for this frame
     invalid_mask = ~valid_feature_mask
     if np.any(invalid_mask):
-        # Force immediate respawn by setting lifetime to exceed max
+        # Mark these particles for respawn by exceeding their lifetime
         invalid_indices = np.where(invalid_mask)[0]
         for idx in invalid_indices:
             system['particle_lifetimes'][idx] = system['max_lifetime'] + 1
         
-        # For this frame, give them a temporary feature color to avoid gray
+        # For this frame, assign them the color of the nearest valid feature to avoid gray
         if len(feature_colors) > 0:
-            # Use the first available feature color as temporary
-            temp_rgb = hex_to_rgb(feature_colors[0])
-            particle_colors[invalid_mask, :3] = temp_rgb
-            particle_colors[invalid_mask, 3] = 0.5  # Medium alpha
+            # Use the most common feature color as fallback
+            if len(valid_indices) > 0:
+                # Find the most frequent valid feature
+                valid_features = dominant_features[valid_indices]
+                most_common_feature = np.bincount(valid_features).argmax()
+                fallback_color = feature_colors[most_common_feature]
+            else:
+                # Use first feature color as fallback
+                fallback_color = feature_colors[0]
+            
+            fallback_rgb = hex_to_rgb(fallback_color)
+            particle_colors[invalid_mask, :3] = fallback_rgb
+            particle_colors[invalid_mask, 3] = 0.3  # Low alpha to indicate they're being respawned
     
     return particle_colors
 
@@ -754,11 +763,11 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
         # Multi-feature mode - use family-based coloring
         particle_colors = update_particle_colors_family_based(system, family_assignments, feature_colors)
     else:
-        # Fallback: use blue coloring instead of grayscale to avoid gray particles
+        # Fallback: speed-based grayscale coloring  
         particle_colors = np.zeros((n_active, 4))
         for i in range(n_active):
             intensity = 0.3 + 0.7 * (speeds[i] / max_speed)
-            particle_colors[i] = [0.2, 0.4, 0.8, intensity]  # Blue with speed-based alpha
+            particle_colors[i] = [0, 0, 0, intensity]  # Black with speed-based alpha
 
     # Build trail segments with family-based colors
     for i in range(n_active):
