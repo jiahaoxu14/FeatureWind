@@ -12,6 +12,72 @@ from scipy.spatial import ConvexHull
 from .. import config
 
 
+def highlight_unmasked_cells(ax, system, grid_res=None, valid_points=None):
+    """
+    Highlight unmasked cells in the main plot to show where particles can flow.
+    
+    Args:
+        ax: Matplotlib axes object
+        system: Particle system dictionary containing grid data
+        grid_res: Grid resolution
+        valid_points: List of valid TangentPoint objects to check for data points
+    """
+    if grid_res is None:
+        grid_res = config.DEFAULT_GRID_RES
+        
+    xmin, xmax, ymin, ymax = config.bounding_box
+    
+    # Get cell dimensions
+    dx = (xmax - xmin) / grid_res
+    dy = (ymax - ymin) / grid_res
+    
+    # Check if we have the grid data
+    if 'grid_u_sum' not in system or 'grid_v_sum' not in system:
+        return
+        
+    grid_u_sum = system['grid_u_sum']
+    grid_v_sum = system['grid_v_sum']
+    
+    # Calculate sum magnitude for each cell (same logic as wind vane)
+    sum_magnitudes = np.sqrt(grid_u_sum**2 + grid_v_sum**2)
+    
+    # Create a grid to track which cells contain data points
+    cells_with_data = np.zeros((grid_res, grid_res), dtype=bool)
+    
+    if valid_points:
+        for point in valid_points:
+            x, y = point.position
+            # Convert to grid indices
+            if xmin <= x <= xmax and ymin <= y <= ymax:
+                j = int((x - xmin) / dx)
+                i = int((y - ymin) / dy)
+                # Clamp to valid range
+                i = max(0, min(i, grid_res - 1))
+                j = max(0, min(j, grid_res - 1))
+                cells_with_data[i, j] = True
+    
+    # Use same threshold as wind vane for consistency - less aggressive threshold
+    # But NEVER mask cells that contain data points
+    threshold = 1e-6
+    unmasked_cells = (sum_magnitudes > threshold) | cells_with_data
+    
+    # Create semi-transparent overlay for unmasked cells
+    for i in range(grid_res):
+        for j in range(grid_res):
+            if unmasked_cells[i, j]:
+                # Calculate cell boundaries (cell-center grid)
+                x_left = xmin + j * dx
+                x_right = xmin + (j + 1) * dx
+                y_bottom = ymin + i * dy
+                y_top = ymin + (i + 1) * dy
+                
+                # Add green rectangle overlay
+                rect = Rectangle((x_left, y_bottom), dx, dy, 
+                               facecolor='green', alpha=0.1, edgecolor='green', 
+                               linewidth=0.5, zorder=2)
+                ax.add_patch(rect)
+
+
 def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors, lc, 
                   all_positions=None, all_grad_vectors=None, grid_res=None):
     """
@@ -211,9 +277,9 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
     sum_vector = np.sum(vectors_selected, axis=0) if vectors_selected else np.array([0, 0])
     sum_magnitude = np.linalg.norm(sum_vector)
     
-    # Only show masked if the SUM has no flow (matching particle behavior)
-    # Use same threshold as particle system for consistency
-    is_masked_cell = sum_magnitude < 1e-12
+    # Only show masked if the SUM has very little flow (matching particle behavior)
+    # Use same threshold as particle system for consistency - less aggressive threshold
+    is_masked_cell = sum_magnitude < 1e-6
     
     # Show masked cell indication if the sum vector has no flow
     if is_masked_cell:

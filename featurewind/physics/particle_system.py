@@ -27,6 +27,9 @@ def create_particles(num_particles=None, cell_dominant_features=None, grid_res=N
         num_particles = config.DEFAULT_NUM_PARTICLES
         
     xmin, xmax, ymin, ymax = config.bounding_box
+    
+    # Initialize particles in valid (unmasked) positions only
+    # This will be updated later once system is fully initialized
     particle_positions = np.column_stack((
         np.random.uniform(xmin, xmax, size=num_particles),
         np.random.uniform(ymin, ymax, size=num_particles)
@@ -145,6 +148,76 @@ def euler_step(pos, dt, get_vel_func):
 
 
 
+def initialize_particles_in_unmasked_cells(system, valid_points=None):
+    """
+    Reinitialize all particles to start in unmasked cells only.
+    Called after system is fully set up with interpolation functions.
+    
+    Args:
+        system (dict): Particle system dictionary
+        valid_points: List of valid TangentPoint objects (optional)
+    """
+    pp = system['particle_positions']
+    his = system['histories']
+    
+    xmin, xmax, ymin, ymax = config.bounding_box
+    
+    # Helper function to check if position is near data points
+    def is_near_data_point(x, y, distance_threshold=0.1):
+        if valid_points:
+            for point in valid_points:
+                px, py = point.position
+                dist = np.sqrt((x - px)**2 + (y - py)**2)
+                if dist < distance_threshold:
+                    return True
+        return False
+    
+    # Helper function to get valid positions
+    def get_random_valid_position():
+        max_attempts = 50
+        
+        for attempt in range(max_attempts):
+            test_x = np.random.uniform(xmin, xmax)
+            test_y = np.random.uniform(ymin, ymax)
+            test_pos = np.array([[test_x, test_y]])
+            
+            # Always accept positions near data points
+            if is_near_data_point(test_x, test_y):
+                return test_x, test_y
+            
+            # Check if this position has flow (not masked)
+            if 'interp_u_sum' in system and 'interp_v_sum' in system:
+                try:
+                    interp_u_sum = system['interp_u_sum']
+                    interp_v_sum = system['interp_v_sum']
+                    u_val = interp_u_sum(test_pos)[0]
+                    v_val = interp_v_sum(test_pos)[0]
+                    sum_magnitude = np.sqrt(u_val**2 + v_val**2)
+                    
+                    if sum_magnitude > 1e-6:  # Same threshold as wind vane - less aggressive
+                        return test_x, test_y
+                except:
+                    pass
+            
+            # Fallback: check using dominant features
+            test_dominant = get_dominant_features_vectorized(test_pos, system)
+            if test_dominant[0] != -1:
+                return test_x, test_y
+        
+        # Fallback to center
+        return (xmin + xmax) / 2, (ymin + ymax) / 2
+    
+    # Reinitialize all particles
+    for i in range(len(pp)):
+        new_x, new_y = get_random_valid_position()
+        pp[i] = [new_x, new_y]
+        # Fill entire history with the new position
+        his[i, :, :] = pp[i]
+    
+    # Reset lifetimes
+    system['particle_lifetimes'].fill(0)
+
+
 def reinitialize_particles(system):
     """
     Reinitialize out-of-bounds, over-age, or particles in masked regions.
@@ -174,9 +247,26 @@ def reinitialize_particles(system):
             test_y = np.random.uniform(ymin, ymax)
             test_pos = np.array([[test_x, test_y]])
             
-            # Check if this position is in a valid (unmasked) region
-            test_dominant = get_dominant_features_vectorized(test_pos, system)
+            # Check if this position has flow (not masked)
+            # Use the same criterion as wind vane: sum magnitude > threshold
+            if 'grid_u_sum' in system and 'grid_v_sum' in system:
+                # Get velocity at test position
+                if 'interp_u_sum' in system and 'interp_v_sum' in system:
+                    try:
+                        interp_u_sum = system['interp_u_sum']
+                        interp_v_sum = system['interp_v_sum']
+                        u_val = interp_u_sum(test_pos)[0]
+                        v_val = interp_v_sum(test_pos)[0]
+                        sum_magnitude = np.sqrt(u_val**2 + v_val**2)
+                        
+                        if sum_magnitude > 1e-6:  # Same threshold as wind vane - less aggressive
+                            return test_x, test_y
+                    except:
+                        # Fallback to grid-based check
+                        pass
             
+            # Fallback: check using dominant features
+            test_dominant = get_dominant_features_vectorized(test_pos, system)
             if test_dominant[0] != -1:  # Found valid position
                 return test_x, test_y
         
@@ -186,10 +276,27 @@ def reinitialize_particles(system):
     
     for i in range(len(pp)):
         x, y = pp[i]
-        # Check for out-of-bounds or over-age particles
+        
+        # Check if particle is in a masked region (no flow)
+        in_masked_region = False
+        if 'interp_u_sum' in system and 'interp_v_sum' in system:
+            try:
+                interp_u_sum = system['interp_u_sum']
+                interp_v_sum = system['interp_v_sum']
+                test_pos = np.array([[x, y]])
+                u_val = interp_u_sum(test_pos)[0]
+                v_val = interp_v_sum(test_pos)[0]
+                sum_magnitude = np.sqrt(u_val**2 + v_val**2)
+                in_masked_region = sum_magnitude <= 1e-6
+            except:
+                # Fallback to dominant features
+                in_masked_region = dominant_features[i] == -1
+        else:
+            # Fallback to dominant features
+            in_masked_region = dominant_features[i] == -1
+        
         # Be more lenient with masked regions - only reinitialize if particle is stuck for a while
-        in_masked_region = dominant_features[i] == -1
-        stuck_in_masked_region = in_masked_region and lt[i] > max_lifetime * 0.3  # Only after 30% of lifetime
+        stuck_in_masked_region = in_masked_region and lt[i] > max_lifetime * 0.2  # After 20% of lifetime
         
         if (x < xmin or x > xmax or y < ymin or y > ymax
             or lt[i] > max_lifetime

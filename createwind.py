@@ -319,6 +319,9 @@ def main():
         'interp_argmax': interp_argmax
     })
     
+    # Initialize all particles in unmasked cells now that system is fully set up
+    particle_system.initialize_particles_in_unmasked_cells(system, valid_points)
+    
     # Step 6: Setup figure with professional styling and legends
     fig, ax1, ax2 = visualization_core.setup_figure_layout()
     
@@ -340,6 +343,9 @@ def main():
     lc = system['linecoll']
     visualization_core.prepare_figure(ax1, valid_points, col_labels, config.k, grad_indices, 
                                     feature_colors, lc, all_positions, all_grad_vectors, grid_res)
+    
+    # Highlight unmasked cells in the main plot
+    visualization_core.highlight_unmasked_cells(ax1, system, grid_res, valid_points)
     
     # Add wind strength indicator (hidden per user request)
     # import wind_strength_indicator
