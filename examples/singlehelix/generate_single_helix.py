@@ -18,7 +18,7 @@ def generate_single_helix(n_points=300):
     # Single helix coordinates
     x = np.cos(t)
     y = np.sin(t)  
-    z = t / (3.5 * np.pi)  # Rising helix from 0 to 4
+    z = t / (4 * np.pi)  # Rising helix from 0 to 4
     
     # Create labels - hardcode all points to label 0
     labels = np.zeros(n_points, dtype=int)

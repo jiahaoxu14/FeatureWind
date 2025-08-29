@@ -22,11 +22,6 @@ DEFAULT_NUM_PARTICLES = 1500  # Increased to ensure visible particle density
 PARTICLE_LIFETIME = 150  # frames - increased to reduce respawn frequency
 TAIL_LENGTH = 10  # number of position history points
 
-# Adaptive trail parameters
-ADAPTIVE_TRAIL_LENGTH = True
-MIN_TRAIL_LENGTH = 5
-MAX_TRAIL_LENGTH = 20
-BASE_TRAIL_LENGTH = 10
 
 # Animation parameters
 ANIMATION_FRAMES = 1000

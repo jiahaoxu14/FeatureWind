@@ -883,28 +883,6 @@ def update_particles_with_families(system, interp_u_sum=None, interp_v_sum=None,
     return result
 
 
-def compute_adaptive_trail_length(avg_velocity_magnitude):
-    """
-    Adjust trail length based on velocity magnitude for visibility.
-    
-    Args:
-        avg_velocity_magnitude: Average velocity magnitude
-        
-    Returns:
-        int: Adaptive trail length
-    """
-    if not config.ADAPTIVE_TRAIL_LENGTH:
-        return config.BASE_TRAIL_LENGTH
-    
-    # Longer trails for slower particles, shorter for faster
-    if avg_velocity_magnitude < 0.01:
-        return config.MAX_TRAIL_LENGTH
-    elif avg_velocity_magnitude < 0.05:
-        return int(config.BASE_TRAIL_LENGTH * 1.5)
-    elif avg_velocity_magnitude > 0.2:
-        return config.MIN_TRAIL_LENGTH
-    else:
-        return config.BASE_TRAIL_LENGTH
 
 
 def update_particles(system, interp_u_sum=None, interp_v_sum=None, 
@@ -975,29 +953,6 @@ def update_particles(system, interp_u_sum=None, interp_v_sum=None,
     # Use the current velocity after integration for accurate coloring
     velocity = final_velocity if final_velocity is not None else get_velocity(pp)
     
-    # Adaptive trail length based on velocity magnitude
-    if config.ADAPTIVE_TRAIL_LENGTH:
-        avg_velocity_mag = np.linalg.norm(velocity, axis=1).mean()
-        desired_trail_length = compute_adaptive_trail_length(avg_velocity_mag)
-        
-        # Resize history if needed
-        current_trail_length = his.shape[1] - 1
-        if desired_trail_length != current_trail_length:
-            # Create new history array with desired length
-            new_histories = np.full((len(pp), desired_trail_length + 1, 2), np.nan)
-            
-            # Copy as much existing history as possible
-            copy_length = min(current_trail_length, desired_trail_length)
-            if copy_length > 0:
-                new_histories[:, -(copy_length+1):] = his[:, -(copy_length+1):]
-            
-            # Ensure current position is preserved
-            new_histories[:, -1, :] = pp
-            
-            # Update system
-            system['histories'] = new_histories
-            system['tail_gap'] = desired_trail_length
-            his = new_histories
 
     # Shift history
     his[:, :-1, :] = his[:, 1:, :]
