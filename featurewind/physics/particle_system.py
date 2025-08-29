@@ -188,127 +188,6 @@ def adaptive_rk4_step(pos, target_dt, get_vel_func, grid_res=None, max_error=Non
     return rk4_result, dt, max_error_this_step, estimated_final_velocity
 
 
-def density_aware_reseed(system, grid_res):
-    """
-    Implement density and divergence-aware particle reseeding for temporal coherence.
-    
-    Args:
-        system (dict): Particle system dictionary
-        grid_res (int): Grid resolution
-    """
-    pp = system['particle_positions']
-    lt = system['particle_lifetimes']
-    his = system['histories']
-    max_lifetime = system['max_lifetime']
-    
-    xmin, xmax, ymin, ymax = config.bounding_box
-    
-    if len(pp) == 0:
-        return
-        
-    # Create density grid (coarser than flow field for efficiency)
-    density_res = max(8, grid_res // 4)  # Adaptive resolution
-    density_grid = np.zeros((density_res, density_res))
-    divergence_grid = np.zeros((density_res, density_res))
-    
-    # Compute particle density
-    for pos in pp:
-        if xmin <= pos[0] <= xmax and ymin <= pos[1] <= ymax:
-            grid_x = int((pos[0] - xmin) / (xmax - xmin) * (density_res - 1))
-            grid_y = int((pos[1] - ymin) / (ymax - ymin) * (density_res - 1))
-            grid_x = max(0, min(density_res - 1, grid_x))
-            grid_y = max(0, min(density_res - 1, grid_y))
-            density_grid[grid_y, grid_x] += 1
-    
-    # Compute flow divergence on density grid
-    for i in range(1, density_res - 1):
-        for j in range(1, density_res - 1):
-            # Map density grid coordinates to flow field coordinates
-            x = xmin + j / (density_res - 1) * (xmax - xmin)
-            y = ymin + i / (density_res - 1) * (ymax - ymin)
-            
-            # Sample velocity at neighboring points using our interpolators
-            h = min((xmax - xmin) / density_res, (ymax - ymin) / density_res)
-            try:
-                u_right = system['interp_u_sum']([[x + h, y]])[0]
-                u_left = system['interp_u_sum']([[x - h, y]])[0]
-                v_up = system['interp_v_sum']([[x, y + h]])[0]
-                v_down = system['interp_v_sum']([[x, y - h]])[0]
-                
-                # Compute divergence: div = du/dx + dv/dy
-                du_dx = (u_right - u_left) / (2 * h)
-                dv_dy = (v_up - v_down) / (2 * h)
-                divergence_grid[i, j] = du_dx + dv_dy
-            except:
-                divergence_grid[i, j] = 0.0
-    
-    # Target density (particles per cell)
-    total_particles = len(pp)
-    target_density = total_particles / (density_res * density_res)
-    
-    # Find cells that need reseeding (low density, especially in divergent regions)
-    reseed_candidates = []
-    remove_candidates = []
-    
-    for i in range(density_res):
-        for j in range(density_res):
-            current_density = density_grid[i, j]
-            div_factor = max(0, divergence_grid[i, j])  # Only consider divergent regions
-            
-            # Cells with low density and positive divergence need particles
-            if current_density < target_density * 0.7:
-                reseed_weight = (target_density - current_density) * (1 + div_factor * 0.5)
-                reseed_candidates.append((i, j, reseed_weight))
-            
-            # Cells with high density could lose particles
-            elif current_density > target_density * 1.5:
-                remove_candidates.append((i, j, current_density - target_density))
-    
-    # Limit reseeding to maintain temporal coherence (max 2% per frame)
-    max_reseed = int(config.MAX_RESEED_RATE * len(pp))
-    if max_reseed > 0 and reseed_candidates:
-        # Sort by reseeding weight
-        reseed_candidates.sort(key=lambda x: x[2], reverse=True)
-        
-        num_reseeded = 0
-        for i, j, weight in reseed_candidates:
-            if num_reseeded >= max_reseed:
-                break
-            
-            # Find a particle to respawn (prefer older particles in high-density regions)
-            candidate_particles = []
-            for idx, pos in enumerate(pp):
-                # Check if particle is in a high-density region or very old
-                px_grid = int((pos[0] - xmin) / (xmax - xmin) * (density_res - 1))
-                py_grid = int((pos[1] - ymin) / (ymax - ymin) * (density_res - 1))
-                px_grid = max(0, min(density_res - 1, px_grid))
-                py_grid = max(0, min(density_res - 1, py_grid))
-                
-                # Prefer particles from high-density regions or old particles
-                if (density_grid[py_grid, px_grid] > target_density * 1.3 or 
-                    lt[idx] > max_lifetime * 0.8):
-                    candidate_particles.append(idx)
-            
-            if candidate_particles:
-                # Choose particle to respawn (prefer oldest)
-                idx = max(candidate_particles, key=lambda x: lt[x])
-            else:
-                # Fallback: choose randomly from all particles
-                idx = np.random.randint(len(pp))
-            
-            # Respawn in the target cell with some jitter
-            cell_x = xmin + (j + np.random.uniform(-0.4, 0.4)) / (density_res - 1) * (xmax - xmin)
-            cell_y = ymin + (i + np.random.uniform(-0.4, 0.4)) / (density_res - 1) * (ymax - ymin)
-            
-            # Ensure within bounds
-            cell_x = max(xmin, min(xmax, cell_x))
-            cell_y = max(ymin, min(ymax, cell_y))
-            
-            pp[idx] = [cell_x, cell_y]
-            # Fill entire history with the new position
-            his[idx, :, :] = pp[idx]
-            lt[idx] = 0
-            num_reseeded += 1
 
 
 def reinitialize_particles(system):
@@ -892,10 +771,6 @@ def update_particles(system, interp_u_sum=None, interp_v_sum=None,
 
     # Reinitialize out-of-bounds or over-age particles
     reinitialize_particles(system)
-
-    # Density/divergence-aware reseeding for temporal coherence
-    if grid_res is not None:
-        density_aware_reseed(system, grid_res)
 
     # Recalculate velocity after particle repositioning to ensure correct coloring
     velocity = get_velocity(pp)

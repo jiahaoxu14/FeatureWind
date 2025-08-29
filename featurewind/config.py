@@ -19,9 +19,8 @@ DEFAULT_GRID_RES = 30
 
 # Particle system parameters
 DEFAULT_NUM_PARTICLES = 1500  # Increased to ensure visible particle density
-PARTICLE_LIFETIME = 150  # frames - increased to reduce respawn frequency
+PARTICLE_LIFETIME = 50  # frames - increased to reduce respawn frequency
 TAIL_LENGTH = 10  # number of position history points
-
 
 # Animation parameters
 ANIMATION_FRAMES = 1000
@@ -60,7 +59,6 @@ MIN_TIME_STEP = 1e-4
 MAX_TIME_STEP = 0.1
 CFL_NUMBER = 0.5  # For adaptive time stepping
 ERROR_TOLERANCE = 1e-3  # For RK4 error control
-MAX_RESEED_RATE = 0.01  # Maximum 1% particles reseeded per frame - reduced for stability
 MAX_SAFE_VELOCITY = 10.0  # Maximum velocity magnitude per frame to prevent runaway particles
 
 # UI and visualization parameters
