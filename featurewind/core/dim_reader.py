@@ -19,8 +19,10 @@ class ProjectionRunner:
         data = torch.tensor(points, dtype=torch.float32, requires_grad=True)
 
         # Usage for DimReader:
+        print("Step 1/3: Computing base t-SNE projection (999 iterations)...")
         with torch.no_grad():
             Y_base, params = tsne(data, 2, 999, 50, 20.0, save_params = True)
+        print("Step 2/3: Computing projection with gradients (1 iteration)...")
         Y, params = tsne(data, no_dims=2, maxIter = 1, initial_dims=50, perplexity=20.0, save_params = False,
                             initY = params[0], initBeta = params[2], betaTries = 50, initIY =params[1])
         
@@ -29,12 +31,16 @@ class ProjectionRunner:
         grads = []
         n_points, n_features = data.shape
 
+        print(f"Step 3/3: Computing gradients for {n_points} points...")
         # Initialize Jacobian matrix: J[2*i:2*i+2, :] = gradients for point i
         self.jacobian = torch.zeros(2 * n_points, n_features, dtype=torch.float32)
 
         for i in range(len(Y)):
-            # Compute gradients for x and y coordinates
-            print("Computing gradients for point %d" % (i))
+            # Show progress every 10% or every 50 points, whichever is more frequent
+            progress_interval = min(50, max(1, n_points // 10))
+            if i % progress_interval == 0 or i == n_points - 1:
+                progress_pct = (i + 1) / n_points * 100
+                print(f"  Computing gradients: {i+1}/{n_points} points ({progress_pct:.1f}%)")
             grad_x = torch.autograd.grad(Y[i, 0], data, retain_graph=True)[0][i]
             grad_y = torch.autograd.grad(Y[i, 1], data, retain_graph=True)[0][i]
             grads.append(torch.stack([grad_x, grad_y], dim=0))
@@ -48,6 +54,7 @@ class ProjectionRunner:
         
         # Store Jacobian as NumPy array for easier integration
         self.jacobian_numpy = self.jacobian.detach().numpy()
+        print("✓ Tangent map generation completed successfully!")
 
     def get_jacobian_for_point(self, point_idx):
         """Get the 2x d Jacobian matrix for a specific point."""

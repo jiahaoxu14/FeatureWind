@@ -115,7 +115,7 @@ def run_tangent_map_generation(feature_df, projection):
         # Use python -m approach from the project root to handle relative imports
         result = subprocess.run([
             sys.executable, "-m", "featurewind.core.tangent_map", temp_csv_path, projection
-        ], cwd=Path(__file__).parent, capture_output=True, text=True)
+        ], cwd=Path(__file__).parent, capture_output=False, text=True)
         
         if result.returncode != 0:
             print("Error running tangent map generation:")

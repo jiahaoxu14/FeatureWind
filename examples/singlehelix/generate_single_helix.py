@@ -5,12 +5,12 @@ Generate a single helix with 500 points for FeatureWind case study.
 
 import numpy as np
 import pandas as pd
+import sys
 
-def generate_single_helix_500():
-    """Generate 500 points forming a single helix structure with clear spatial progression."""
+def generate_single_helix(n_points=300):
+    """Generate n_points forming a single helix structure with clear spatial progression."""
     
     # Parameters for the single helix
-    n_points = 500
     
     # Generate parameter t for the helix (8 full turns for clear structure)
     t = np.linspace(0, 8 * np.pi, n_points)
@@ -18,19 +18,16 @@ def generate_single_helix_500():
     # Single helix coordinates
     x = np.cos(t)
     y = np.sin(t)  
-    z = t / (2 * np.pi)  # Rising helix from 0 to 4
+    z = t / (3.5 * np.pi)  # Rising helix from 0 to 4
     
-    # Create labels based on height progression for clear spatial structure
-    # This creates 4 distinct segments along the z-axis
-    labels = np.floor(z).astype(int)
-    # Ensure labels are in range [0, 3]
-    labels = np.clip(labels, 0, 3)
+    # Create labels - hardcode all points to label 0
+    labels = np.zeros(n_points, dtype=int)
     
-    # Add some noise to make the problem more interesting for gradient computation
-    noise_scale = 0.05
-    x += np.random.normal(0, noise_scale, n_points)
-    y += np.random.normal(0, noise_scale, n_points)
-    z += np.random.normal(0, noise_scale, n_points)
+    # # Add some noise to make the problem more interesting for gradient computation
+    # noise_scale = 0.05
+    # x += np.random.normal(0, noise_scale, n_points)
+    # y += np.random.normal(0, noise_scale, n_points)
+    # z += np.random.normal(0, noise_scale, n_points)
     
     # Create DataFrame
     df = pd.DataFrame({
@@ -48,11 +45,19 @@ def generate_single_helix_500():
 def main():
     """Generate and save the single helix dataset."""
     
-    print("Generating single helix with 500 points...")
-    df = generate_single_helix_500()
+    # Parse command line arguments
+    n_points = 300  # default
+    if len(sys.argv) > 1:
+        try:
+            n_points = int(sys.argv[1])
+        except ValueError:
+            print(f"Error: Invalid number of points '{sys.argv[1]}'. Using default {n_points}.")
+    
+    print(f"Generating single helix with {n_points} points...")
+    df = generate_single_helix(n_points)
     
     # Save to CSV
-    output_file = "examples/singlehelix/single_helix_500.csv"
+    output_file = f"examples/singlehelix/single_helix_{n_points}.csv"
     df.to_csv(output_file, index=False)
     
     print(f"Dataset saved to: {output_file}")
