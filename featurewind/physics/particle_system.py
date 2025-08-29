@@ -11,14 +11,16 @@ from matplotlib.collections import LineCollection
 from .. import config
 
 
-def create_particles(num_particles=None, cell_dominant_features=None, grid_res=None):
+def create_particles(num_particles=None, cell_dominant_features=None, grid_res=None, system=None, valid_points=None):
     """
-    Create a particle system for flow visualization.
+    Create a particle system for flow visualization with smart initialization in unmasked cells.
     
     Args:
         num_particles (int, optional): Number of particles to create
         cell_dominant_features (np.ndarray, optional): Dominant features per grid cell
         grid_res (int, optional): Grid resolution
+        system (dict, optional): Existing system with velocity fields for validation
+        valid_points (list, optional): List of valid TangentPoint objects
         
     Returns:
         dict: Particle system dictionary with positions, lifetimes, histories, etc.
@@ -28,12 +30,60 @@ def create_particles(num_particles=None, cell_dominant_features=None, grid_res=N
         
     xmin, xmax, ymin, ymax = config.bounding_box
     
-    # Initialize particles in valid (unmasked) positions only
-    # This will be updated later once system is fully initialized
-    particle_positions = np.column_stack((
-        np.random.uniform(xmin, xmax, size=num_particles),
-        np.random.uniform(ymin, ymax, size=num_particles)
-    ))
+    # Helper function to get valid positions in unmasked cells
+    def get_random_valid_position():
+        max_attempts = 50
+        
+        for attempt in range(max_attempts):
+            test_x = np.random.uniform(xmin, xmax)
+            test_y = np.random.uniform(ymin, ymax)
+            test_pos = np.array([[test_x, test_y]])
+            
+            # Always accept positions near data points
+            if valid_points and is_near_data_point(test_x, test_y, valid_points):
+                return test_x, test_y
+            
+            # Check if this position has flow (not masked)
+            if system and 'interp_u_sum' in system and 'interp_v_sum' in system:
+                try:
+                    interp_u_sum = system['interp_u_sum']
+                    interp_v_sum = system['interp_v_sum']
+                    u_val = interp_u_sum(test_pos)[0]
+                    v_val = interp_v_sum(test_pos)[0]
+                    sum_magnitude = np.sqrt(u_val**2 + v_val**2)
+                    
+                    if sum_magnitude > 1e-6:  # Same threshold as wind vane
+                        return test_x, test_y
+                except:
+                    pass
+            
+            # Fallback: check using dominant features
+            if cell_dominant_features is not None and grid_res is not None:
+                cell_j = int((test_x - xmin) / (xmax - xmin) * grid_res)
+                cell_i = int((test_y - ymin) / (ymax - ymin) * grid_res)
+                cell_i = max(0, min(grid_res - 1, cell_i))
+                cell_j = max(0, min(grid_res - 1, cell_j))
+                
+                if cell_dominant_features[cell_i, cell_j] != -1:
+                    return test_x, test_y
+        
+        # Fallback to center
+        return (xmin + xmax) / 2, (ymin + ymax) / 2
+    
+    # Helper function to check if position is near data points
+    def is_near_data_point(x, y, valid_points, distance_threshold=0.1):
+        if valid_points:
+            for point in valid_points:
+                px, py = point.position
+                dist = np.sqrt((x - px)**2 + (y - py)**2)
+                if dist < distance_threshold:
+                    return True
+        return False
+    
+    # Initialize particles in valid (unmasked) positions from the start
+    particle_positions = np.zeros((num_particles, 2))
+    for i in range(num_particles):
+        particle_positions[i] = get_random_valid_position()
 
     max_lifetime = config.PARTICLE_LIFETIME
     tail_gap = config.TAIL_LENGTH
@@ -48,7 +98,7 @@ def create_particles(num_particles=None, cell_dominant_features=None, grid_res=N
     lc = LineCollection([], linewidths=1.5, zorder=2)
 
     # Store everything in a dict
-    system = {
+    system_dict = {
         'particle_positions': particle_positions,
         'particle_lifetimes': particle_lifetimes,
         'histories': histories,
@@ -56,8 +106,14 @@ def create_particles(num_particles=None, cell_dominant_features=None, grid_res=N
         'max_lifetime': max_lifetime,
         'linecoll': lc,
     }
+    
+    # Copy over existing system data if provided
+    if system:
+        for key, value in system.items():
+            if key not in system_dict:
+                system_dict[key] = value
 
-    return system
+    return system_dict
 
 
 def get_velocity_at_positions(positions, system, interp_u_sum=None, interp_v_sum=None, 
@@ -148,79 +204,11 @@ def euler_step(pos, dt, get_vel_func):
 
 
 
-def initialize_particles_in_unmasked_cells(system, valid_points=None):
-    """
-    Reinitialize all particles to start in unmasked cells only.
-    Called after system is fully set up with interpolation functions.
-    
-    Args:
-        system (dict): Particle system dictionary
-        valid_points: List of valid TangentPoint objects (optional)
-    """
-    pp = system['particle_positions']
-    his = system['histories']
-    
-    xmin, xmax, ymin, ymax = config.bounding_box
-    
-    # Helper function to check if position is near data points
-    def is_near_data_point(x, y, distance_threshold=0.1):
-        if valid_points:
-            for point in valid_points:
-                px, py = point.position
-                dist = np.sqrt((x - px)**2 + (y - py)**2)
-                if dist < distance_threshold:
-                    return True
-        return False
-    
-    # Helper function to get valid positions
-    def get_random_valid_position():
-        max_attempts = 50
-        
-        for attempt in range(max_attempts):
-            test_x = np.random.uniform(xmin, xmax)
-            test_y = np.random.uniform(ymin, ymax)
-            test_pos = np.array([[test_x, test_y]])
-            
-            # Always accept positions near data points
-            if is_near_data_point(test_x, test_y):
-                return test_x, test_y
-            
-            # Check if this position has flow (not masked)
-            if 'interp_u_sum' in system and 'interp_v_sum' in system:
-                try:
-                    interp_u_sum = system['interp_u_sum']
-                    interp_v_sum = system['interp_v_sum']
-                    u_val = interp_u_sum(test_pos)[0]
-                    v_val = interp_v_sum(test_pos)[0]
-                    sum_magnitude = np.sqrt(u_val**2 + v_val**2)
-                    
-                    if sum_magnitude > 1e-6:  # Same threshold as wind vane - less aggressive
-                        return test_x, test_y
-                except:
-                    pass
-            
-            # Fallback: check using dominant features
-            test_dominant = get_dominant_features_vectorized(test_pos, system)
-            if test_dominant[0] != -1:
-                return test_x, test_y
-        
-        # Fallback to center
-        return (xmin + xmax) / 2, (ymin + ymax) / 2
-    
-    # Reinitialize all particles
-    for i in range(len(pp)):
-        new_x, new_y = get_random_valid_position()
-        pp[i] = [new_x, new_y]
-        # Fill entire history with the new position
-        his[i, :, :] = pp[i]
-    
-    # Reset lifetimes
-    system['particle_lifetimes'].fill(0)
 
 
 def reinitialize_particles(system):
     """
-    Reinitialize out-of-bounds, over-age, or particles in masked regions.
+    Immediately reinitialize out-of-bounds, over-age, or particles in masked regions.
     Uses random uniform distribution across all unmasked areas for even coverage.
     
     Args:
@@ -241,29 +229,26 @@ def reinitialize_particles(system):
         """Generate random positions until we find one in an unmasked area."""
         max_attempts = 50  # Prevent infinite loops
         
-        for attempt in range(max_attempts):
+        for _ in range(max_attempts):
             # Generate random position across entire domain
             test_x = np.random.uniform(xmin, xmax)
             test_y = np.random.uniform(ymin, ymax)
             test_pos = np.array([[test_x, test_y]])
             
             # Check if this position has flow (not masked)
-            # Use the same criterion as wind vane: sum magnitude > threshold
-            if 'grid_u_sum' in system and 'grid_v_sum' in system:
-                # Get velocity at test position
-                if 'interp_u_sum' in system and 'interp_v_sum' in system:
-                    try:
-                        interp_u_sum = system['interp_u_sum']
-                        interp_v_sum = system['interp_v_sum']
-                        u_val = interp_u_sum(test_pos)[0]
-                        v_val = interp_v_sum(test_pos)[0]
-                        sum_magnitude = np.sqrt(u_val**2 + v_val**2)
-                        
-                        if sum_magnitude > 1e-6:  # Same threshold as wind vane - less aggressive
-                            return test_x, test_y
-                    except:
-                        # Fallback to grid-based check
-                        pass
+            if 'interp_u_sum' in system and 'interp_v_sum' in system:
+                try:
+                    interp_u_sum = system['interp_u_sum']
+                    interp_v_sum = system['interp_v_sum']
+                    u_val = interp_u_sum(test_pos)[0]
+                    v_val = interp_v_sum(test_pos)[0]
+                    sum_magnitude = np.sqrt(u_val**2 + v_val**2)
+                    
+                    if sum_magnitude > 1e-6:  # Same threshold as wind vane
+                        return test_x, test_y
+                except:
+                    # Fallback to grid-based check
+                    pass
             
             # Fallback: check using dominant features
             test_dominant = get_dominant_features_vectorized(test_pos, system)
@@ -277,7 +262,13 @@ def reinitialize_particles(system):
     for i in range(len(pp)):
         x, y = pp[i]
         
-        # Check if particle is in a masked region (no flow)
+        # Check if particle is out of bounds (immediate respawn)
+        out_of_bounds = (x < xmin or x > xmax or y < ymin or y > ymax)
+        
+        # Check if particle is over age (immediate respawn)
+        over_age = lt[i] > max_lifetime
+        
+        # Check if particle is in a masked region (immediate respawn)
         in_masked_region = False
         if 'interp_u_sum' in system and 'interp_v_sum' in system:
             try:
@@ -295,13 +286,8 @@ def reinitialize_particles(system):
             # Fallback to dominant features
             in_masked_region = dominant_features[i] == -1
         
-        # Be more lenient with masked regions - only reinitialize if particle is stuck for a while
-        stuck_in_masked_region = in_masked_region and lt[i] > max_lifetime * 0.2  # After 20% of lifetime
-        
-        if (x < xmin or x > xmax or y < ymin or y > ymax
-            or lt[i] > max_lifetime
-            or stuck_in_masked_region):
-            
+        # Immediately respawn particles that are out of bounds, over age, or in masked regions
+        if out_of_bounds or over_age or in_masked_region:
             # Get a random position in an unmasked area
             new_x, new_y = get_random_valid_position()
             

@@ -302,12 +302,8 @@ def main():
                 r, g, b = color_system.hex_to_rgb(color_hex)
                 config.real_feature_rgba[feat_idx] = (r, g, b, 1.0)
     
-    # Step 5: Create particle system
-    system = particle_system.create_particles(
-        config.DEFAULT_NUM_PARTICLES, cell_dominant_features, grid_res)
-    
-    # Store grid data in system for access by UI and particles
-    system.update({
+    # Step 5: Create temporary system dict with velocity fields for smart particle initialization
+    temp_system = {
         'grid_u_sum': grid_u_sum,
         'grid_v_sum': grid_v_sum,
         'grid_u_all_feats': grid_u_all_feats,
@@ -317,10 +313,12 @@ def main():
         'interp_u_sum': interp_u_sum,
         'interp_v_sum': interp_v_sum,
         'interp_argmax': interp_argmax
-    })
+    }
     
-    # Initialize all particles in unmasked cells now that system is fully set up
-    particle_system.initialize_particles_in_unmasked_cells(system, valid_points)
+    # Create particle system with smart initialization in unmasked cells
+    system = particle_system.create_particles(
+        config.DEFAULT_NUM_PARTICLES, cell_dominant_features, grid_res, 
+        temp_system, valid_points)
     
     # Step 6: Setup figure with professional styling and legends
     fig, ax1, ax2 = visualization_core.setup_figure_layout()
@@ -344,7 +342,7 @@ def main():
     visualization_core.prepare_figure(ax1, valid_points, col_labels, config.k, grad_indices, 
                                     feature_colors, lc, all_positions, all_grad_vectors, grid_res)
     
-    # Highlight unmasked cells in the main plot
+    # Highlight unmasked cells in the main plot (gray overlay)
     visualization_core.highlight_unmasked_cells(ax1, system, grid_res, valid_points)
     
     # Add wind strength indicator (hidden per user request)

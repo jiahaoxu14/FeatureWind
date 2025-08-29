@@ -71,9 +71,9 @@ def highlight_unmasked_cells(ax, system, grid_res=None, valid_points=None):
                 y_bottom = ymin + i * dy
                 y_top = ymin + (i + 1) * dy
                 
-                # Add green rectangle overlay
+                # Add gray rectangle overlay
                 rect = Rectangle((x_left, y_bottom), dx, dy, 
-                               facecolor='green', alpha=0.1, edgecolor='green', 
+                               facecolor='gray', alpha=0.1, edgecolor='gray', 
                                linewidth=0.5, zorder=2)
                 ax.add_patch(rect)
 
