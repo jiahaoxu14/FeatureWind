@@ -38,7 +38,7 @@ def generate_single_helix(n_points=300):
     })
     
     # Shuffle the dataset to mix the segments
-    df = df.sample(frac=1, random_state=42).reset_index(drop=True)
+    # df = df.sample(frac=1, random_state=42).reset_index(drop=True)
     
     return df
 
