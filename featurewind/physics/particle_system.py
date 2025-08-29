@@ -148,7 +148,7 @@ def euler_step(pos, dt, get_vel_func):
 def reinitialize_particles(system):
     """
     Reinitialize out-of-bounds, over-age, or particles in masked regions.
-    Respawn particles in areas with valid flow to avoid immediate re-masking.
+    Uses random uniform distribution across all unmasked areas for even coverage.
     
     Args:
         system (dict): Particle system dictionary
@@ -163,29 +163,26 @@ def reinitialize_particles(system):
     # Get dominant features for all particles to detect masked regions
     dominant_features = get_dominant_features_vectorized(pp, system)
     
-    # Create a list of valid respawn locations (cells with flow)
-    valid_respawn_locations = []
-    if 'cell_dominant_features' in system:
-        cell_dominant_features = system['cell_dominant_features']
-        grid_res = cell_dominant_features.shape[0]
+    # Create a uniform random respawn function for unmasked areas
+    def get_random_valid_position():
+        """Generate random positions until we find one in an unmasked area."""
+        max_attempts = 50  # Prevent infinite loops
         
-        # Find all grid cells that have valid flow (not -1)
-        for i in range(grid_res):
-            for j in range(grid_res):
-                if cell_dominant_features[i, j] != -1:
-                    # Convert grid cell to world coordinates (cell center)
-                    x_center = xmin + (j + 0.5) / grid_res * (xmax - xmin)
-                    y_center = ymin + (i + 0.5) / grid_res * (ymax - ymin)
-                    valid_respawn_locations.append([x_center, y_center])
-    
-    # Fallback: if no valid locations found, create a grid of positions across the domain
-    if not valid_respawn_locations:
-        # Create a coarse grid of respawn positions across the entire domain
-        for i in range(5):
-            for j in range(5):
-                x_pos = xmin + (j + 0.5) / 5 * (xmax - xmin)
-                y_pos = ymin + (i + 0.5) / 5 * (ymax - ymin)
-                valid_respawn_locations.append([x_pos, y_pos])
+        for attempt in range(max_attempts):
+            # Generate random position across entire domain
+            test_x = np.random.uniform(xmin, xmax)
+            test_y = np.random.uniform(ymin, ymax)
+            test_pos = np.array([[test_x, test_y]])
+            
+            # Check if this position is in a valid (unmasked) region
+            test_dominant = get_dominant_features_vectorized(test_pos, system)
+            
+            if test_dominant[0] != -1:  # Found valid position
+                return test_x, test_y
+        
+        # Fallback: if we can't find a valid position after many attempts,
+        # use center of domain (better than failing)
+        return (xmin + xmax) / 2, (ymin + ymax) / 2
     
     for i in range(len(pp)):
         x, y = pp[i]
@@ -198,13 +195,8 @@ def reinitialize_particles(system):
             or lt[i] > max_lifetime
             or stuck_in_masked_region):
             
-            # Choose a random valid location with some jitter
-            base_location = valid_respawn_locations[np.random.randint(len(valid_respawn_locations))]
-            jitter_x = np.random.uniform(-0.1, 0.1) * (xmax - xmin) / 40  # Small jitter
-            jitter_y = np.random.uniform(-0.1, 0.1) * (ymax - ymin) / 40
-            
-            new_x = np.clip(base_location[0] + jitter_x, xmin, xmax)
-            new_y = np.clip(base_location[1] + jitter_y, ymin, ymax)
+            # Get a random position in an unmasked area
+            new_x, new_y = get_random_valid_position()
             
             pp[i] = [new_x, new_y]
             # Fill entire history with the new position
