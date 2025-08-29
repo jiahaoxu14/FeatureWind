@@ -21,9 +21,9 @@ class ProjectionRunner:
         # Usage for DimReader:
         print("Step 1/3: Computing base t-SNE projection (999 iterations)...")
         with torch.no_grad():
-            Y_base, params = tsne(data, 2, 999, 50, 20.0, save_params = True)
+            Y_base, params = tsne(data, 2, 999, 50, 30.0, save_params = True)
         print("Step 2/3: Computing projection with gradients (1 iteration)...")
-        Y, params = tsne(data, no_dims=2, maxIter = 1, initial_dims=50, perplexity=20.0, save_params = False,
+        Y, params = tsne(data, no_dims=2, maxIter = 1, initial_dims=50, perplexity=30.0, save_params = False,
                             initY = params[0], initBeta = params[2], betaTries = 50, initIY =params[1])
         
         # Compute gradients and full Jacobian matrix
