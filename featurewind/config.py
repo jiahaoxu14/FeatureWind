@@ -68,9 +68,6 @@ MARKER_STYLES = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h', 'H', '+', 'x'
 DPI = 300  # For saved figures
 ALPHA_FADE_FACTOR = 1.0  # For particle trail alpha (set to 1.0 for better visibility)
 
-# Direction-conditioned mode parameters
-DEFAULT_ANGLE = 0.0  # degrees
-DEFAULT_MAGNITUDE = 1.0
 TEMPERATURE_SOFTMAX = 2.0  # Temperature for soft dominance computation
 
 # File paths (relative to project root)

@@ -36,7 +36,7 @@ class UIController:
          self.cell_dominant_features, self.grid_u_all_feats, self.grid_v_all_feats,
          self.cell_centers_x, self.cell_centers_y, self.cell_soft_dominance) = grid_data
 
-        # Current state (top_k only; direction-conditioned removed)
+        # Current state (top_k mode only)
         self.current_mode = {'mode': 'top_k'}
         self.grad_indices = list(range(min(config.k or len(col_labels), len(col_labels))))
         
@@ -44,7 +44,7 @@ class UIController:
         self.setup_ui_controls()
         
     def setup_ui_controls(self):
-        """Setup minimal UI elements (no legacy/direction-conditioned controls)."""
+        """Setup minimal UI elements (CLI-driven approach)."""
         single_feature_mode = getattr(self, 'single_feature_mode', False)
 
         if single_feature_mode:

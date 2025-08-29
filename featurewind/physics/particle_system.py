@@ -83,7 +83,7 @@ def get_velocity_at_positions(positions, system, interp_u_sum=None, interp_v_sum
     
     # Always prefer smooth bilinear interpolation for consistent motion
     if 'interp_u_sum' in system and 'interp_v_sum' in system:
-        # Direction-conditioned mode: use updated interpolators from system
+        # Use updated interpolators from system
         current_interp_u = system['interp_u_sum']
         current_interp_v = system['interp_v_sum']
         # Single vectorized call per component
@@ -431,66 +431,6 @@ def get_dominant_feature_at_position(position, system):
     return get_dominant_features_vectorized(position.reshape(1, 2), system)[0]
 
 
-def get_directional_dominant_feature_at_position(position, velocity_direction, system):
-    """
-    Get the feature that contributes most to the particle's movement direction.
-    
-    Args:
-        position (np.ndarray): Position coordinates [x, y]
-        velocity_direction (np.ndarray): Normalized velocity direction [dx, dy]
-        system (dict): Particle system dictionary
-        
-    Returns:
-        int: Index of directionally dominant feature, or -1 if none
-    """
-    if ('grid_u_all_feats' not in system or 'grid_v_all_feats' not in system or 
-        np.linalg.norm(velocity_direction) < 1e-8):
-        return -1
-        
-    xmin, xmax, ymin, ymax = config.bounding_box
-    grid_u_all_feats = system['grid_u_all_feats']
-    grid_v_all_feats = system['grid_v_all_feats']
-    
-    num_features = grid_u_all_feats.shape[0]
-    grid_res = grid_u_all_feats.shape[1]
-    
-    # Convert position to grid cell indices
-    if xmin <= position[0] <= xmax and ymin <= position[1] <= ymax:
-        cell_j = int((position[0] - xmin) / (xmax - xmin) * grid_res)
-        cell_i = int((position[1] - ymin) / (ymax - ymin) * grid_res)
-        
-        # Clamp to valid range
-        cell_i = max(0, min(grid_res - 1, cell_i))
-        cell_j = max(0, min(grid_res - 1, cell_j))
-        
-        # Get all feature vectors at this position using vectorized operations
-        u_vals = grid_u_all_feats[:, cell_i, cell_j]  # Shape: (num_features,)
-        v_vals = grid_v_all_feats[:, cell_i, cell_j]  # Shape: (num_features,)
-        feature_vectors = np.column_stack([u_vals, v_vals])  # Shape: (num_features, 2)
-        
-        # Calculate magnitudes for all features at once
-        magnitudes = np.linalg.norm(feature_vectors, axis=1)
-        
-        # Filter out zero vectors
-        valid_mask = magnitudes > 1e-8
-        if not np.any(valid_mask):
-            return -1
-        
-        # Calculate directional contributions for all valid features at once
-        contributions = np.dot(feature_vectors[valid_mask], velocity_direction)
-        
-        # Find the best contribution among valid features
-        if len(contributions) > 0:
-            best_idx_among_valid = np.argmax(contributions)
-            # Map back to original feature index
-            valid_indices = np.where(valid_mask)[0]
-            best_feature_idx = valid_indices[best_idx_among_valid]
-        else:
-            best_feature_idx = -1
-        
-        return best_feature_idx
-    
-    return -1
 
 
 def get_magnitude_at_position(position, feature_idx, system):
@@ -628,16 +568,8 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
         speeds = np.linalg.norm(velocities, axis=1)
         significant_speed_mask = speeds > 1e-8
         
-        # For high-speed particles, we'd need directional analysis (keeping original approach for accuracy)
-        # For low-speed particles, use magnitude-based dominance
+        # Use magnitude-based dominance for all particles
         dominant_features = get_dominant_features_vectorized(particle_positions, system)
-        
-        # Process high-speed particles individually (fewer operations)
-        for i in np.where(significant_speed_mask)[0]:
-            velocity = velocities[i]
-            velocity_direction = velocity / speeds[i]
-            dominant_features[i] = get_directional_dominant_feature_at_position(
-                particle_positions[i], velocity_direction, system)
     else:
         # All particles use magnitude-based dominance
         dominant_features = get_dominant_features_vectorized(particle_positions, system)
