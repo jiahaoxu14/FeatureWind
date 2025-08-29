@@ -41,9 +41,6 @@ GLASBEY_COLORS = [
 MASK_BUFFER_FACTOR = 0    # Buffer size around data points for interpolation (in cell units)
 
 # Particle physics parameters
-MIN_TIME_STEP = 1e-4
-CFL_NUMBER = 0.5  # For adaptive time stepping
-ERROR_TOLERANCE = 1e-3  # For RK4 error control
 MAX_SAFE_VELOCITY = 10.0  # Maximum velocity magnitude per frame to prevent runaway particles
 
 # UI and visualization parameters

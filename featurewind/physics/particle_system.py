@@ -1,7 +1,7 @@
 """
 Particle system module for FeatureWind.
 
-This module handles particle physics, including adaptive RK4 integration,
+This module handles particle physics using simple Euler integration,
 particle reseeding, and trajectory management for flow field visualization.
 Enhanced with family-based coloring system.
 """
@@ -122,70 +122,25 @@ def get_velocity_at_positions(positions, system, interp_u_sum=None, interp_v_sum
     return velocity
 
 
-def adaptive_rk4_step(pos, target_dt, get_vel_func, grid_res=None, max_error=None):
+def euler_step(pos, dt, get_vel_func):
     """
-    Adaptive RK4 with embedded Heun method for error estimation.
+    Simple Euler integration step.
     
     Args:
         pos (np.ndarray): Current positions
-        target_dt (float): Target time step
+        dt (float): Time step
         get_vel_func (callable): Function to get velocity at positions
-        grid_res (int, optional): Grid resolution for CFL condition
-        max_error (float, optional): Maximum allowed error
         
     Returns:
-        tuple: (new_position, actual_dt_used, error_estimate, estimated_velocity)
+        tuple: (new_position, velocity)
     """
-    if max_error is None:
-        max_error = config.ERROR_TOLERANCE
-        
-    # Calculate velocity at current position
-    vel = get_vel_func(pos)
-    speed = np.linalg.norm(vel, axis=1)
+    # Get velocity at current position
+    velocity = get_vel_func(pos)
     
-    # CFL-like condition: dt should be proportional to cell_size / |v|
-    if grid_res is not None and len(config.bounding_box) >= 4:
-        cell_size = min(
-            (config.bounding_box[1] - config.bounding_box[0]) / grid_res,  # dx
-            (config.bounding_box[3] - config.bounding_box[2]) / grid_res   # dy
-        )
-        # CFL number around 0.5 for stability
-        cfl_number = config.CFL_NUMBER
-        max_speed = np.maximum(speed, 1e-6)  # Avoid division by zero
-        cfl_dt = cfl_number * cell_size / max_speed
-        
-        # Use minimum of target dt and CFL-limited dt for each particle
-        dt_per_particle = np.minimum(target_dt, cfl_dt)
-        # Use the most restrictive dt for this step
-        dt = np.min(dt_per_particle)
-    else:
-        dt = target_dt
+    # Euler integration: new_pos = pos + velocity * dt
+    new_pos = pos + velocity * dt
     
-    # Ensure minimum time step
-    dt = max(dt, config.MIN_TIME_STEP)
-    
-    # RK4 step
-    k1 = get_vel_func(pos)
-    k2 = get_vel_func(pos + 0.5 * dt * k1)
-    k3 = get_vel_func(pos + 0.5 * dt * k2)
-    k4 = get_vel_func(pos + dt * k3)
-    
-    rk4_result = pos + dt * (k1 + 2*k2 + 2*k3 + k4) / 6.0
-    
-    # Estimate velocity at final position using RK4 intermediate values
-    # This is more accurate than k4 alone and avoids recomputing velocity
-    estimated_final_velocity = (k1 + 2*k2 + 2*k3 + k4) / 6.0
-    
-    # Embedded Heun method for error estimation (simpler RK2)
-    heun_k1 = k1
-    heun_k2 = get_vel_func(pos + dt * heun_k1)
-    heun_result = pos + dt * (heun_k1 + heun_k2) / 2.0
-    
-    # Estimate local truncation error
-    error = np.linalg.norm(rk4_result - heun_result, axis=1)
-    max_error_this_step = np.max(error)
-    
-    return rk4_result, dt, max_error_this_step, estimated_final_velocity
+    return new_pos, velocity
 
 
 
@@ -722,47 +677,12 @@ def update_particles(system, interp_u_sum=None, interp_v_sum=None,
         return get_velocity_at_positions(positions, system, interp_u_sum, interp_v_sum, 
                                        grid_u_sum, grid_v_sum, grid_res)
 
-    # Adaptive integration with error control
-    total_time = 0.0
-    target_total_time = 1.0
-    current_pos = pp.copy()
+    # Simple Euler integration with fixed time step
+    dt = 1.0  # Fixed time step for simplicity
+    new_pos, velocity = euler_step(pp, dt, get_velocity)
     
-    max_steps = 5   # Reduced from 10 for better performance while maintaining RK4 accuracy
-    step_count = 0
-    final_velocity = None  # Store final velocity for accurate coloring
-    
-    while total_time < target_total_time and step_count < max_steps:
-        remaining_time = target_total_time - total_time
-        target_dt = min(0.25, remaining_time)  # Start with quarter steps
-        
-        new_pos, dt_used, error_est, estimated_velocity = adaptive_rk4_step(
-            current_pos, target_dt, get_velocity, grid_res)
-        
-        # Simple error control: accept step if error is reasonable
-        if error_est < 0.01 or dt_used < 1e-3:
-            # Accept the step
-            current_pos = new_pos
-            total_time += dt_used
-            step_count += 1
-            
-            # Use the estimated velocity from RK4 intermediate steps
-            final_velocity = estimated_velocity
-        else:
-            # Reduce time step and try again
-            target_dt *= 0.5
-            if target_dt < 1e-4:
-                # Force acceptance with very small step
-                current_pos = new_pos
-                total_time += dt_used
-                step_count += 1
-                
-                # Use the estimated velocity even for forced steps
-                final_velocity = estimated_velocity
-    
-    pp[:] = current_pos
-    
-    # Use the current velocity after integration for accurate coloring
-    velocity = final_velocity if final_velocity is not None else get_velocity(pp)
+    # Update particle positions
+    pp[:] = new_pos
     
 
     # Shift history
