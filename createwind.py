@@ -252,9 +252,7 @@ def main():
     # Step 3: Grid computation
     
     # Set grid resolution
-    grid_res = int((min(abs(config.bounding_box[1] - config.bounding_box[0]), 
-                       abs(config.bounding_box[3] - config.bounding_box[2])) * config.grid_res_scale))
-    grid_res = config.DEFAULT_GRID_RES  # Override with default
+    grid_res = config.DEFAULT_GRID_RES
     
     # Build the main grids
     grid_data = grid_computation.build_grids(

@@ -9,7 +9,6 @@ import numpy as np
 
 # Global configuration variables
 velocity_scale = 0.4  # Original stable value
-grid_res_scale = 0.15
 k = None  # Number of top features (will be set dynamically)
 bounding_box = None  # Will be computed dynamically
 real_feature_rgba = {}  # Feature to RGBA mapping for particles
@@ -30,33 +29,19 @@ ANIMATION_INTERVAL = 30  # milliseconds between frames (33 FPS - optimized for p
 WINDOW_TITLE = "FeatureWind Visualization"
 
 # Color palettes and visualization constants
-try:
-    import colorcet as cc
-    COLORCET_AVAILABLE = True
-    # Use ColorCET Glasbey for maximum distinctness
-    GLASBEY_COLORS = [
-        "#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948",
-        "#AF7AA1", "#FF9D9A", "#9C755F", "#BAB0AC", "#1f77b4", "#ff7f0e",
-        "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
-        "#bcbd22", "#17becf"
-    ]
-except ImportError:
-    COLORCET_AVAILABLE = False
-    pass  # Silently use fallback colors
-    # Fallback to expanded Tableau-like palette
-    GLASBEY_COLORS = [
-        "#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948",
-        "#AF7AA1", "#FF9D9A", "#9C755F", "#BAB0AC", "#1f77b4", "#ff7f0e", 
-        "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
-        "#bcbd22", "#17becf"
-    ]
+# Color palettes for feature visualization
+GLASBEY_COLORS = [
+    "#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948",
+    "#AF7AA1", "#FF9D9A", "#9C755F", "#BAB0AC", "#1f77b4", "#ff7f0e",
+    "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
+    "#bcbd22", "#17becf"
+]
 
 # Grid computation parameters
 MASK_BUFFER_FACTOR = 0    # Buffer size around data points for interpolation (in cell units)
 
 # Particle physics parameters
 MIN_TIME_STEP = 1e-4
-MAX_TIME_STEP = 0.1
 CFL_NUMBER = 0.5  # For adaptive time stepping
 ERROR_TOLERANCE = 1e-3  # For RK4 error control
 MAX_SAFE_VELOCITY = 10.0  # Maximum velocity magnitude per frame to prevent runaway particles
@@ -64,34 +49,13 @@ MAX_SAFE_VELOCITY = 10.0  # Maximum velocity magnitude per frame to prevent runa
 # UI and visualization parameters
 MARKER_STYLES = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h', 'H', '+', 'x']
 DPI = 300  # For saved figures
-ALPHA_FADE_FACTOR = 1.0  # For particle trail alpha (set to 1.0 for better visibility)
 
 TEMPERATURE_SOFTMAX = 2.0  # Temperature for soft dominance computation
 
-# File paths (relative to project root)
-DEFAULT_TANGENT_MAP = 'data/tangentmaps/breast_cancer.tmap'
-DEFAULT_OUTPUT_DIR = 'output'
 
 # Feature selection limits
-MAX_FEATURES_WITH_COLORS = 6  # Only top 6 features get distinct colors
 MAX_FEATURE_FAMILIES = 6      # Maximum number of feature families (Paul Tol palette limit)
 
-def get_feature_color(feature_idx, total_features):
-    """
-    Get color for a specific feature index.
-    
-    Args:
-        feature_idx (int): Index of the feature
-        total_features (int): Total number of features
-        
-    Returns:
-        str: Hex color string
-    """
-    if feature_idx < len(GLASBEY_COLORS):
-        return GLASBEY_COLORS[feature_idx]
-    else:
-        # Cycle through colors if we need more than available
-        return GLASBEY_COLORS[feature_idx % len(GLASBEY_COLORS)]
 
 def initialize_global_state():
     """Initialize global state variables that need dynamic computation."""
