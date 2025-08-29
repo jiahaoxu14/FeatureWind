@@ -36,7 +36,10 @@ def create_particles(num_particles=None, cell_dominant_features=None, grid_res=N
     tail_gap = config.TAIL_LENGTH
     particle_lifetimes = np.zeros(num_particles, dtype=int)
     histories = np.full((num_particles, tail_gap + 1, 2), np.nan)
-    histories[:, :] = particle_positions[:, None, :]
+    
+    # Properly initialize history for all particles
+    for i in range(num_particles):
+        histories[i, :, :] = particle_positions[i]
 
     # A single LineCollection for all particles
     lc = LineCollection([], linewidths=1.5, zorder=2)
@@ -302,7 +305,8 @@ def density_aware_reseed(system, grid_res):
             cell_y = max(ymin, min(ymax, cell_y))
             
             pp[idx] = [cell_x, cell_y]
-            his[idx] = pp[idx]
+            # Fill entire history with the new position
+            his[idx, :, :] = pp[idx]
             lt[idx] = 0
             num_reseeded += 1
 
@@ -340,16 +344,25 @@ def reinitialize_particles(system):
                     y_center = ymin + (i + 0.5) / grid_res * (ymax - ymin)
                     valid_respawn_locations.append([x_center, y_center])
     
-    # Fallback: if no valid locations found, use random positions
+    # Fallback: if no valid locations found, create a grid of positions across the domain
     if not valid_respawn_locations:
-        valid_respawn_locations = [[np.random.uniform(xmin, xmax), np.random.uniform(ymin, ymax)] for _ in range(10)]
+        # Create a coarse grid of respawn positions across the entire domain
+        for i in range(5):
+            for j in range(5):
+                x_pos = xmin + (j + 0.5) / 5 * (xmax - xmin)
+                y_pos = ymin + (i + 0.5) / 5 * (ymax - ymin)
+                valid_respawn_locations.append([x_pos, y_pos])
     
     for i in range(len(pp)):
         x, y = pp[i]
-        # Check for out-of-bounds, over-age, or in masked region (dominant_features == -1)
+        # Check for out-of-bounds or over-age particles
+        # Be more lenient with masked regions - only reinitialize if particle is stuck for a while
+        in_masked_region = dominant_features[i] == -1
+        stuck_in_masked_region = in_masked_region and lt[i] > max_lifetime * 0.3  # Only after 30% of lifetime
+        
         if (x < xmin or x > xmax or y < ymin or y > ymax
             or lt[i] > max_lifetime
-            or dominant_features[i] == -1):
+            or stuck_in_masked_region):
             
             # Choose a random valid location with some jitter
             base_location = valid_respawn_locations[np.random.randint(len(valid_respawn_locations))]
@@ -360,7 +373,8 @@ def reinitialize_particles(system):
             new_y = np.clip(base_location[1] + jitter_y, ymin, ymax)
             
             pp[i] = [new_x, new_y]
-            his[i] = pp[i]
+            # Fill entire history with the new position
+            his[i, :, :] = pp[i]
             lt[i] = 0
 
 
@@ -666,13 +680,16 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
             particle_colors[particle_indices, :3] = rgb
             particle_colors[particle_indices, 3] = alphas
     
-    # Handle invalid features: mark for respawn but color them reasonably for this frame
+    # Handle invalid features: don't immediately mark for respawn, just color them differently
     invalid_mask = ~valid_feature_mask
     if np.any(invalid_mask):
-        # Mark these particles for respawn by exceeding their lifetime
+        # Don't immediately mark these particles for respawn - let them try to find valid regions
+        # Only mark them for respawn if they've been invalid for a while
         invalid_indices = np.where(invalid_mask)[0]
         for idx in invalid_indices:
-            system['particle_lifetimes'][idx] = system['max_lifetime'] + 1
+            # Only mark for respawn if already near end of lifetime
+            if system['particle_lifetimes'][idx] > system['max_lifetime'] * 0.8:
+                system['particle_lifetimes'][idx] = system['max_lifetime'] + 1
         
         # For this frame, assign them the color of the nearest valid feature to avoid gray
         if len(feature_colors) > 0:

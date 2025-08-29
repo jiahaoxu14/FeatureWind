@@ -8,7 +8,7 @@ settings used throughout the FeatureWind visualization system.
 import numpy as np
 
 # Global configuration variables
-velocity_scale = 0.04  # Original stable value
+velocity_scale = 0.4  # Original stable value
 grid_res_scale = 0.15
 k = None  # Number of top features (will be set dynamically)
 bounding_box = None  # Will be computed dynamically
@@ -18,8 +18,8 @@ real_feature_rgba = {}  # Feature to RGBA mapping for particles
 DEFAULT_GRID_RES = 30
 
 # Particle system parameters
-DEFAULT_NUM_PARTICLES = 1200  # Reduced from 2000 for better performance
-PARTICLE_LIFETIME = 100  # frames
+DEFAULT_NUM_PARTICLES = 1500  # Increased to ensure visible particle density
+PARTICLE_LIFETIME = 150  # frames - increased to reduce respawn frequency
 TAIL_LENGTH = 10  # number of position history points
 
 # Adaptive trail parameters
@@ -65,7 +65,7 @@ MIN_TIME_STEP = 1e-4
 MAX_TIME_STEP = 0.1
 CFL_NUMBER = 0.5  # For adaptive time stepping
 ERROR_TOLERANCE = 1e-3  # For RK4 error control
-MAX_RESEED_RATE = 0.02  # Maximum 2% particles reseeded per frame
+MAX_RESEED_RATE = 0.01  # Maximum 1% particles reseeded per frame - reduced for stability
 MAX_SAFE_VELOCITY = 10.0  # Maximum velocity magnitude per frame to prevent runaway particles
 
 # UI and visualization parameters
