@@ -12,7 +12,7 @@ The codebase has been reorganized into a clean, hierarchical Python package stru
 
 ```
 FeatureWind/
-├── main_modular.py                 # Main entry point at project root
+├── createwind.py                   # Main entry point at project root
 ├── featurewind/                    # Unified Python package
 │   ├── core/                       # Core computation modules
 │   ├── preprocessing/              # Data preprocessing tools
@@ -83,7 +83,7 @@ Feature analysis and clustering functionality:
 
 **Run modular visualization (recommended):**
 ```bash
-python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --top-k 5
+python createwind.py --tangent-map data/tangentmaps/breast_cancer.tmap --top-k 5
 ```
 
 **Run legacy visualization:**
@@ -107,7 +107,7 @@ python featurewind/core/tangent_map.py <input.csv> tsne
 After the reorganization, all imports follow the clean package hierarchy:
 
 ```python
-# Main script (main_modular.py) imports:
+# Main script (createwind.py) imports:
 from featurewind import config
 from featurewind.preprocessing import data_processing
 from featurewind.physics import particle_system, grid_computation
@@ -122,7 +122,7 @@ from .color_system import PAUL_TOL_FAMILIES           # Within visualization mod
 ```
 
 ### **Key Import Changes**
-- **Main entry point**: `main_modular.py` now at project root
+- **Main entry point**: `createwind.py` at project root
 - **Package imports**: All modules use `featurewind.` prefix from external code
 - **Relative imports**: Internal modules use `..` and `.` for cross-module references
 - **Path resolution**: Data and output paths relative to project root
@@ -169,7 +169,7 @@ jacobian = pj.jacobian  # Full 2n × d Jacobian matrix for advanced operations
 
 **Output**: `.tmap` files containing 2D projections + gradient vectors for each point
 
-### **Phase 2: Visualization Initialization** (`main_modular.py`)
+### **Phase 2: Visualization Initialization** (`createwind.py`)
 
 #### Step 2.1: Configuration Setup (`config.py`)
 ```python
@@ -495,15 +495,15 @@ FeatureWind uses **command-line arguments** for feature selection rather than in
 
 ```bash
 # Top-K feature selection (most influential features)
-python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --top-k 5
-python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --top-k all
+python createwind.py --tangent-map data/tangentmaps/breast_cancer.tmap --top-k 5
+python createwind.py --tangent-map data/tangentmaps/breast_cancer.tmap --top-k all
 
 # Single feature selection (by name with partial matching)
-python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --feature "mean radius"
-python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --feature "texture"
+python createwind.py --tangent-map data/tangentmaps/breast_cancer.tmap --feature "mean radius"
+python createwind.py --tangent-map data/tangentmaps/breast_cancer.tmap --feature "texture"
 
 # List available features
-python main_modular.py --tangent-map data/tangentmaps/breast_cancer.tmap --list-features
+python createwind.py --tangent-map data/tangentmaps/breast_cancer.tmap --list-features
 ```
 
 **Benefits of CLI Approach:**
@@ -625,7 +625,7 @@ class EventManager:
 
 **Purpose**: Provides robust event handling with error isolation to prevent UI freezes.
 
-### **Phase 8: Animation Loop** (`main_modular.py`)
+### **Phase 8: Animation Loop** (`createwind.py`)
 
 #### Step 8.1: Frame Update Function
 ```python
@@ -748,7 +748,7 @@ The project requires:
 python examples/generate_tangent_map.py data.csv tsne --target class --output data.tmap
 
 # Run interactive visualization
-python examples/main_modular.py
+python createwind.py
 ```
 
 ### **Advanced Analysis**
