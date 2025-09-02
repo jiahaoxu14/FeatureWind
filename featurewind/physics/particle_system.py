@@ -11,7 +11,7 @@ from matplotlib.collections import LineCollection
 from .. import config
 
 
-def create_particles(num_particles=None, cell_dominant_features=None, grid_res=None, system=None, valid_points=None):
+def create_particles(num_particles=None, cell_dominant_features=None, grid_res=None, system=None):
     """
     Create a particle system for flow visualization with simple random initialization in unmasked cells.
     
@@ -20,7 +20,6 @@ def create_particles(num_particles=None, cell_dominant_features=None, grid_res=N
         cell_dominant_features (np.ndarray, optional): Dominant features per grid cell
         grid_res (int, optional): Grid resolution
         system (dict, optional): Existing system with velocity fields for validation
-        valid_points (list, optional): List of valid TangentPoint objects
         
     Returns:
         dict: Particle system dictionary with positions, lifetimes, histories, etc.
@@ -437,16 +436,8 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
     # Get dominant features for all particles at once (vectorized)
     velocities = system.get('last_velocity', None)
     
-    if velocities is not None:
-        # Use vectorized approach for particles with significant velocity
-        speeds = np.linalg.norm(velocities, axis=1)
-        significant_speed_mask = speeds > 1e-8
-        
-        # Use magnitude-based dominance for all particles
-        dominant_features = get_dominant_features_vectorized(particle_positions, system)
-    else:
-        # All particles use magnitude-based dominance
-        dominant_features = get_dominant_features_vectorized(particle_positions, system)
+    # Use magnitude-based dominance for all particles
+    dominant_features = get_dominant_features_vectorized(particle_positions, system)
     
     # Vectorized color assignment
     valid_feature_mask = (dominant_features >= 0) & (dominant_features < len(feature_colors))

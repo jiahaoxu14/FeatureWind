@@ -238,9 +238,7 @@ def main():
     
     
     # Analyze the feature families
-    family_analysis = feature_clustering.analyze_feature_families(
-        family_assignments, col_labels, similarity_matrix
-    )
+    # Analysis info is not used in the current flow
     
     # Build feature color mapping for backward compatibility
     config.real_feature_rgba = {}
@@ -267,7 +265,7 @@ def main():
     # Create particle system with smart initialization in unmasked cells
     system = particle_system.create_particles(
         config.DEFAULT_NUM_PARTICLES, cell_dominant_features, grid_res, 
-        temp_system, valid_points)
+        temp_system)
     
     # Step 6: Setup figure with professional styling and legends
     fig, ax1, ax2 = visualization_core.setup_figure_layout()
