@@ -38,7 +38,7 @@ GLASBEY_COLORS = [
 ]
 
 # Grid computation parameters
-MASK_BUFFER_FACTOR = 0.2    # Buffer size around data points for interpolation (in cell units)
+MASK_BUFFER_FACTOR = 0    # Buffer size around data points for interpolation (in cell units)
 
 # Particle physics parameters
 MAX_SAFE_VELOCITY = 10.0  # Maximum velocity magnitude per frame to prevent runaway particles

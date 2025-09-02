@@ -588,26 +588,17 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
         # Use particle's family-based color
         r, g, b, base_alpha = particle_colors[i]
         
-        # Modulate alpha by speed for additional visual feedback
+        # Alpha based only on normalized speed (no age factor)
         speed_alpha = speeds[i] / max_speed
+        alpha_value = np.clip(0.3 + 0.7 * speed_alpha, 0.0, 1.0)
 
         for t in range(tail_gap):
             seg_idx = i * tail_gap + t
             segments[seg_idx, 0, :] = his[i, t, :]
             segments[seg_idx, 1, :] = his[i, t + 1, :]
 
-            # Age-based fade for trail effect
-            age_factor = (t+1) / tail_gap
-            
-            # Dynamic alpha with better range: combines speed and age multiplicatively
-            # But with higher base to maintain visibility
-            alpha_min = 0.25
-            # Use power function for more dramatic speed differences
-            speed_factor = speed_alpha ** 0.7  # Power < 1 compresses low values less
-            alpha_final = max(alpha_min, min(1.0, 0.4 + 0.6 * speed_factor * age_factor))
-
-            # Assign the final RGBA
-            colors_rgba[seg_idx] = [r, g, b, alpha_final]
+            # Assign uniform per-particle alpha based on speed only
+            colors_rgba[seg_idx] = [r, g, b, alpha_value]
 
     lc_.set_segments(segments)
     lc_.set_colors(colors_rgba)
