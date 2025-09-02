@@ -60,6 +60,12 @@ def highlight_unmasked_cells(ax, system, grid_res=None, valid_points=None):
     # But NEVER mask cells that contain data points
     threshold = 1e-6
     unmasked_cells = (sum_magnitudes > threshold) | cells_with_data
+
+    # Store unified mask in system for use by wind vane and others
+    try:
+        system['unmasked_cells'] = unmasked_cells
+    except Exception:
+        pass
     
     # Create semi-transparent overlay for unmasked cells
     for i in range(grid_res):
@@ -219,6 +225,15 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
     if cell_i < 0 or cell_i >= grid_res or cell_j < 0 or cell_j >= grid_res:
         return
     
+    # If unified mask exists and this cell is masked, annotate and return
+    if 'unmasked_cells' in system:
+        unmasked = system['unmasked_cells']
+        if (cell_i < unmasked.shape[0] and cell_j < unmasked.shape[1] and
+            not unmasked[cell_i, cell_j]):
+            ax2.text(0.5, 0.5, "Masked cell", transform=ax2.transAxes,
+                     ha='center', va='center', fontsize=10, color='gray')
+            return
+
     # Get vectors for ALL features from the all-features grid
     vectors_all = []
     mags_all = []
