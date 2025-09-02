@@ -193,42 +193,24 @@ def reinitialize_particles(system):
     # Get dominant features for all particles to detect masked regions
     dominant_features = get_dominant_features_vectorized(pp, system)
     
-    # Create a uniform random respawn function for unmasked areas
+    # Create a uniform random respawn function for unmasked areas (mask-only)
     def get_random_valid_position():
-        """Generate random positions until we find one in an unmasked area."""
-        max_attempts = 50  # Prevent infinite loops
-        
-        for _ in range(max_attempts):
-            # Generate random position across entire domain
-            test_x = np.random.uniform(xmin, xmax)
-            test_y = np.random.uniform(ymin, ymax)
-            test_pos = np.array([[test_x, test_y]])
-            
-            # Check if this position has flow (not masked)
-            if 'interp_u_sum' in system and 'interp_v_sum' in system:
-                try:
-                    interp_u_sum = system['interp_u_sum']
-                    interp_v_sum = system['interp_v_sum']
-                    # RegularGridInterpolator expects (y, x)
-                    test_pos_yx = test_pos[:, [1, 0]]
-                    u_val = interp_u_sum(test_pos_yx)[0]
-                    v_val = interp_v_sum(test_pos_yx)[0]
-                    sum_magnitude = np.sqrt(u_val**2 + v_val**2)
-                    
-                    if sum_magnitude > 1e-6:  # Same threshold as wind vane
-                        return test_x, test_y
-                except:
-                    # Fallback to grid-based check
-                    pass
-            
-            # Fallback: check using dominant features
-            test_dominant = get_dominant_features_vectorized(test_pos, system)
-            if test_dominant[0] != -1:  # Found valid position
-                return test_x, test_y
-        
-        # Fallback: if we can't find a valid position after many attempts,
-        # use center of domain (better than failing)
-        return (xmin + xmax) / 2, (ymin + ymax) / 2
+        """Respawn by sampling a random unmasked cell and a random point within it."""
+        if 'cell_dominant_features' in system:
+            cdf = system['cell_dominant_features']
+            grid_res_local = cdf.shape[0]
+            unmasked = np.argwhere(cdf != -1)
+            if unmasked.size > 0:
+                # Pick a random unmasked cell (i, j)
+                i, j = unmasked[np.random.randint(0, len(unmasked))]
+                dx = (xmax - xmin) / grid_res_local
+                dy = (ymax - ymin) / grid_res_local
+                # Sample uniformly inside that cell
+                x = xmin + j * dx + np.random.rand() * dx
+                y = ymin + i * dy + np.random.rand() * dy
+                return x, y
+        # Fallback: uniform anywhere in domain
+        return np.random.uniform(xmin, xmax), np.random.uniform(ymin, ymax)
     
     for i in range(len(pp)):
         x, y = pp[i]
