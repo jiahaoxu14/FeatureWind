@@ -123,19 +123,9 @@ def main():
         print(f"Total: {len(col_labels)} features")
         sys.exit(0)
     
-    # Analyze gradient magnitudes and auto-scale velocity if needed
+    # Analyze gradient magnitudes (no adaptive velocity scaling applied)
     magnitudes = np.linalg.norm(all_grad_vectors, axis=2)
     avg_magnitude = magnitudes.mean()
-    
-    # Auto-scale velocity based on gradient magnitudes
-    # Target average magnitude should be around 1.0 for stability
-    target_avg_magnitude = 1.0
-    if avg_magnitude > target_avg_magnitude * 2:  # If magnitudes are too large
-        scale_factor = target_avg_magnitude / avg_magnitude
-        config.velocity_scale = config.velocity_scale * scale_factor
-    elif avg_magnitude < target_avg_magnitude * 0.1:  # If magnitudes are too small
-        scale_factor = target_avg_magnitude / avg_magnitude
-        config.velocity_scale = config.velocity_scale * scale_factor
     
     # Enforce CLI-only mode selection
     if not args.feature and not args.top_k and not args.list_features:
@@ -172,37 +162,7 @@ def main():
     
     # Debug: Verify coordinate system alignment
     
-    # Helper function for adaptive velocity scaling
-    def compute_adaptive_velocity_scale(grad_indices, all_grad_vectors):
-        """Scale velocity based on ACTUAL gradient strength."""
-        
-        # Get gradients for selected features
-        selected_grads = all_grad_vectors[:, grad_indices, :]
-        
-        # Compute the SUMMED gradient magnitude (what actually drives particles)
-        summed_grads = np.sum(selected_grads, axis=1)  # Sum across features
-        avg_flow_magnitude = np.linalg.norm(summed_grads, axis=1).mean()
-        
-        # Define minimum flow magnitude for good visibility
-        min_visible_magnitude = 4.0  # Minimum for visible trails
-        
-        # Compute scaling factor to ensure visibility
-        if avg_flow_magnitude < 1e-6:
-            # Nearly zero flow - need maximum boost
-            scale_factor = 10.0
-        elif avg_flow_magnitude < min_visible_magnitude:
-            # Boost weak flow to minimum visible level
-            scale_factor = min_visible_magnitude / avg_flow_magnitude
-            # Clamp to reasonable range
-            scale_factor = np.clip(scale_factor, 1.0, 10.0)
-        else:
-            # Flow is already strong enough - no reduction needed
-            scale_factor = 1.0
-        
-        # Apply to base velocity scale
-        adaptive_scale = config.velocity_scale * scale_factor
-        
-        return adaptive_scale, avg_flow_magnitude, scale_factor
+    # Adaptive velocity scaling removed
     
     # Step 2: Feature selection
     single_feature_mode = args.feature is not None
@@ -236,18 +196,7 @@ def main():
         else:
             config.WINDOW_TITLE = f"FeatureWind - Top {len(grad_indices)} Features"
     
-    # Apply adaptive velocity scaling
-    adaptive_scale, actual_flow_magnitude, scale_factor = compute_adaptive_velocity_scale(grad_indices, all_grad_vectors)
-    original_velocity_scale = config.velocity_scale
-    config.velocity_scale = adaptive_scale
-    
-    # Store for UI display
-    config.actual_flow_magnitude = actual_flow_magnitude
-    config.velocity_scale_factor = scale_factor
-    config.adaptive_velocity_enabled = True
-    
-    print(f"Actual flow magnitude: {actual_flow_magnitude:.4f}")
-    print(f"Applying {scale_factor:.1f}× velocity boost for visibility")
+    # Adaptive velocity scaling removed: keep config.velocity_scale fixed
     
     # Step 3: Grid computation
     
@@ -342,20 +291,12 @@ def main():
     visualization_core.prepare_figure(ax1, valid_points, col_labels, config.k, grad_indices, 
                                     feature_colors, lc, all_positions, all_grad_vectors, grid_res)
     
+    # Initial spawn markers removed
+    
     # Highlight unmasked cells in the main plot (gray overlay)
     visualization_core.highlight_unmasked_cells(ax1, system, grid_res, valid_points)
     
-    # Add wind strength indicator (hidden per user request)
-    # import wind_strength_indicator
-    # wind_indicator = wind_strength_indicator.WindStrengthIndicator(ax1)
-    # if hasattr(config, 'adaptive_velocity_enabled') and config.adaptive_velocity_enabled:
-    #     wind_indicator.update(config.actual_flow_magnitude, config.velocity_scale_factor)
-    #     
-    #     # Add static flow indicators for extremely weak wind
-    #     if config.actual_flow_magnitude < 0.005:  # Very weak threshold
-    #         wind_strength_indicator.add_static_flow_indicators(
-    #             ax1, grid_u_sum, grid_v_sum, grid_x, grid_y, threshold=0.005
-    #         )
+    # Wind strength indicator omitted
     
     # Prepare the wind vane subplot
     visualization_core.prepare_wind_vane_subplot(ax2)

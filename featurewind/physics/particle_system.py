@@ -13,7 +13,7 @@ from .. import config
 
 def create_particles(num_particles=None, cell_dominant_features=None, grid_res=None, system=None, valid_points=None):
     """
-    Create a particle system for flow visualization with smart initialization in unmasked cells.
+    Create a particle system for flow visualization with simple random initialization in unmasked cells.
     
     Args:
         num_particles (int, optional): Number of particles to create
@@ -30,55 +30,24 @@ def create_particles(num_particles=None, cell_dominant_features=None, grid_res=N
         
     xmin, xmax, ymin, ymax = config.bounding_box
     
-    # Helper function to get valid positions in unmasked cells
+    # Helper: random valid position in unmasked cells only
     def get_random_valid_position():
         max_attempts = 50
-        
-        for attempt in range(max_attempts):
+        for _ in range(max_attempts):
             test_x = np.random.uniform(xmin, xmax)
             test_y = np.random.uniform(ymin, ymax)
-            test_pos = np.array([[test_x, test_y]])
-            
-            # Always accept positions near data points
-            if valid_points and is_near_data_point(test_x, test_y, valid_points):
-                return test_x, test_y
-            
-            # Check if this position has flow (not masked)
-            if system and 'interp_u_sum' in system and 'interp_v_sum' in system:
-                try:
-                    interp_u_sum = system['interp_u_sum']
-                    interp_v_sum = system['interp_v_sum']
-                    u_val = interp_u_sum(test_pos)[0]
-                    v_val = interp_v_sum(test_pos)[0]
-                    sum_magnitude = np.sqrt(u_val**2 + v_val**2)
-                    
-                    if sum_magnitude > 1e-6:  # Same threshold as wind vane
-                        return test_x, test_y
-                except:
-                    pass
-            
-            # Fallback: check using dominant features
             if cell_dominant_features is not None and grid_res is not None:
                 cell_j = int((test_x - xmin) / (xmax - xmin) * grid_res)
                 cell_i = int((test_y - ymin) / (ymax - ymin) * grid_res)
                 cell_i = max(0, min(grid_res - 1, cell_i))
                 cell_j = max(0, min(grid_res - 1, cell_j))
-                
                 if cell_dominant_features[cell_i, cell_j] != -1:
                     return test_x, test_y
-        
-        # Fallback to center
+            else:
+                # If no mask provided, accept any random position
+                return test_x, test_y
+        # Fallback to center if no unmasked cell found quickly
         return (xmin + xmax) / 2, (ymin + ymax) / 2
-    
-    # Helper function to check if position is near data points
-    def is_near_data_point(x, y, valid_points, distance_threshold=0.1):
-        if valid_points:
-            for point in valid_points:
-                px, py = point.position
-                dist = np.sqrt((x - px)**2 + (y - py)**2)
-                if dist < distance_threshold:
-                    return True
-        return False
     
     # Initialize particles in valid (unmasked) positions from the start
     particle_positions = np.zeros((num_particles, 2))
@@ -240,8 +209,10 @@ def reinitialize_particles(system):
                 try:
                     interp_u_sum = system['interp_u_sum']
                     interp_v_sum = system['interp_v_sum']
-                    u_val = interp_u_sum(test_pos)[0]
-                    v_val = interp_v_sum(test_pos)[0]
+                    # RegularGridInterpolator expects (y, x)
+                    test_pos_yx = test_pos[:, [1, 0]]
+                    u_val = interp_u_sum(test_pos_yx)[0]
+                    v_val = interp_v_sum(test_pos_yx)[0]
                     sum_magnitude = np.sqrt(u_val**2 + v_val**2)
                     
                     if sum_magnitude > 1e-6:  # Same threshold as wind vane
@@ -275,8 +246,10 @@ def reinitialize_particles(system):
                 interp_u_sum = system['interp_u_sum']
                 interp_v_sum = system['interp_v_sum']
                 test_pos = np.array([[x, y]])
-                u_val = interp_u_sum(test_pos)[0]
-                v_val = interp_v_sum(test_pos)[0]
+                # RegularGridInterpolator expects (y, x)
+                test_pos_yx = test_pos[:, [1, 0]]
+                u_val = interp_u_sum(test_pos_yx)[0]
+                v_val = interp_v_sum(test_pos_yx)[0]
                 sum_magnitude = np.sqrt(u_val**2 + v_val**2)
                 in_masked_region = sum_magnitude <= 1e-6
             except:
@@ -594,7 +567,7 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
 
     # Get colors for particles based on mode
     from .. import config
-    single_feature_mode = hasattr(config, 'adaptive_velocity_enabled') and hasattr(config, 'k') and config.k == 1
+    single_feature_mode = hasattr(config, 'k') and config.k == 1
     
     if single_feature_mode:
         # Single feature mode - use uniform color for the single feature
@@ -666,43 +639,12 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
     lc_.set_segments(segments)
     lc_.set_colors(colors_rgba)
     
-    # Apply adaptive appearance scaling for weak winds
-    if hasattr(config, 'velocity_scale_factor'):
-        scale_particle_appearance(lc_, config.actual_flow_magnitude, config.velocity_scale_factor)
+    # Adaptive appearance scaling removed
     
     return (lc_,)
 
 
-def scale_particle_appearance(line_collection, actual_magnitude, scale_factor):
-    """
-    Adjust particle visual properties based on wind strength.
-    
-    Args:
-        line_collection: Matplotlib LineCollection
-        actual_magnitude: Actual flow magnitude
-        scale_factor: Display scaling factor
-    """
-    if scale_factor > 3.0:
-        # Very weak wind - make particles more visible
-        line_widths = 2.0  # Thicker lines
-        alpha_boost = 1.5  # More opaque
-    elif scale_factor > 1.5:
-        # Weak wind - slightly enhanced
-        line_widths = 1.5
-        alpha_boost = 1.2
-    else:
-        # Normal wind - standard appearance  
-        line_widths = 1.0
-        alpha_boost = 1.0
-    
-    line_collection.set_linewidths(line_widths)
-    
-    # Adjust alpha values
-    current_colors = line_collection.get_colors()
-    if len(current_colors) > 0:
-        adjusted_colors = current_colors.copy()
-        adjusted_colors[:, 3] = np.clip(current_colors[:, 3] * alpha_boost, 0, 1)
-        line_collection.set_colors(adjusted_colors)
+# Removed: scale_particle_appearance (adaptive visual scaling)
 
 
 def update_particles_with_families(system, interp_u_sum=None, interp_v_sum=None, 
