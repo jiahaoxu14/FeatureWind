@@ -14,20 +14,68 @@ from .. import config
 
 def highlight_unmasked_cells(ax, system, grid_res=None, valid_points=None):
     """
-    Map-view overlay disabled: do not draw or filter by convex hull/threshold.
-    Stores an all-True mask so downstream components treat all cells as valid.
+    Highlight unmasked cells using the SAME buffer-based mask as the final field.
+    This avoids mismatches between the visual overlay and runtime masking.
     """
     if grid_res is None:
         grid_res = config.DEFAULT_GRID_RES
 
-    # Provide an all-True mask to disable masking behavior elsewhere (e.g., wind vane)
+    xmin, xmax, ymin, ymax = config.bounding_box
+    dx = (xmax - xmin) / grid_res
+    dy = (ymax - ymin) / grid_res
+
+    # Build buffer-based mask directly from data positions
+    positions = None
+    if valid_points:
+        try:
+            positions = np.array([p.position for p in valid_points])
+        except Exception:
+            positions = None
+
+    # Default: if no positions available, fall back to all masked (no overlay)
+    if positions is None or len(positions) == 0:
+        return
+
+    # Initialize all cells as masked; unmask buffered regions around each point
+    unmasked_cells = np.zeros((grid_res, grid_res), dtype=bool)
+
+    buffer_x = dx * config.MASK_BUFFER_FACTOR
+    buffer_y = dy * config.MASK_BUFFER_FACTOR
+
+    for px, py in positions:
+        # Buffer rectangle in index space
+        i_start = max(0, int((py - buffer_y - ymin) / dy))
+        i_end   = min(grid_res, int((py + buffer_y - ymin) / dy) + 1)
+        j_start = max(0, int((px - buffer_x - xmin) / dx))
+        j_end   = min(grid_res, int((px + buffer_x - xmin) / dx) + 1)
+        unmasked_cells[i_start:i_end, j_start:j_end] = True
+
+        # Ensure exact cell is unmasked
+        i = int((py - ymin) / dy)
+        j = int((px - xmin) / dx)
+        i = max(0, min(grid_res - 1, i))
+        j = max(0, min(grid_res - 1, j))
+        unmasked_cells[i, j] = True
+
+    # Persist mask for wind vane and other consumers
     try:
-        system['unmasked_cells'] = np.ones((grid_res, grid_res), dtype=bool)
-        system['cells_with_data'] = np.ones((grid_res, grid_res), dtype=bool)
+        system['unmasked_cells'] = unmasked_cells
+        system['cells_with_data'] = unmasked_cells.copy()
+        if positions is not None:
+            system['positions'] = positions
     except Exception:
         pass
-    # No overlay rectangles are drawn
-    return
+
+    # Draw semi-transparent gray rectangles over unmasked cells
+    for i in range(grid_res):
+        for j in range(grid_res):
+            if unmasked_cells[i, j]:
+                x_left = xmin + j * dx
+                y_bottom = ymin + i * dy
+                rect = Rectangle((x_left, y_bottom), dx, dy,
+                                 facecolor='gray', alpha=0.1,
+                                 edgecolor='gray', linewidth=0.5, zorder=2)
+                ax.add_patch(rect)
 
 
 def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors, lc, 
@@ -207,6 +255,46 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             mags_all.append(np.sqrt(u_val**2 + v_val**2))
     else:
         return  # Can't visualize without grid data
+
+    # Diagnostics: report whether the hovered cell center lies inside the data convex hull
+    try:
+        from scipy.spatial import Delaunay
+        xmin, xmax, ymin, ymax = config.bounding_box
+        # Derive grid_res from system grids to avoid mismatch
+        rs, cs = system['grid_u_all_feats'].shape[1:]
+        dx = (xmax - xmin) / cs
+        dy = (ymax - ymin) / rs
+        cell_center_x = xmin + (cell_j + 0.5) * dx
+        cell_center_y = ymin + (cell_i + 0.5) * dy
+        # Build/cached triangulation of positions
+        if 'positions' in system and system['positions'] is not None:
+            if 'positions_tris' not in system or system.get('positions_tris_n', 0) != len(system['positions']):
+                try:
+                    system['positions_tris'] = Delaunay(system['positions'])
+                    system['positions_tris_n'] = len(system['positions'])
+                except Exception:
+                    system['positions_tris'] = None
+            tri = system.get('positions_tris', None)
+            if tri is not None:
+                inside = tri.find_simplex(np.array([[cell_center_x, cell_center_y]])) >= 0
+                print(f"  ↳ Cell center ({cell_center_x:.5f}, {cell_center_y:.5f}) inside data hull: {bool(inside)}")
+    except Exception:
+        pass
+
+    # Print all feature vectors for this unmasked cell to the terminal (on cell change)
+    try:
+        last_printed = system.get('vane_last_printed_cell', None)
+        current_cell = (int(cell_i), int(cell_j))
+        if last_printed != current_cell:
+            system['vane_last_printed_cell'] = current_cell
+            print(f"\nWind-Vane cell ({cell_i},{cell_j}) feature vectors:")
+            for feat_idx in range(len(col_labels)):
+                u_val, v_val = vectors_all[feat_idx]
+                mag_val = mags_all[feat_idx]
+                name = col_labels[feat_idx] if feat_idx < len(col_labels) else f"feat_{feat_idx}"
+                print(f"  {feat_idx:3d} | {name:>20s} : (u={u_val:+.5f}, v={v_val:+.5f}) | |v|={mag_val:.5f}")
+    except Exception:
+        pass
     
     # Get the dominant feature for this cell
     dominant_feature = -1
@@ -218,7 +306,9 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
     # Place grid cell point at center of Wind Vane
     # Draw grid cell marker in Wind Vane (always at center)
     # Use color of magnitude-dominant feature for center marker
-    if (dominant_feature >= 0 and dominant_feature < len(selected_features) and
+    # dominant_feature is an absolute index; ensure it is among selected features
+    if (dominant_feature is not None and dominant_feature >= 0 and
+        (dominant_feature in selected_features) and
         dominant_feature < len(feature_colors)):
         center_marker_color = feature_colors[dominant_feature]
     else:
@@ -331,6 +421,28 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                               head_width=0.04, head_length=0.04,
                               fc=color, ec=color, linewidth=1.5, alpha=0.7, zorder=8-i)
         
+        # Draw a scale meter at bottom of vane to indicate magnitude mapping
+        try:
+            # Meter length in canvas units and corresponding magnitude
+            meter_len = max_canvas_radius * 0.8
+            mag_for_meter = meter_len / max(scale_factor, 1e-12)
+            y_meter = -0.75  # near bottom within [-0.8, 0.8]
+            x0, x1 = -meter_len / 2.0, meter_len / 2.0
+            try:
+                from .color_system import TEXT_COLOR
+                meter_color = TEXT_COLOR
+            except Exception:
+                meter_color = 'black'
+            ax2.plot([x0, x1], [y_meter, y_meter], color=meter_color, linewidth=2, zorder=30)
+            # End ticks
+            ax2.plot([x0, x0], [y_meter - 0.02, y_meter + 0.02], color=meter_color, linewidth=2, zorder=30)
+            ax2.plot([x1, x1], [y_meter - 0.02, y_meter + 0.02], color=meter_color, linewidth=2, zorder=30)
+            # Label centered
+            ax2.text(0.0, y_meter - 0.05, f"scale: {mag_for_meter:.3g}", ha='center', va='center', fontsize=8,
+                     color=meter_color, zorder=30)
+        except Exception:
+            pass
+
         # Draw wind vane arrow showing the sum vector (actual flow direction)
         # Always draw for unmasked cells when there are selected vectors
         if len(vectors_selected) > 0:

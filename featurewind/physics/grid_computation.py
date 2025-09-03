@@ -39,8 +39,11 @@ def create_grid_coordinates(grid_res):
 
 def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y):
     """
-    Interpolate a single feature's vectors onto the grid.
-    No additional masking is applied; values outside convex hull are zero via fill_value.
+    Interpolate a single feature's vectors onto the grid with robust outside-hull handling.
+    
+    Strategy:
+        1) Linear interpolation inside the Delaunay triangulation (best quality)
+        2) Nearest-neighbor fallback outside the hull to avoid zeros
     
     Args:
         positions (np.ndarray): Data point positions, shape (N, 2)
@@ -50,9 +53,27 @@ def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y):
     Returns:
         tuple: (grid_u, grid_v) - interpolated velocity components
     """
-    # Interpolate each component onto the grid (linear), zero outside data support
-    grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='linear', fill_value=0.0)
-    grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='linear', fill_value=0.0)
+    # First pass: linear interpolation with NaN outside the hull
+    grid_u_lin = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='linear', fill_value=np.nan)
+    grid_v_lin = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='linear', fill_value=np.nan)
+
+    # Identify cells outside the triangulation (NaNs from linear interpolation)
+    nan_mask = np.isnan(grid_u_lin) | np.isnan(grid_v_lin)
+
+    if np.any(nan_mask):
+        # Second pass: nearest-neighbor interpolation everywhere
+        grid_u_nn = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='nearest', fill_value=0.0)
+        grid_v_nn = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='nearest', fill_value=0.0)
+        # Combine: use linear where available, nearest elsewhere
+        grid_u = np.where(nan_mask, grid_u_nn, grid_u_lin)
+        grid_v = np.where(nan_mask, grid_v_nn, grid_v_lin)
+    else:
+        grid_u, grid_v = grid_u_lin, grid_v_lin
+
+    # Replace any residual NaNs (extreme edge cases) with zeros
+    grid_u = np.nan_to_num(grid_u, nan=0.0)
+    grid_v = np.nan_to_num(grid_v, nan=0.0)
+
     return grid_u, grid_v
 
 
