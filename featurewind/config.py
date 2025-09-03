@@ -8,7 +8,7 @@ settings used throughout the FeatureWind visualization system.
 import numpy as np
 
 # Global configuration variables
-velocity_scale = 0.4  # Original stable value
+velocity_scale = 0.2  # Original stable value
 k = None  # Number of top features (will be set dynamically)
 bounding_box = None  # Will be computed dynamically
 real_feature_rgba = {}  # Feature to RGBA mapping for particles
@@ -39,6 +39,8 @@ GLASBEY_COLORS = [
 
 # Grid computation parameters
 MASK_BUFFER_FACTOR = 0    # Buffer size around data points for interpolation (in cell units)
+# Unified masking threshold for summed magnitude checks
+MASK_THRESHOLD = 1e-6
 
 # Particle physics parameters
 MAX_SAFE_VELOCITY = 10.0  # Maximum velocity magnitude per frame to prevent runaway particles

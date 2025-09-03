@@ -213,10 +213,42 @@ def main():
      grid_u_feats, grid_v_feats, cell_dominant_features, 
      grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y, 
      cell_soft_dominance) = grid_data
-    
+
     # Create the combined (summed) velocity field for the top-k features
     grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (grid_res, grid_res)
     grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (grid_res, grid_res)
+    
+    # Report dominant cell counts per feature, ignoring masked cells (unified strategy)
+    try:
+        xmin, xmax, ymin, ymax = config.bounding_box
+        dx = (xmax - xmin) / grid_res
+        dy = (ymax - ymin) / grid_res
+        # Threshold-based unmasking using summed magnitude
+        sum_magnitudes = np.sqrt(grid_u_sum**2 + grid_v_sum**2)
+        threshold = 1e-6
+        unmasked = sum_magnitudes > threshold
+        # Never mask cells that contain data points
+        if valid_points:
+            cells_with_data = np.zeros((grid_res, grid_res), dtype=bool)
+            for point in valid_points:
+                x, y = point.position
+                if xmin <= x <= xmax and ymin <= y <= ymax:
+                    j = int((x - xmin) / dx)
+                    i = int((y - ymin) / dy)
+                    i = max(0, min(i, grid_res - 1))
+                    j = max(0, min(j, grid_res - 1))
+                    cells_with_data[i, j] = True
+            unmasked |= cells_with_data
+        # Count only unmasked cells
+        masked_filter = unmasked.ravel()
+        filtered = cell_dominant_features.ravel()[masked_filter]
+        counts = np.bincount(filtered, minlength=len(col_labels))
+        total_unmasked = int(np.count_nonzero(unmasked))
+        print("\nDominant cell counts per feature (out of", total_unmasked, "unmasked cells):")
+        for idx, count in enumerate(counts):
+            print(f"  {idx:3d} | {col_labels[idx]}: {int(count)}")
+    except Exception:
+        pass
     
     # Step 4: Feature clustering and family-based color assignment
     

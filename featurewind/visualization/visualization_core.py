@@ -58,12 +58,13 @@ def highlight_unmasked_cells(ax, system, grid_res=None, valid_points=None):
     
     # Use same threshold as wind vane for consistency - less aggressive threshold
     # But NEVER mask cells that contain data points
-    threshold = 1e-6
+    threshold = getattr(config, 'MASK_THRESHOLD', 1e-6)
     unmasked_cells = (sum_magnitudes > threshold) | cells_with_data
 
     # Store unified mask in system for use by wind vane and others
     try:
         system['unmasked_cells'] = unmasked_cells
+        system['cells_with_data'] = cells_with_data
     except Exception:
         pass
     
@@ -221,18 +222,29 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
     cell_i, cell_j = mouse_data['grid_cell']
     grid_res = mouse_data.get('grid_res', config.DEFAULT_GRID_RES)
     
-    # Validate grid cell indices
-    if cell_i < 0 or cell_i >= grid_res or cell_j < 0 or cell_j >= grid_res:
+    # Validate grid cell indices against actual grid
+    if cell_i < 0 or cell_j < 0:
         return
-    
-    # If unified mask exists and this cell is masked, annotate and return
-    if 'unmasked_cells' in system:
-        unmasked = system['unmasked_cells']
-        if (cell_i < unmasked.shape[0] and cell_j < unmasked.shape[1] and
-            not unmasked[cell_i, cell_j]):
-            ax2.text(0.5, 0.5, "Masked cell", transform=ax2.transAxes,
-                     ha='center', va='center', fontsize=10, color='gray')
+    # If system provides grid shape, prefer it for bounds
+    try:
+        if 'grid_u_sum' in system:
+            rs, cs = system['grid_u_sum'].shape
+            if cell_i >= rs or cell_j >= cs:
+                return
+    except Exception:
+        if cell_i >= grid_res or cell_j >= grid_res:
             return
+    
+    # Consistent masking check using unified mask from main view
+    masked = False
+    unmasked = system.get('unmasked_cells', None)
+    if unmasked is not None and 0 <= cell_i < unmasked.shape[0] and 0 <= cell_j < unmasked.shape[1]:
+        masked = not bool(unmasked[cell_i, cell_j])
+
+    if masked:
+        ax2.text(0.5, 0.5, "Masked cell", transform=ax2.transAxes,
+                 ha='center', va='center', fontsize=10, color='gray')
+        return
 
     # Get vectors for ALL features from the all-features grid
     vectors_all = []
@@ -288,22 +300,9 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             mags_selected.append(mags_all[feat_idx])
             features_selected.append(feat_idx)
     
-    # Calculate the sum vector (what actually drives particles)
-    sum_vector = np.sum(vectors_selected, axis=0) if vectors_selected else np.array([0, 0])
+    # Compute summed vector for direction/magnitude cues in the vane
+    sum_vector = np.sum(vectors_selected, axis=0) if vectors_selected else np.array([0.0, 0.0])
     sum_magnitude = np.linalg.norm(sum_vector)
-    
-    # Only show masked if the SUM has very little flow (matching particle behavior)
-    # Use same threshold as particle system for consistency - less aggressive threshold
-    is_masked_cell = sum_magnitude < 1e-6
-    
-    # Show masked cell indication if the sum vector has no flow
-    if is_masked_cell:
-        # Draw a visual indication that this cell is masked/has no flow
-        ax2.text(0, 0, 'MASKED\nCELL', ha='center', va='center', 
-                fontsize=12, color='red', weight='bold', alpha=0.7)
-        ax2.scatter(0, 0, c='lightgray', s=120, marker='X', edgecolor='red', 
-                   linewidth=2, zorder=10, alpha=0.7)
-        return
     
     if len(vectors_selected) > 0:
         # Find the longest vector
@@ -320,10 +319,6 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
         vector_info = []
         
         for i, (vector, mag, feat_idx) in enumerate(zip(vectors_selected, mags_selected, features_selected)):
-            # Skip truly zero vectors for cleaner visualization
-            if mag < 1e-12:  # More lenient threshold
-                continue
-                
             # Scale the gradient vector to match the consistent magnitude
             scaled_vector = np.array(vector) * scale_factor
             
@@ -380,23 +375,20 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 # ax2.add_patch(hull_polygon)  # Hidden per user request
                 
             except Exception as e:
-                # Collinear points - draw ribbon visualization
-                if len(vectors_selected) == 2:
-                    # Two features - draw both arrows
-                    for i, (vector, feat_idx) in enumerate(zip(vectors_selected, features_selected)):
-                        scaled_vector = np.array(vector) * scale_factor
-                        color = feature_colors[feat_idx] if feat_idx < len(feature_colors) else 'black'
-                        
-                        ax2.arrow(0, 0, scaled_vector[0], scaled_vector[1], 
-                                 head_width=0.04, head_length=0.04, 
-                                 fc=color, ec=color, linewidth=1.5, alpha=0.7, zorder=8-i)
-                        ax2.arrow(0, 0, -scaled_vector[0], -scaled_vector[1], 
-                                 head_width=0.04, head_length=0.04, 
-                                 fc=color, ec=color, linewidth=1.5, alpha=0.7, zorder=8-i)
+                # Degenerate hull (e.g., collinear or duplicate points) — draw all vectors as arrows
+                for i, (vector, feat_idx) in enumerate(zip(vectors_selected, features_selected)):
+                    scaled_vector = np.array(vector) * scale_factor
+                    color = feature_colors[feat_idx] if feat_idx < len(feature_colors) else 'black'
+                    ax2.arrow(0, 0, scaled_vector[0], scaled_vector[1],
+                              head_width=0.04, head_length=0.04,
+                              fc=color, ec=color, linewidth=1.5, alpha=0.7, zorder=8-i)
+                    ax2.arrow(0, 0, -scaled_vector[0], -scaled_vector[1],
+                              head_width=0.04, head_length=0.04,
+                              fc=color, ec=color, linewidth=1.5, alpha=0.7, zorder=8-i)
         
         # Draw wind vane arrow showing the sum vector (actual flow direction)
-        # This is drawn regardless of convex hull success
-        if sum_magnitude > 1e-6 and len(vectors_selected) > 0:
+        # Always draw for unmasked cells when there are selected vectors
+        if len(vectors_selected) > 0:
             # Create traditional wind vane with TRULY fixed geometry and alpha-based magnitude encoding
             vane_length = 0.35  # Fixed radius (0.7 diameter fits well in unit circle)
             
@@ -427,16 +419,11 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             # Alpha encoding for magnitude - simpler approach with wider variation
             # Use logarithmic scaling to get more variation in the visible range
             import math
-            
-            # Use log scaling for better variation across magnitude range
-            if sum_magnitude > 1e-6:
-                # Scale based on log of sum magnitude for better dynamic range
-                log_magnitude = math.log10(max(0.1, sum_magnitude))  # Avoid log(0)
-                # Map log range roughly [-1, 2] to alpha range [0.2, 1.0]
-                alpha_ratio = (log_magnitude + 1.0) / 3.0  # Normalize log range
-                alpha_ratio = max(0.0, min(1.0, alpha_ratio))  # Clamp to [0, 1]
-            else:
-                alpha_ratio = 0.0
+            # Use log scaling for better variation across magnitude range (no gating)
+            log_magnitude = math.log10(sum_magnitude + 1e-9)  # small epsilon to avoid log(0)
+            # Map log range roughly [-9, +inf) to [0,1] after shifting; keep within [0,1]
+            alpha_ratio = (log_magnitude + 9.0) / 12.0
+            alpha_ratio = max(0.0, min(1.0, alpha_ratio))
             
             # Wider alpha range for more dramatic variation: 0.2 to 1.0
             magnitude_alpha = max(0.2, min(1.0, 0.2 + 0.8 * alpha_ratio))

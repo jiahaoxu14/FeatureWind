@@ -242,7 +242,16 @@ def create_reliable_event_system(fig, ax1, ax2, ui_controller, system, col_label
     """
     # Create the event manager
     event_manager = EventManager(fig, ax1, ax2, ui_controller)
-    event_manager.set_grid_resolution(grid_res)
+    # Derive grid resolution from system mask or grids to avoid mismatches
+    derived_res = None
+    try:
+        if 'unmasked_cells' in system and system['unmasked_cells'] is not None:
+            derived_res = system['unmasked_cells'].shape[0]
+        elif 'cell_dominant_features' in system and system['cell_dominant_features'] is not None:
+            derived_res = system['cell_dominant_features'].shape[0]
+    except Exception:
+        derived_res = None
+    event_manager.set_grid_resolution(derived_res or grid_res)
     
     # Create wind vane update callback with family support
     def wind_vane_update_callback(mouse_data):

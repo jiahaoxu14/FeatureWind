@@ -538,56 +538,32 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
     # Store velocity in system for color computation
     system['last_velocity'] = velocity
 
-    # Get colors for particles based on mode
-    from .. import config
-    single_feature_mode = hasattr(config, 'k') and config.k == 1
-    
-    if single_feature_mode:
-        # Single feature mode - use uniform color for the single feature
-        if (family_assignments is not None and feature_colors is not None and 
-            grad_indices is not None and len(grad_indices) > 0 and len(feature_colors) > 0):
-            
-            # Use the color of the actual selected feature (not just index 0)
-            selected_feature_idx = grad_indices[0]  # The actual feature index selected
-            if selected_feature_idx < len(feature_colors):
-                single_feature_color = feature_colors[selected_feature_idx]
-            else:
-                # Fallback if index is out of range - use first color
-                single_feature_color = feature_colors[0]
-            
-            # Convert hex to RGB if needed
-            if isinstance(single_feature_color, str) and single_feature_color.startswith('#'):
-                from ..visualization import color_system
-                r, g, b = color_system.hex_to_rgb(single_feature_color)
-            else:
-                r, g, b = single_feature_color[:3] if len(single_feature_color) >= 3 else (0, 0, 0)
-            
-            # All particles get the same color with speed-based alpha
-            particle_colors = np.zeros((n_active, 4))
-            for i in range(n_active):
-                intensity = 0.5 + 0.5 * (speeds[i] / max_speed)  # Alpha based on speed
-                particle_colors[i] = [r, g, b, intensity]
-        else:
-            # Fallback to blue for single feature when color data isn't available
-            particle_colors = np.zeros((n_active, 4))
-            for i in range(n_active):
-                intensity = 0.5 + 0.5 * (speeds[i] / max_speed)
-                particle_colors[i] = [0.2, 0.4, 0.8, intensity]  # Blue with speed-based alpha
-    elif family_assignments is not None and feature_colors is not None:
-        # Multi-feature mode - use family-based coloring
+    # Get colors for particles based on dominant feature of the cell they occupy
+    if family_assignments is not None and feature_colors is not None:
+        # Use family-based coloring regardless of single/multi-feature selection
         particle_colors = update_particle_colors_family_based(system, family_assignments, feature_colors)
     else:
-        # Fallback: speed-based grayscale coloring  
+        # Fallback: speed-based grayscale coloring
         particle_colors = np.zeros((n_active, 4))
         for i in range(n_active):
             intensity = 0.3 + 0.7 * (speeds[i] / max_speed)
-            particle_colors[i] = [0, 0, 0, intensity]  # Black with speed-based alpha
+            particle_colors[i] = [0, 0, 0, intensity]
 
-    # Build trail segments with family-based colors
+    # Build trail segments with per-segment color based on the dominant feature
+    # Use segment end-point positions (his[:, 1:, :]) to determine the cell color
+    positions_for_color = his[:, 1:, :].reshape(-1, 2)
+    dom_feats_for_segments = get_dominant_features_vectorized(positions_for_color, system)
+
+    # Prepare feature index -> RGB map
+    feature_rgb_map = {}
+    if feature_colors is not None:
+        from ..visualization.color_system import hex_to_rgb
+        for feat_idx in range(min(len(feature_colors), (system.get('grid_u_all_feats', np.zeros((0,))).shape[0] if isinstance(system.get('grid_u_all_feats', None), np.ndarray) else len(feature_colors)))):
+            base_color = feature_colors[feat_idx]
+            feature_rgb_map[feat_idx] = hex_to_rgb(base_color) if isinstance(base_color, str) and base_color.startswith('#') else (base_color[0], base_color[1], base_color[2])
+
+    # Fill segments and colors
     for i in range(n_active):
-        # Use particle's family-based color
-        r, g, b, base_alpha = particle_colors[i]
-        
         # Alpha based only on normalized speed (no age factor)
         speed_alpha = speeds[i] / max_speed
         alpha_value = np.clip(0.3 + 0.7 * speed_alpha, 0.0, 1.0)
@@ -597,7 +573,12 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
             segments[seg_idx, 0, :] = his[i, t, :]
             segments[seg_idx, 1, :] = his[i, t + 1, :]
 
-            # Assign uniform per-particle alpha based on speed only
+            # Determine color from segment end-point dominant feature
+            dom_feat = dom_feats_for_segments[seg_idx] if seg_idx < len(dom_feats_for_segments) else -1
+            if dom_feat in feature_rgb_map:
+                r, g, b = feature_rgb_map[dom_feat]
+            else:
+                r, g, b = 0.0, 0.0, 0.0
             colors_rgba[seg_idx] = [r, g, b, alpha_value]
 
     lc_.set_segments(segments)
