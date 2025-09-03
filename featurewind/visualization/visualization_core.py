@@ -421,27 +421,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                               head_width=0.04, head_length=0.04,
                               fc=color, ec=color, linewidth=1.5, alpha=0.7, zorder=8-i)
         
-        # Draw a scale meter at bottom of vane to indicate magnitude mapping
-        try:
-            # Meter length in canvas units and corresponding magnitude
-            meter_len = max_canvas_radius * 0.8
-            mag_for_meter = meter_len / max(scale_factor, 1e-12)
-            y_meter = -0.75  # near bottom within [-0.8, 0.8]
-            x0, x1 = -meter_len / 2.0, meter_len / 2.0
-            try:
-                from .color_system import TEXT_COLOR
-                meter_color = TEXT_COLOR
-            except Exception:
-                meter_color = 'black'
-            ax2.plot([x0, x1], [y_meter, y_meter], color=meter_color, linewidth=2, zorder=30)
-            # End ticks
-            ax2.plot([x0, x0], [y_meter - 0.02, y_meter + 0.02], color=meter_color, linewidth=2, zorder=30)
-            ax2.plot([x1, x1], [y_meter - 0.02, y_meter + 0.02], color=meter_color, linewidth=2, zorder=30)
-            # Label centered
-            ax2.text(0.0, y_meter - 0.05, f"scale: {mag_for_meter:.3g}", ha='center', va='center', fontsize=8,
-                     color=meter_color, zorder=30)
-        except Exception:
-            pass
+        # Wind meter removed per user request
 
         # Draw wind vane arrow showing the sum vector (actual flow direction)
         # Always draw for unmasked cells when there are selected vectors
