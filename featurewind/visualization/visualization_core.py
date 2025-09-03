@@ -66,7 +66,9 @@ def highlight_unmasked_cells(ax, system, grid_res=None, valid_points=None):
     except Exception:
         pass
 
-    # Draw semi-transparent gray rectangles over unmasked cells
+    # Optionally draw semi-transparent gray rectangles over unmasked cells
+    if not getattr(config, 'SHOW_UNMASKED_OVERLAY', True):
+        return
     for i in range(grid_res):
         for j in range(grid_res):
             if unmasked_cells[i, j]:
@@ -139,15 +141,33 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
         alphas = 0.2 + normalized * 0.8
         marker_style = markers[i % len(markers)]
 
-        ax.scatter(
-            positions_lab[:, 0],
-            positions_lab[:, 1],
-            marker=marker_style,
-            color="gray",
-            s=10,
-            label=f"Label {lab}",
-            zorder=4
-        )
+        # Hollow or solid data points based on config
+        if getattr(config, 'HOLLOW_DATA_POINTS', True):
+            edge_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
+            edge_width = float(getattr(config, 'DATA_POINT_EDGEWIDTH', 0.6))
+            edge_color = (0.4, 0.4, 0.4, edge_alpha)
+            ax.scatter(
+                positions_lab[:, 0],
+                positions_lab[:, 1],
+                marker=marker_style,
+                facecolors='none',
+                edgecolors=edge_color,
+                linewidths=edge_width,
+                s=10,
+                label=f"Label {lab}",
+                zorder=4
+            )
+        else:
+            fill_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
+            ax.scatter(
+                positions_lab[:, 0],
+                positions_lab[:, 1],
+                marker=marker_style,
+                color=(0.5, 0.5, 0.5, fill_alpha),
+                s=10,
+                label=f"Label {lab}",
+                zorder=4
+            )
 
     # Add particle line collection
     ax.add_collection(lc)
@@ -170,7 +190,7 @@ def prepare_wind_vane_subplot(ax2):
     ax2.set_aspect('equal')
     ax2.set_xticks([])
     ax2.set_yticks([])
-    ax2.set_title("Wind Vane", fontsize=16, pad=15)  # Larger title
+    # Title will be set in apply_professional_styling for consistent styling
     
     # Draw reference circle - larger for bigger wind vane
     circle = plt.Circle((0, 0), 0.7, fill=False, color='lightgray', linewidth=1.5)
@@ -427,7 +447,8 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
         # Always draw for unmasked cells when there are selected vectors
         if len(vectors_selected) > 0:
             # Create traditional wind vane with TRULY fixed geometry and alpha-based magnitude encoding
-            vane_length = 0.35  # Fixed radius (0.7 diameter fits well in unit circle)
+            # Slightly smaller geometry for a subtler appearance
+            vane_length = 0.30  # reduced from 0.35
             
             # Get ONLY the direction (unit vector) from sum vector - ignore magnitude for positioning
             if sum_magnitude > 1e-8:
@@ -453,24 +474,27 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             else:
                 dominant_color = 'black'
             
-            # Alpha encoding for magnitude - simpler approach with wider variation
-            # Use logarithmic scaling to get more variation in the visible range
-            import math
-            # Use log scaling for better variation across magnitude range (no gating)
-            log_magnitude = math.log10(sum_magnitude + 1e-9)  # small epsilon to avoid log(0)
-            # Map log range roughly [-9, +inf) to [0,1] after shifting; keep within [0,1]
-            alpha_ratio = (log_magnitude + 9.0) / 12.0
-            alpha_ratio = max(0.0, min(1.0, alpha_ratio))
-            
-            # Wider alpha range for more dramatic variation: 0.2 to 1.0
-            magnitude_alpha = max(0.2, min(1.0, 0.2 + 0.8 * alpha_ratio))
+            # Alpha aligned with particle trail alpha: use current frame max particle speed
+            # Compute a comparable "cell speed" as ||sum_vector|| scaled like particle velocities
+            try:
+                last_v = system.get('last_velocity', None)
+                if last_v is not None and len(last_v) > 0:
+                    max_speed = float(np.linalg.norm(last_v, axis=1).max() + 1e-9)
+                else:
+                    max_speed = 1.0
+            except Exception:
+                max_speed = 1.0
+            cell_speed = float(np.linalg.norm(sum_vector)) * float(getattr(config, 'velocity_scale', 1.0))
+            speed_ratio = cell_speed / max_speed if max_speed > 0 else 0.0
+            speed_ratio = max(0.0, min(1.0, speed_ratio))
+            magnitude_alpha = max(0.3, min(1.0, 0.3 + 0.7 * speed_ratio))
             
             
             # Wind vane components with FIXED geometry - clearly distinct from thin feature vectors
             perp_direction = np.array([-flow_direction[1], flow_direction[0]])  # Perpendicular
             
             # 1. Main shaft (thick central line) - much thicker than feature vectors
-            shaft_length = vane_length * 0.8  # 80% of radius
+            shaft_length = vane_length * 0.75  # reduced from 0.8
             shaft_start = -flow_direction * shaft_length * 0.5
             shaft_end = flow_direction * shaft_length * 0.5
             ax2.plot([shaft_start[0], shaft_end[0]], [shaft_start[1], shaft_end[1]], 
@@ -479,7 +503,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             
             # 2. Large arrow head (pointing in flow direction) - fixed position at radius
             arrow_head_pos = flow_direction * vane_length  # Fixed at vane_length radius
-            arrow_size = vane_length * 0.4  # Larger arrow head
+            arrow_size = vane_length * 0.32  # reduced from 0.4
             
             arrow_vertices = np.array([
                 arrow_head_pos,  # Tip at fixed radius
@@ -493,7 +517,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             
             # 3. Large flag tail (showing flow origin) - fixed position opposite to arrow
             flag_center = -flow_direction * vane_length  # Fixed at opposite end
-            flag_size = vane_length * 0.35  # Large flag
+            flag_size = vane_length * 0.28  # reduced from 0.35
             
             # Create rectangular flag
             flag_vertices = np.array([
@@ -504,7 +528,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             ])
             
             flag_rectangle = plt.Polygon(flag_vertices, color=dominant_color, 
-                                       alpha=magnitude_alpha * 0.8, zorder=21)
+                                       alpha=magnitude_alpha, zorder=21)
             ax2.add_patch(flag_rectangle)
         
         # Determine which endpoints are on the convex hull boundary
@@ -639,6 +663,10 @@ def apply_professional_styling(fig, ax1, ax2):
     for spine in ax1.spines.values():
         spine.set_visible(False)
     
+    # Apply unified title styling to both axes
+    title_kwargs = dict(fontsize=14, color=TEXT_COLOR, pad=14, weight='bold')
+    ax1.set_title("Wind Map", **title_kwargs)
+
     # Style wind vane - align with main plot background
     ax2.set_facecolor(BACKGROUND_COLOR)
     
@@ -647,8 +675,8 @@ def apply_professional_styling(fig, ax1, ax2):
         spine.set_color(TEXT_COLOR)
         spine.set_linewidth(0.5)
         
-    # Wind vane title styling
-    ax2.set_title("Wind Vane", fontsize=14, color=TEXT_COLOR, pad=15, weight='bold')
+    # Wind vane title styling (identical to map)
+    ax2.set_title("Wind Vane", **title_kwargs)
 
 
 def save_figure_frames(fig, output_dir, num_frames=5):

@@ -38,7 +38,7 @@ GLASBEY_COLORS = [
 ]
 
 # Grid computation parameters
-MASK_BUFFER_FACTOR = 0.5    # Buffer size around data points for interpolation (in cell units)
+MASK_BUFFER_FACTOR = 0.2    # Buffer size around data points for interpolation (in cell units)
 # Unified masking threshold for summed magnitude checks
 MASK_THRESHOLD = 1e-6
 
@@ -61,6 +61,18 @@ MAX_FEATURE_FAMILIES = 6      # Maximum number of feature families (Paul Tol pal
 COLOR_BY_FEATURE_WHEN_FEW = True
 # Threshold for switching to per-feature colors (count of selected features)
 FEATURE_COLOR_DISTINCT_THRESHOLD = 5
+
+# Map overlay (gray background for unmasked cells)
+# Toggle to show or hide the gray cell overlay in the main map view.
+SHOW_UNMASKED_OVERLAY = False
+
+# Data points style (in main map view)
+# Draw data points as hollow markers (edge only) instead of solid fills
+HOLLOW_DATA_POINTS = True
+# Edge alpha for hollow data points
+DATA_POINT_ALPHA = 0.35
+# Edge width for hollow markers
+DATA_POINT_EDGEWIDTH = 0.6
 
 
 def initialize_global_state():

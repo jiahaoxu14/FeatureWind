@@ -439,71 +439,42 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
     # Use magnitude-based dominance for all particles
     dominant_features = get_dominant_features_vectorized(particle_positions, system)
     
-    # Vectorized color assignment
+    # Vectorized color assignment with speed-based alpha consistent with trail rendering
     valid_feature_mask = (dominant_features >= 0) & (dominant_features < len(feature_colors))
     valid_indices = np.where(valid_feature_mask)[0]
-    
+
+    # Compute per-particle alpha from last known speeds
+    if velocities is None and 'last_velocity' in system:
+        velocities = system['last_velocity']
+    speeds = np.linalg.norm(velocities, axis=1) if velocities is not None else np.zeros(n_particles)
+    max_speed = speeds.max() + 1e-9
+    speed_alphas = np.clip(0.3 + 0.7 * (speeds / max_speed), 0.0, 1.0)
+
+    # Assign RGB by dominant feature, alpha by speed
     if len(valid_indices) > 0:
-        # Process valid particles in batches
         valid_features = dominant_features[valid_indices]
-        
         for feat_idx in np.unique(valid_features):
             feat_mask = valid_features == feat_idx
             particle_indices = valid_indices[feat_mask]
-            
-            # Get base color for this feature
             base_color = feature_colors[feat_idx]
             rgb = hex_to_rgb(base_color)
-            
-            # Vectorized alpha computation
-            max_magnitude = max_magnitudes.get(feat_idx, 1.0)
-            if max_magnitude > 0:
-                # Get magnitudes for these particles (could be optimized further)
-                magnitudes = np.array([get_magnitude_at_position(particle_positions[i], feat_idx, system) 
-                                     for i in particle_indices])
-                magnitude_factors = magnitudes / max_magnitude
-            else:
-                magnitude_factors = np.ones(len(particle_indices))
-            
-            # Get dominance values (could be vectorized)
-            dominances = np.array([get_dominance_at_position(particle_positions[i], feat_idx, system)
-                                 for i in particle_indices])
-            
-            # Vectorized alpha calculation
-            alphas = 0.3 + 0.6 * magnitude_factors * dominances
-            alphas = np.clip(alphas, 0.3, 0.9)
-            
-            # Assign colors
             particle_colors[particle_indices, :3] = rgb
-            particle_colors[particle_indices, 3] = alphas
-    
-    # Handle invalid features: don't immediately mark for respawn, just color them differently
+            particle_colors[particle_indices, 3] = speed_alphas[particle_indices]
+
+    # Handle invalid features: color fallback, but alpha still from speed
     invalid_mask = ~valid_feature_mask
     if np.any(invalid_mask):
-        # Don't immediately mark these particles for respawn - let them try to find valid regions
-        # Only mark them for respawn if they've been invalid for a while
-        invalid_indices = np.where(invalid_mask)[0]
-        for idx in invalid_indices:
-            # Only mark for respawn if already near end of lifetime
-            if system['particle_lifetimes'][idx] > system['max_lifetime'] * 0.8:
-                system['particle_lifetimes'][idx] = system['max_lifetime'] + 1
-        
-        # For this frame, assign them the color of the nearest valid feature to avoid gray
         if len(feature_colors) > 0:
-            # Use the most common feature color as fallback
             if len(valid_indices) > 0:
-                # Find the most frequent valid feature
                 valid_features = dominant_features[valid_indices]
                 most_common_feature = np.bincount(valid_features).argmax()
                 fallback_color = feature_colors[most_common_feature]
             else:
-                # Use first feature color as fallback
                 fallback_color = feature_colors[0]
-            
             fallback_rgb = hex_to_rgb(fallback_color)
             particle_colors[invalid_mask, :3] = fallback_rgb
-            particle_colors[invalid_mask, 3] = 0.3  # Low alpha to indicate they're being respawned
-    
+            particle_colors[invalid_mask, 3] = speed_alphas[invalid_mask]
+
     return particle_colors
 
 
