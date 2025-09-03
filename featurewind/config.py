@@ -18,8 +18,8 @@ DEFAULT_GRID_RES = 30
 
 # Particle system parameters
 DEFAULT_NUM_PARTICLES = 800  # Increased to ensure visible particle density
-PARTICLE_LIFETIME = 50  # frames - increased to reduce respawn frequency
-TAIL_LENGTH = 15  # number of position history points
+PARTICLE_LIFETIME = 10  # frames - increased to reduce respawn frequency
+TAIL_LENGTH = 10  # number of position history points
 
 # Animation parameters
 ANIMATION_FRAMES = 1000
@@ -38,7 +38,7 @@ GLASBEY_COLORS = [
 ]
 
 # Grid computation parameters
-MASK_BUFFER_FACTOR = 0    # Buffer size around data points for interpolation (in cell units)
+MASK_BUFFER_FACTOR = 0.2    # Buffer size around data points for interpolation (in cell units)
 # Unified masking threshold for summed magnitude checks
 MASK_THRESHOLD = 1e-6
 

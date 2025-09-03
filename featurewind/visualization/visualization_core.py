@@ -517,12 +517,9 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                     # Use base color directly without lightness ramp to match particle colors
                     base_r, base_g, base_b = hex_to_rgb(base_color)
                     
-                    # Higher alpha for hull vectors to make them prominent
-                    pos_alpha = 0.9 if pos_on_hull else 0.3
-                    neg_alpha = 0.9 if neg_on_hull else 0.3
-                    
+                    # Higher alpha for hull vectors to make them prominent (either endpoint on hull)
+                    pos_alpha = 0.9
                     pos_color = (base_r, base_g, base_b, pos_alpha)
-                    neg_color = (base_r, base_g, base_b, neg_alpha)
                     
                 except ImportError:
                     # Fallback if color_system is not available
@@ -530,44 +527,28 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                         base_r = int(base_color[1:3], 16) / 255.0
                         base_g = int(base_color[3:5], 16) / 255.0
                         base_b = int(base_color[5:7], 16) / 255.0
-                        
-                        pos_alpha = 0.9 if pos_on_hull else 0.3
-                        neg_alpha = 0.9 if neg_on_hull else 0.3
-                        
-                        pos_color = (base_r, base_g, base_b, pos_alpha)
-                        neg_color = (base_r, base_g, base_b, neg_alpha)
+                        pos_color = (base_r, base_g, base_b, 0.9)
                     else:
                         # Use gray for non-hull vectors
-                        pos_color = (0.6, 0.6, 0.6, 0.9 if pos_on_hull else 0.3)
-                        neg_color = (0.6, 0.6, 0.6, 0.9 if neg_on_hull else 0.3)
+                        pos_color = (0.6, 0.6, 0.6, 0.9)
             else:
                 # Vector is NOT on hull boundary - use gray color
                 gray_value = 0.6
                 # Lower alpha for non-hull vectors
                 pos_alpha = 0.2
-                neg_alpha = 0.2
                 pos_color = (gray_value, gray_value, gray_value, pos_alpha)
-                neg_color = (gray_value, gray_value, gray_value, neg_alpha)
             
             # Draw vector arrows
             ax2.annotate('', xy=info['pos_end'], xytext=(0, 0),
                         arrowprops=dict(arrowstyle='->', color=pos_color, lw=2,
                                       shrinkA=0, shrinkB=0, alpha=pos_color[3]))
-            ax2.annotate('', xy=info['neg_end'], xytext=(0, 0),
-                        arrowprops=dict(arrowstyle='->', color=neg_color, lw=1.5,
-                                      shrinkA=0, shrinkB=0, alpha=neg_color[3]))
             
             # Add feature labels ONLY for vectors on convex hull boundary
             if (pos_on_hull or neg_on_hull) and feat_idx < len(col_labels):
                 label = col_labels[feat_idx][:8]  # Truncate long labels
-                
-                # Label the endpoint that's actually on the hull
-                if pos_on_hull:
-                    ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1, label,
-                            fontsize=8, ha='center', va='center', alpha=0.8)
-                elif neg_on_hull:
-                    ax2.text(info['neg_end'][0] * 1.1, info['neg_end'][1] * 1.1, label,
-                            fontsize=8, ha='center', va='center', alpha=0.8)
+                # Label near positive endpoint for consistency
+                ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1, label,
+                        fontsize=8, ha='center', va='center', alpha=0.8)
 
 
 def setup_figure_layout():
