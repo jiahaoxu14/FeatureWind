@@ -8,21 +8,21 @@ settings used throughout the FeatureWind visualization system.
 import numpy as np
 
 # Global configuration variables
-velocity_scale = 0.2  # Original stable value
+velocity_scale = 0.06  # Original stable value
 k = None  # Number of top features (will be set dynamically)
 bounding_box = None  # Will be computed dynamically
 real_feature_rgba = {}  # Feature to RGBA mapping for particles
 
 # Default grid resolution
-DEFAULT_GRID_RES = 30
+DEFAULT_GRID_RES = 40
 
 # Particle system parameters
-DEFAULT_NUM_PARTICLES = 800  # Increased to ensure visible particle density
-PARTICLE_LIFETIME = 10  # frames - increased to reduce respawn frequency
+DEFAULT_NUM_PARTICLES = 1200  # Increased to ensure visible particle density
+PARTICLE_LIFETIME = 5  # frames - increased to reduce respawn frequency
 TAIL_LENGTH = 10  # number of position history points
 
 # Animation parameters
-ANIMATION_FRAMES = 1000
+ANIMATION_FRAMES = 200
 ANIMATION_INTERVAL = 30  # milliseconds between frames (33 FPS - optimized for performance)
 
 # Window title
@@ -54,6 +54,13 @@ TEMPERATURE_SOFTMAX = 2.0  # Temperature for soft dominance computation
 
 # Feature selection limits
 MAX_FEATURE_FAMILIES = 6      # Maximum number of feature families (Paul Tol palette limit)
+
+# Coloring behavior
+# When visualizing a small number of features, use distinct per-feature colors
+# to avoid visual merging by family hue (helps interpretability for 2–10 features).
+COLOR_BY_FEATURE_WHEN_FEW = True
+# Threshold for switching to per-feature colors (count of selected features)
+FEATURE_COLOR_DISTINCT_THRESHOLD = 5
 
 
 def initialize_global_state():

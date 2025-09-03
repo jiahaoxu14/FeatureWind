@@ -219,6 +219,9 @@ def main():
     grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (grid_res, grid_res)
     
     # Report dominant cell counts per feature, ignoring masked cells (unified strategy)
+    # Keep counts available for later family-level aggregation diagnostics
+    counts = None
+    total_unmasked = None
     try:
         xmin, xmax, ymin, ymax = config.bounding_box
         dx = (xmax - xmin) / grid_res
@@ -267,6 +270,49 @@ def main():
     
     # Assign Paul Tol colors to families
     feature_colors = color_system.assign_family_colors(family_assignments)
+
+    # Diagnostics: show selected features -> family -> color mapping
+    try:
+        print("\nSelected features (index | name -> family, color):")
+        for sel_idx in (grad_indices if isinstance(grad_indices, (list, tuple, np.ndarray)) else [grad_indices]):
+            fam = int(family_assignments[sel_idx]) if family_assignments is not None else -1
+            col = feature_colors[sel_idx] if feature_colors and sel_idx < len(feature_colors) else "#000000"
+            print(f"  {sel_idx:3d} | {col_labels[sel_idx]} -> family {fam}, color {col}")
+    except Exception:
+        pass
+
+    # If only a few features are selected, switch to distinct per-feature colors to avoid
+    # multiple features sharing the same family hue (which can be visually misleading).
+    try:
+        n_selected = len(grad_indices)
+        if (config.COLOR_BY_FEATURE_WHEN_FEW and 
+            isinstance(grad_indices, (list, tuple, np.ndarray)) and 
+            n_selected <= config.FEATURE_COLOR_DISTINCT_THRESHOLD):
+            palette = config.GLASBEY_COLORS
+            for rank, feat_idx in enumerate(grad_indices):
+                if rank < len(palette) and feat_idx < len(feature_colors):
+                    feature_colors[feat_idx] = palette[rank]
+            print(f"\nApplied distinct per-feature colors for {n_selected} selected features (threshold {config.FEATURE_COLOR_DISTINCT_THRESHOLD}).")
+            for rank, feat_idx in enumerate(grad_indices):
+                print(f"  {feat_idx:3d} | {col_labels[feat_idx]} -> color {feature_colors[feat_idx]}")
+    except Exception:
+        pass
+
+    # If we computed per-feature dominance counts earlier, also aggregate by family to compare with hues
+    try:
+        if counts is not None and family_assignments is not None and len(family_assignments) == len(col_labels):
+            fam_counts = {}
+            for idx, cnt in enumerate(counts):
+                fam_id = int(family_assignments[idx])
+                fam_counts[fam_id] = fam_counts.get(fam_id, 0) + int(cnt)
+            print("\nDominant cell counts by family (for comparison with family hues):")
+            for fam_id in sorted(fam_counts.keys()):
+                # representative color: first feature in this family
+                rep_idx = next((i for i, f in enumerate(family_assignments) if int(f) == fam_id), None)
+                fam_color = feature_colors[rep_idx] if rep_idx is not None and rep_idx < len(feature_colors) else "#000000"
+                print(f"  family {fam_id}: {fam_counts[fam_id]} cells, color {fam_color}")
+    except Exception:
+        pass
     
     
     # Analyze the feature families
