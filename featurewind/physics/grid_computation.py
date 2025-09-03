@@ -39,7 +39,8 @@ def create_grid_coordinates(grid_res):
 
 def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y):
     """
-    Interpolate a single feature's vectors onto the grid with grid cell boundary-aware masking.
+    Interpolate a single feature's vectors onto the grid.
+    No additional masking is applied; values outside convex hull are zero via fill_value.
     
     Args:
         positions (np.ndarray): Data point positions, shape (N, 2)
@@ -49,61 +50,9 @@ def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y):
     Returns:
         tuple: (grid_u, grid_v) - interpolated velocity components
     """
-    # Interpolate each component onto the grid
+    # Interpolate each component onto the grid (linear), zero outside data support
     grid_u = griddata(positions, vectors[:, 0], (grid_x, grid_y), method='linear', fill_value=0.0)
     grid_v = griddata(positions, vectors[:, 1], (grid_x, grid_y), method='linear', fill_value=0.0)
-    
-    # Two-stage masking: exact cell identification + minimal buffer
-    if len(positions) >= 2:
-        try:
-            xmin, xmax, ymin, ymax = config.bounding_box
-            grid_res = grid_x.shape[0]
-            
-            # Calculate cell size
-            cell_width = (xmax - xmin) / grid_res
-            cell_height = (ymax - ymin) / grid_res
-            
-            # Stage 1: Find cells containing data points (no buffer) - these are protected
-            protected_cells = np.zeros(grid_x.shape, dtype=bool)
-            for pos in positions:
-                # Find exact cell containing this point
-                i = int((pos[1] - ymin) / cell_height)
-                j = int((pos[0] - xmin) / cell_width)
-                i = max(0, min(grid_res - 1, i))
-                j = max(0, min(grid_res - 1, j))
-                protected_cells[i, j] = True
-            
-            # Stage 2: Add minimal buffer for interpolation quality
-            mask = np.ones(grid_x.shape, dtype=bool)  # True = mask out, False = keep
-            
-            for pos in positions:
-                px, py = pos[0], pos[1]
-                
-                # Use configurable buffer factor for tighter control
-                buffer_x = cell_width * config.MASK_BUFFER_FACTOR
-                buffer_y = cell_height * config.MASK_BUFFER_FACTOR
-                
-                # Find range of cells to unmask
-                i_start = max(0, int((py - buffer_y - ymin) / cell_height))
-                i_end = min(grid_res, int((py + buffer_y - ymin) / cell_height) + 1)
-                j_start = max(0, int((px - buffer_x - xmin) / cell_width))
-                j_end = min(grid_res, int((px + buffer_x - xmin) / cell_width) + 1)
-                
-                # Unmask buffer region
-                mask[i_start:i_end, j_start:j_end] = False
-            
-            # Guarantee: Protected cells are NEVER masked (even if buffer is 0)
-            mask[protected_cells] = False
-            
-            # Apply mask
-            grid_u[mask] = 0.0
-            grid_v[mask] = 0.0
-            
-        except Exception as e:
-            print(f"Two-stage masking failed: {e}, skipping masking")
-            # If masking fails, don't mask anything
-            pass
-    
     return grid_u, grid_v
 
 
@@ -167,6 +116,46 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
     # Create the combined (summed) velocity field for the top-k features
     grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (grid_res, grid_res)
     grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (grid_res, grid_res)
+    
+    # Apply buffer-based masking on the final summed field only.
+    # Any cell outside data points and their buffer (defined by MASK_BUFFER_FACTOR)
+    # is zeroed out before building continuous interpolators.
+    try:
+        xmin, xmax, ymin, ymax = config.bounding_box
+        grid_res_local = grid_u_sum.shape[0]
+        # Cell sizes for cell-center grid
+        cell_width = (xmax - xmin) / grid_res_local
+        cell_height = (ymax - ymin) / grid_res_local
+        
+        # Initialize all cells as masked (True); we will unmask buffered regions
+        final_mask = np.ones_like(grid_u_sum, dtype=bool)
+        
+        buffer_x = cell_width * config.MASK_BUFFER_FACTOR
+        buffer_y = cell_height * config.MASK_BUFFER_FACTOR
+        
+        # Unmask cells within buffer of any data point
+        for pos in positions:
+            px, py = pos[0], pos[1]
+            i_start = max(0, int((py - buffer_y - ymin) / cell_height))
+            i_end = min(grid_res_local, int((py + buffer_y - ymin) / cell_height) + 1)
+            j_start = max(0, int((px - buffer_x - xmin) / cell_width))
+            j_end = min(grid_res_local, int((px + buffer_x - xmin) / cell_width) + 1)
+            final_mask[i_start:i_end, j_start:j_end] = False
+        
+        # Ensure the exact cell containing each point is unmasked
+        for pos in positions:
+            i = int((pos[1] - ymin) / cell_height)
+            j = int((pos[0] - xmin) / cell_width)
+            i = max(0, min(grid_res_local - 1, i))
+            j = max(0, min(grid_res_local - 1, j))
+            final_mask[i, j] = False
+        
+        # Apply mask to the final summed field
+        grid_u_sum[final_mask] = 0.0
+        grid_v_sum[final_mask] = 0.0
+    except Exception as e:
+        # If masking fails for any reason, proceed without final masking
+        print(f"Final buffer masking skipped due to error: {e}")
     
     # Determine the dominant feature at each grid cell from ALL features
     # First, compute grids for ALL features to find true dominant feature

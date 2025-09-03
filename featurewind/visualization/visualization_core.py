@@ -14,75 +14,20 @@ from .. import config
 
 def highlight_unmasked_cells(ax, system, grid_res=None, valid_points=None):
     """
-    Highlight unmasked cells in the main plot to show where particles can flow.
-    
-    Args:
-        ax: Matplotlib axes object
-        system: Particle system dictionary containing grid data
-        grid_res: Grid resolution
-        valid_points: List of valid TangentPoint objects to check for data points
+    Map-view overlay disabled: do not draw or filter by convex hull/threshold.
+    Stores an all-True mask so downstream components treat all cells as valid.
     """
     if grid_res is None:
         grid_res = config.DEFAULT_GRID_RES
-        
-    xmin, xmax, ymin, ymax = config.bounding_box
-    
-    # Get cell dimensions
-    dx = (xmax - xmin) / grid_res
-    dy = (ymax - ymin) / grid_res
-    
-    # Check if we have the grid data
-    if 'grid_u_sum' not in system or 'grid_v_sum' not in system:
-        return
-        
-    grid_u_sum = system['grid_u_sum']
-    grid_v_sum = system['grid_v_sum']
-    
-    # Calculate sum magnitude for each cell (same logic as wind vane)
-    sum_magnitudes = np.sqrt(grid_u_sum**2 + grid_v_sum**2)
-    
-    # Create a grid to track which cells contain data points
-    cells_with_data = np.zeros((grid_res, grid_res), dtype=bool)
-    
-    if valid_points:
-        for point in valid_points:
-            x, y = point.position
-            # Convert to grid indices
-            if xmin <= x <= xmax and ymin <= y <= ymax:
-                j = int((x - xmin) / dx)
-                i = int((y - ymin) / dy)
-                # Clamp to valid range
-                i = max(0, min(i, grid_res - 1))
-                j = max(0, min(j, grid_res - 1))
-                cells_with_data[i, j] = True
-    
-    # Use same threshold as wind vane for consistency - less aggressive threshold
-    # But NEVER mask cells that contain data points
-    threshold = getattr(config, 'MASK_THRESHOLD', 1e-6)
-    unmasked_cells = (sum_magnitudes > threshold) | cells_with_data
 
-    # Store unified mask in system for use by wind vane and others
+    # Provide an all-True mask to disable masking behavior elsewhere (e.g., wind vane)
     try:
-        system['unmasked_cells'] = unmasked_cells
-        system['cells_with_data'] = cells_with_data
+        system['unmasked_cells'] = np.ones((grid_res, grid_res), dtype=bool)
+        system['cells_with_data'] = np.ones((grid_res, grid_res), dtype=bool)
     except Exception:
         pass
-    
-    # Create semi-transparent overlay for unmasked cells
-    for i in range(grid_res):
-        for j in range(grid_res):
-            if unmasked_cells[i, j]:
-                # Calculate cell boundaries (cell-center grid)
-                x_left = xmin + j * dx
-                x_right = xmin + (j + 1) * dx
-                y_bottom = ymin + i * dy
-                y_top = ymin + (i + 1) * dy
-                
-                # Add gray rectangle overlay
-                rect = Rectangle((x_left, y_bottom), dx, dy, 
-                               facecolor='gray', alpha=0.1, edgecolor='gray', 
-                               linewidth=0.5, zorder=2)
-                ax.add_patch(rect)
+    # No overlay rectangles are drawn
+    return
 
 
 def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors, lc, 
