@@ -327,8 +327,8 @@ def main():
                 r, g, b = color_system.hex_to_rgb(color_hex)
                 config.real_feature_rgba[feat_idx] = (r, g, b, 1.0)
     
-    # Step 5: Create temporary system dict with velocity fields for smart particle initialization
-    temp_system = {
+    # Step 5: Create system dictionary; if in feature wind mode, add particles
+    system = {
         'grid_u_sum': grid_u_sum,
         'grid_v_sum': grid_v_sum,
         'grid_u_all_feats': grid_u_all_feats,
@@ -339,11 +339,10 @@ def main():
         'interp_v_sum': interp_v_sum,
         'interp_argmax': interp_argmax
     }
-    
-    # Create particle system with smart initialization in unmasked cells
-    system = particle_system.create_particles(
-        config.DEFAULT_NUM_PARTICLES, cell_dominant_features, grid_res, 
-        temp_system)
+    if getattr(config, 'VIS_MODE', 'feature_wind_map') == 'feature_wind_map':
+        system = particle_system.create_particles(
+            config.DEFAULT_NUM_PARTICLES, cell_dominant_features, grid_res, 
+            system)
     
     # Step 6: Setup figure with professional styling and legends
     fig, ax1, ax2 = visualization_core.setup_figure_layout()
@@ -363,9 +362,20 @@ def main():
     
     
     # Prepare the main subplot
-    lc = system['linecoll']
+    lc = system['linecoll'] if 'linecoll' in system else None
     visualization_core.prepare_figure(ax1, valid_points, col_labels, config.k, grad_indices, 
                                     feature_colors, lc, all_positions, all_grad_vectors, grid_res)
+
+    # If in DimReader mode, draw filled isocontours of the summed field magnitude
+    if getattr(config, 'VIS_MODE', 'feature_wind_map') == 'dimreader':
+        magnitude = np.sqrt(grid_u_sum**2 + grid_v_sum**2)
+        try:
+            cf = ax1.contourf(grid_x, grid_y, magnitude, levels=16, cmap='Greys', zorder=1)
+            ax1.contour(grid_x, grid_y, magnitude, levels=16, colors='k', alpha=0.2, linewidths=0.4, zorder=2)
+            # Optionally add a colorbar in this mode
+            fig.colorbar(cf, ax=ax1, shrink=0.9, pad=0.02)
+        except Exception:
+            pass
     
     # Initial spawn markers removed
     
@@ -446,8 +456,10 @@ def main():
             return []
     
     # Create the animation
-    anim = FuncAnimation(fig, update_frame, frames=config.ANIMATION_FRAMES, 
-                        interval=config.ANIMATION_INTERVAL, blit=False)
+    anim = None
+    if getattr(config, 'VIS_MODE', 'feature_wind_map') == 'feature_wind_map':
+        anim = FuncAnimation(fig, update_frame, frames=config.ANIMATION_FRAMES, 
+                            interval=config.ANIMATION_INTERVAL, blit=False)
     
     # Save the figure as a PNG file
     visualization_core.save_final_figure(fig, output_dir, "featurewind_modular_figure.png")

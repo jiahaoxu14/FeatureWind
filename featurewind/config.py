@@ -55,6 +55,10 @@ TEMPERATURE_SOFTMAX = 2.0  # Temperature for soft dominance computation
 # Feature selection limits
 MAX_FEATURE_FAMILIES = 6      # Maximum number of feature families (Paul Tol palette limit)
 
+# Visualization mode
+# Supported: 'feature_wind_map' (default), 'dimreader'
+VIS_MODE = 'feature_wind_map'
+
 # Coloring behavior
 # When visualizing a small number of features, use distinct per-feature colors
 # to avoid visual merging by family hue (helps interpretability for 2–10 features).
@@ -65,6 +69,10 @@ FEATURE_COLOR_DISTINCT_THRESHOLD = 5
 # Map overlay (gray background for unmasked cells)
 # Toggle to show or hide the gray cell overlay in the main map view.
 SHOW_UNMASKED_OVERLAY = False
+
+# Grid lines toggle (main map)
+# Draw interpolation cell boundary grid lines in the main map when True
+SHOW_GRID_LINES = False
 
 # Data points style (in main map view)
 # Draw data points as hollow markers (edge only) instead of solid fills

@@ -117,11 +117,12 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
     ax.set_xticks([])  # Remove tick marks
     ax.set_yticks([])  # Remove tick marks
     
-    # Manually draw grid lines to preserve them
-    for x in x_boundaries:
-        ax.axvline(x, alpha=0.3, linewidth=0.5, color='lightgray', zorder=1)
-    for y in y_boundaries:
-        ax.axhline(y, alpha=0.3, linewidth=0.5, color='lightgray', zorder=1)
+    # Manually draw grid lines to preserve them (optional)
+    if getattr(config, 'SHOW_GRID_LINES', True):
+        for x in x_boundaries:
+            ax.axvline(x, alpha=0.3, linewidth=0.5, color='lightgray', zorder=1)
+        for y in y_boundaries:
+            ax.axhline(y, alpha=0.3, linewidth=0.5, color='lightgray', zorder=1)
 
     # Plot underlying data points with different markers for each label
     feature_idx = 2  # Use feature index 2 for alpha computation
@@ -169,8 +170,12 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
                 zorder=4
             )
 
-    # Add particle line collection
-    ax.add_collection(lc)
+    # Add particle line collection only in feature wind map mode
+    try:
+        if getattr(config, 'VIS_MODE', 'feature_wind_map') == 'feature_wind_map' and lc is not None:
+            ax.add_collection(lc)
+    except Exception:
+        pass
     
     # Grid lines are manually drawn above, so no need for ax.grid()
     ax.set_axisbelow(True)  # Put grid behind other elements
@@ -653,7 +658,7 @@ def apply_professional_styling(fig, ax1, ax2):
     
     # Style main plot
     ax1.set_facecolor(BACKGROUND_COLOR)
-    ax1.grid(True, alpha=0.3, linewidth=0.5, color=GRID_COLOR, zorder=0)
+    ax1.grid(bool(getattr(config, 'SHOW_GRID_LINES', True)), alpha=0.3, linewidth=0.5, color=GRID_COLOR, zorder=0)
     
     # Remove tick marks but keep grid
     ax1.set_xticks([])
