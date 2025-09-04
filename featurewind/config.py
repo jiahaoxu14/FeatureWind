@@ -59,6 +59,9 @@ MAX_FEATURE_FAMILIES = 6      # Maximum number of feature families (Paul Tol pal
 # Supported: 'feature_wind_map' (default), 'dimreader'
 VIS_MODE = 'feature_wind_map'
 
+# Single feature color override used when --feature is specified
+SINGLE_FEATURE_COLOR = "#EE6677"
+
 # Coloring behavior
 # When visualizing a small number of features, use distinct per-feature colors
 # to avoid visual merging by family hue (helps interpretability for 2–10 features).

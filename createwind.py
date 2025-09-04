@@ -305,6 +305,15 @@ def main():
     except Exception:
         pass
 
+    # In single-feature mode, enforce a consistent, user-configurable color
+    try:
+        if single_feature_mode and isinstance(grad_indices, (list, tuple, np.ndarray)) and len(grad_indices) == 1:
+            sel_idx = int(grad_indices[0])
+            if sel_idx < len(feature_colors):
+                feature_colors[sel_idx] = getattr(config, 'SINGLE_FEATURE_COLOR', '#CCBB44')
+    except Exception:
+        pass
+
     # If we computed per-feature dominance counts earlier, also aggregate by family to compare with hues
     try:
         if counts is not None and family_assignments is not None and len(family_assignments) == len(col_labels):
