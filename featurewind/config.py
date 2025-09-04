@@ -57,7 +57,7 @@ MAX_FEATURE_FAMILIES = 6      # Maximum number of feature families (Paul Tol pal
 
 # Visualization mode
 # Supported: 'feature_wind_map' (default), 'dimreader'
-VIS_MODE = 'feature_wind_map'
+VIS_MODE = 'dimreader'
 
 # Coloring behavior
 # When visualizing a small number of features, use distinct per-feature colors

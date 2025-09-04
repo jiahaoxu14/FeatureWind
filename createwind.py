@@ -242,6 +242,13 @@ def main():
                     j = max(0, min(j, grid_res - 1))
                     cells_with_data[i, j] = True
             unmasked |= cells_with_data
+
+        # In single-feature mode, restrict dominance and particle coloring to the selected feature only
+        if single_feature_mode and isinstance(grad_indices, (list, tuple, np.ndarray)) and len(grad_indices) == 1:
+            only_idx = int(grad_indices[0])
+            cdf_override = np.full_like(cell_dominant_features, -1)
+            cdf_override[unmasked] = only_idx
+            cell_dominant_features = cdf_override
         # Count only unmasked cells
         masked_filter = unmasked.ravel()
         filtered = cell_dominant_features.ravel()[masked_filter]
@@ -353,12 +360,25 @@ def main():
     # Apply professional styling
     visualization_core.apply_professional_styling(fig, ax1, ax2)
     
-    # Create comprehensive legend system
+    # Create legend: show only selected feature in single-feature mode
     from featurewind.visualization import legend_manager
-    legend_axes = legend_manager.create_comprehensive_legend(
-        fig, family_assignments, col_labels, feature_colors, 
-        legend_position='upper_left', show_instructions=False
-    )
+    if single_feature_mode and isinstance(grad_indices, (list, tuple, np.ndarray)) and len(grad_indices) == 1:
+        sel_idx = int(grad_indices[0])
+        # Build filtered arrays so the legend lists only the selected feature
+        import numpy as _np
+        legend_axes = {}
+        legend_axes['families'] = legend_manager.create_family_legend(
+            fig,
+            _np.array([family_assignments[sel_idx]]),
+            [col_labels[sel_idx]],
+            [feature_colors[sel_idx]],
+            legend_position='upper_left'
+        )
+    else:
+        legend_axes = legend_manager.create_comprehensive_legend(
+            fig, family_assignments, col_labels, feature_colors,
+            legend_position='upper_left', show_instructions=False
+        )
     
     
     # Prepare the main subplot
