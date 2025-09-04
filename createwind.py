@@ -386,9 +386,13 @@ def main():
     visualization_core.prepare_figure(ax1, valid_points, col_labels, config.k, grad_indices, 
                                     feature_colors, lc, all_positions, all_grad_vectors, grid_res)
 
-    # If in DimReader mode, draw filled isocontours of the summed field magnitude
+    # If in DimReader mode, draw filled isocontours
+    # In single-feature mode, use only that feature's field for contours
     if getattr(config, 'VIS_MODE', 'feature_wind_map') == 'dimreader':
-        magnitude = np.sqrt(grid_u_sum**2 + grid_v_sum**2)
+        if single_feature_mode and grid_u_feats is not None and len(grid_u_feats) == 1:
+            magnitude = np.sqrt(grid_u_feats[0]**2 + grid_v_feats[0]**2)
+        else:
+            magnitude = np.sqrt(grid_u_sum**2 + grid_v_sum**2)
         try:
             cf = ax1.contourf(grid_x, grid_y, magnitude, levels=16, cmap='Greys', zorder=1)
             ax1.contour(grid_x, grid_y, magnitude, levels=16, colors='k', alpha=0.2, linewidths=0.4, zorder=2)

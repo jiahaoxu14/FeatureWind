@@ -18,7 +18,7 @@ DEFAULT_GRID_RES = 40
 
 # Particle system parameters
 DEFAULT_NUM_PARTICLES = 1200  # Increased to ensure visible particle density
-PARTICLE_LIFETIME = 5  # frames - increased to reduce respawn frequency
+PARTICLE_LIFETIME = 15  # frames - increased to reduce respawn frequency
 TAIL_LENGTH = 10  # number of position history points
 
 # Animation parameters
@@ -57,7 +57,7 @@ MAX_FEATURE_FAMILIES = 6      # Maximum number of feature families (Paul Tol pal
 
 # Visualization mode
 # Supported: 'feature_wind_map' (default), 'dimreader'
-VIS_MODE = 'dimreader'
+VIS_MODE = 'feature_wind_map'
 
 # Coloring behavior
 # When visualizing a small number of features, use distinct per-feature colors
@@ -75,12 +75,15 @@ SHOW_UNMASKED_OVERLAY = False
 SHOW_GRID_LINES = False
 
 # Data points style (in main map view)
-# Draw data points as hollow markers (edge only) instead of solid fills
-HOLLOW_DATA_POINTS = True
-# Edge alpha for hollow data points
-DATA_POINT_ALPHA = 0.35
+# Draw data points as solid markers with lower opacity for subtlety
+HOLLOW_DATA_POINTS = False
+# Alpha for solid data points (lower = more transparent)
+DATA_POINT_ALPHA = 0.30
 # Edge width for hollow markers
 DATA_POINT_EDGEWIDTH = 0.6
+
+# Z-order for data points to ensure they render on top
+DATA_POINT_ZORDER = 20
 
 
 def initialize_global_state():

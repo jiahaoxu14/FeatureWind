@@ -146,7 +146,9 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
         if getattr(config, 'HOLLOW_DATA_POINTS', True):
             edge_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
             edge_width = float(getattr(config, 'DATA_POINT_EDGEWIDTH', 0.6))
-            edge_color = (0.4, 0.4, 0.4, edge_alpha)
+            # Stroke color #555 with configured alpha
+            stroke_val = 0x55 / 255.0
+            edge_color = (stroke_val, stroke_val, stroke_val, edge_alpha)
             ax.scatter(
                 positions_lab[:, 0],
                 positions_lab[:, 1],
@@ -156,18 +158,21 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
                 linewidths=edge_width,
                 s=10,
                 label=f"Label {lab}",
-                zorder=4
+                zorder=getattr(config, 'DATA_POINT_ZORDER', 20)
             )
         else:
             fill_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
+            fill_color = (0.5, 0.5, 0.5, fill_alpha)
             ax.scatter(
                 positions_lab[:, 0],
                 positions_lab[:, 1],
                 marker=marker_style,
-                color=(0.5, 0.5, 0.5, fill_alpha),
+                color=fill_color,
+                edgecolors='#555555',
+                linewidths=float(getattr(config, 'DATA_POINT_EDGEWIDTH', 0.6)),
                 s=10,
                 label=f"Label {lab}",
-                zorder=4
+                zorder=getattr(config, 'DATA_POINT_ZORDER', 20)
             )
 
     # Add particle line collection only in feature wind map mode
