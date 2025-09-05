@@ -448,7 +448,7 @@ def update_particle_colors_family_based(system, family_assignments=None, feature
         velocities = system['last_velocity']
     speeds = np.linalg.norm(velocities, axis=1) if velocities is not None else np.zeros(n_particles)
     max_speed = speeds.max() + 1e-9
-    speed_alphas = np.clip(0.3 + 0.7 * (speeds / max_speed), 0.0, 1.0)
+    speed_alphas = np.clip(0.15 + 0.85 * (speeds / max_speed), 0.0, 1.0)
 
     # Assign RGB by dominant feature, alpha by speed
     if len(valid_indices) > 0:
@@ -550,7 +550,17 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
                 r, g, b = feature_rgb_map[dom_feat]
             else:
                 r, g, b = 0.0, 0.0, 0.0
-            colors_rgba[seg_idx] = [r, g, b, alpha_value]
+            # Apply tail fade: older segments (small t) get lower alpha
+            try:
+                min_fac = float(getattr(config, 'TRAIL_TAIL_MIN_FACTOR', 0.1))
+                exp_fac = float(getattr(config, 'TRAIL_TAIL_EXP', 1.2))
+                # t ranges [0, tail_gap-1]; normalize to (0,1]
+                rel = (t + 1) / max(tail_gap, 1)
+                fade = min_fac + (1.0 - min_fac) * (rel ** exp_fac)
+                seg_alpha = np.clip(alpha_value * fade, 0.0, 1.0)
+            except Exception:
+                seg_alpha = alpha_value
+            colors_rgba[seg_idx] = [r, g, b, seg_alpha]
 
     lc_.set_segments(segments)
     lc_.set_colors(colors_rgba)

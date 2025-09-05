@@ -14,11 +14,11 @@ bounding_box = None  # Will be computed dynamically
 real_feature_rgba = {}  # Feature to RGBA mapping for particles
 
 # Default grid resolution
-DEFAULT_GRID_RES = 40
+DEFAULT_GRID_RES = 20
 
 # Particle system parameters
-DEFAULT_NUM_PARTICLES = 1200  # Increased to ensure visible particle density
-PARTICLE_LIFETIME = 15  # frames - increased to reduce respawn frequency
+DEFAULT_NUM_PARTICLES = 800  # Increased to ensure visible particle density
+PARTICLE_LIFETIME = 30  # frames - increased to reduce respawn frequency
 TAIL_LENGTH = 10  # number of position history points
 
 # Animation parameters
@@ -53,7 +53,7 @@ TEMPERATURE_SOFTMAX = 2.0  # Temperature for soft dominance computation
 
 
 # Feature selection limits
-MAX_FEATURE_FAMILIES = 6      # Maximum number of feature families (Paul Tol palette limit)
+MAX_FEATURE_FAMILIES = 4      # Maximum number of feature families (reduced to 4)
 
 # Visualization mode
 # Supported: 'feature_wind_map' (default), 'dimreader'
@@ -87,6 +87,11 @@ DATA_POINT_EDGEWIDTH = 0.6
 
 # Z-order for data points to ensure they render on top
 DATA_POINT_ZORDER = 20
+
+# Particle trail opacity fade (older segments more transparent)
+# Alpha per segment = base_alpha * (TRAIL_TAIL_MIN_FACTOR + (1-TRAIL_TAIL_MIN_FACTOR) * ((t+1)/TAIL_LENGTH)**TRAIL_TAIL_EXP)
+TRAIL_TAIL_MIN_FACTOR = 0.10  # 0..1, alpha factor for the oldest segment
+TRAIL_TAIL_EXP = 1.2          # >1 for stronger decay near the tail
 
 
 def initialize_global_state():
