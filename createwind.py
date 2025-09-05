@@ -417,8 +417,33 @@ def main():
     
     # Wind strength indicator omitted
     
-    # Prepare the wind vane subplot
-    visualization_core.prepare_wind_vane_subplot(ax2)
+    # Prepare the wind vane subplot(s); optionally add a second pane as "Feature Clock"
+    ax2_for_events = ax2
+    if getattr(config, 'FEATURE_CLOCK_ENABLED', False):
+        try:
+            # Split the existing ax2 area into two side-by-side panes
+            pos = ax2.get_position()
+            fig.delaxes(ax2)
+            gap = 0.01 * pos.width
+            left_w = (pos.width - gap) / 2.0
+            right_w = left_w
+            ax2_left = fig.add_axes([pos.x0, pos.y0, left_w, pos.height])
+            ax2_right = fig.add_axes([pos.x0 + left_w + gap, pos.y0, right_w, pos.height])
+            visualization_core.prepare_wind_vane_subplot(ax2_left)
+            visualization_core.prepare_wind_vane_subplot(ax2_right)
+            # Titles
+            try:
+                ax2_left.set_title("Wind Vane", fontsize=12, weight='bold')
+                ax2_right.set_title("Feature Clock", fontsize=12, weight='bold')
+            except Exception:
+                pass
+            ax2_for_events = (ax2_left, ax2_right)
+        except Exception:
+            visualization_core.prepare_wind_vane_subplot(ax2)
+            ax2_for_events = ax2
+    else:
+        visualization_core.prepare_wind_vane_subplot(ax2)
+        ax2_for_events = ax2
     
     # Store family info in system for particle coloring and UI
     system['family_assignments'] = family_assignments
@@ -442,7 +467,7 @@ def main():
     
     # Create reliable event handling system with family colors
     event_mgr = event_manager.create_reliable_event_system(
-        fig, ax1, ax2, ui_controller, system, col_labels, grad_indices, feature_colors, grid_res
+        fig, ax1, ax2_for_events, ui_controller, system, col_labels, grad_indices, feature_colors, grid_res
     )
     
     # Store additional family info in event manager for wind vane updates

@@ -212,7 +212,7 @@ def prepare_wind_vane_subplot(ax2):
 
 
 def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, feature_colors, 
-                     family_assignments=None):
+                     family_assignments=None, feature_clock_override=False):
     """
     Update the wind vane visualization with family-based colors.
     
@@ -400,13 +400,109 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 'pos_end': pos_end,
                 'neg_end': neg_end
             })
+
+        # Ensure a deterministic shared color map exists for this cell when Feature Clock is enabled
+        if getattr(config, 'FEATURE_CLOCK_ENABLED', False):
+            try:
+                cell_key = (int(cell_i), int(cell_j))
+                existing_key = system.get('feature_clock_color_cell')
+                shared_map = system.get('feature_clock_color_map') if existing_key == cell_key else None
+            except Exception:
+                shared_map = None
+            if shared_map is None:
+                try:
+                    try:
+                        top_n = int(getattr(config, 'FEATURE_CLOCK_TOP_N', 4))
+                    except Exception:
+                        top_n = 4
+                    # Rank by magnitude (desc)
+                    rank_sorted = sorted([(mags_selected[i], features_selected[i]) for i in range(len(features_selected))],
+                                         key=lambda x: x[0], reverse=True)
+                    order_index = {f: r for r, (_, f) in enumerate(rank_sorted)}
+                    top_feats = [f for (_, f) in rank_sorted[:max(1, top_n)]]
+                    # Hull features
+                    hull_feats = set()
+                    try:
+                        hull = ConvexHull(all_endpoints)
+                        hull_vertex_indices = set(hull.vertices)
+                        for info in vector_info:
+                            pos_on_hull = any(np.allclose(info['pos_end'], all_endpoints[idx]) for idx in hull_vertex_indices)
+                            neg_on_hull = any(np.allclose(info['neg_end'], all_endpoints[idx]) for idx in hull_vertex_indices)
+                            if pos_on_hull or neg_on_hull:
+                                hull_feats.add(info['feat_idx'])
+                    except Exception:
+                        hull_feats = set()
+                    # Deterministic union ordering
+                    hull_minus_sorted = sorted([f for f in hull_feats if f not in set(top_feats)], key=lambda f: order_index.get(f, 1e9))
+                    union_feats = top_feats + hull_minus_sorted
+                    palette = getattr(config, 'GLASBEY_COLORS', ['#1f77b4'])
+                    shared_map = {f: palette[i % len(palette)] for i, f in enumerate(union_feats)}
+                    system['feature_clock_color_cell'] = cell_key
+                    system['feature_clock_color_map'] = shared_map
+                except Exception:
+                    pass
+
+        # Feature Clock mode: highlight top-N by magnitude and remove vane arrow/convex hull logic
+        if feature_clock_override:
+            try:
+                top_n = int(getattr(config, 'FEATURE_CLOCK_TOP_N', 4))
+            except Exception:
+                top_n = 4
+            # Rank features by magnitude (desc) within current selection
+            rank_sorted = sorted([(mags_selected[i], features_selected[i]) for i in range(len(features_selected))],
+                                 key=lambda x: x[0], reverse=True)
+            top_feats = [f for (_, f) in rank_sorted[:max(1, top_n)]]
+
+            # Prefer a shared cell color map if one exists
+            cmap = None
+            try:
+                if system.get('feature_clock_color_cell') == (int(cell_i), int(cell_j)):
+                    cmap = system.get('feature_clock_color_map', None)
+            except Exception:
+                cmap = None
+            # If none, build from top_feats only (deterministic order by rank)
+            if cmap is None:
+                palette = getattr(config, 'GLASBEY_COLORS', ['#1f77b4'])
+                cmap = {f: palette[r % len(palette)] for r, f in enumerate(top_feats)}
+                try:
+                    system['feature_clock_color_cell'] = (int(cell_i), int(cell_j))
+                    system['feature_clock_color_map'] = cmap
+                except Exception:
+                    pass
+
+            # Draw ONLY top-N vectors in the Feature Clock pane (positive direction only)
+            top_set = set(top_feats)
+            for info in vector_info:
+                feat_idx = info['feat_idx']
+                if feat_idx not in top_set:
+                    continue
+                color = cmap.get(feat_idx, getattr(config, 'GLASBEY_COLORS', ['#1f77b4'])[0])
+                ax2.arrow(0, 0, info['pos_end'][0], info['pos_end'][1],
+                          head_width=0.04, head_length=0.04, fc=color, ec=color,
+                          linewidth=1.8, alpha=0.9, zorder=8)
+                # Label highlighted vectors
+                if feat_idx < len(col_labels):
+                    ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1,
+                             col_labels[feat_idx][:8], fontsize=8, ha='center', va='center', alpha=0.9)
+
+            # Skip classic hull/vane arrow flow in Feature Clock mode
+            return
         
         # Handle degenerate cases for convex hull
         if len(vectors_selected) == 1:
             # Single feature case - draw special visualization
             vector = vectors_selected[0]
             scaled_vector = np.array(vector) * scale_factor
+            # Use shared Feature Clock color if available for coherence
             color = feature_colors[features_selected[0]] if features_selected[0] < len(feature_colors) else 'black'
+            if getattr(config, 'FEATURE_CLOCK_ENABLED', False):
+                try:
+                    if system.get('feature_clock_color_cell') == (int(cell_i), int(cell_j)):
+                        cmap = system.get('feature_clock_color_map', None)
+                        if cmap and features_selected[0] in cmap:
+                            color = cmap[features_selected[0]]
+                except Exception:
+                    pass
             
             # Draw bidirectional arrow
             ax2.arrow(0, 0, scaled_vector[0], scaled_vector[1], 
@@ -576,8 +672,30 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             else:
                 continue  # Skip zero-magnitude vectors
             
+            # Color assignment with Feature Clock coherence
+            use_shared = False
+            shared_color = None
+            if getattr(config, 'FEATURE_CLOCK_ENABLED', False):
+                try:
+                    if system.get('feature_clock_color_cell') == (int(cell_i), int(cell_j)):
+                        cmap = system.get('feature_clock_color_map', None)
+                        if cmap and feat_idx in cmap:
+                            shared_color = cmap[feat_idx]
+                            use_shared = True
+                except Exception:
+                    use_shared = False
+
             # Only use color for vectors on the convex hull boundary
-            if (pos_on_hull or neg_on_hull) and feat_idx < len(feature_colors):
+            if use_shared:
+                base_color = shared_color
+                try:
+                    from .color_system import hex_to_rgb
+                    base_r, base_g, base_b = hex_to_rgb(base_color)
+                    pos_alpha = 0.9
+                    pos_color = (base_r, base_g, base_b, pos_alpha)
+                except Exception:
+                    pos_color = (0.6, 0.6, 0.6, 0.9)
+            elif (pos_on_hull or neg_on_hull) and feat_idx < len(feature_colors):
                 # Vector is on hull boundary - use feature color
                 base_color = feature_colors[feat_idx]
                 
@@ -603,11 +721,19 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                         # Use gray for non-hull vectors
                         pos_color = (0.6, 0.6, 0.6, 0.9)
             else:
-                # Vector is NOT on hull boundary - use gray color
-                gray_value = 0.6
-                # Lower alpha for non-hull vectors
-                pos_alpha = 0.2
-                pos_color = (gray_value, gray_value, gray_value, pos_alpha)
+                # Vector is NOT on hull boundary
+                if use_shared and shared_color is not None:
+                    try:
+                        from .color_system import hex_to_rgb
+                        base_r, base_g, base_b = hex_to_rgb(shared_color)
+                        pos_alpha = 0.9
+                        pos_color = (base_r, base_g, base_b, pos_alpha)
+                    except Exception:
+                        pos_color = (0.6, 0.6, 0.6, 0.9)
+                else:
+                    gray_value = 0.6
+                    pos_alpha = 0.2
+                    pos_color = (gray_value, gray_value, gray_value, pos_alpha)
             
             # Draw vector arrows
             ax2.annotate('', xy=info['pos_end'], xytext=(0, 0),

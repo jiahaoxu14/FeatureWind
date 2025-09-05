@@ -240,8 +240,14 @@ def create_reliable_event_system(fig, ax1, ax2, ui_controller, system, col_label
     Returns:
         EventManager: Configured event manager instance
     """
-    # Create the event manager
-    event_manager = EventManager(fig, ax1, ax2, ui_controller)
+    # Support dual vane panes: ax2 can be a single axis or a (left,right) tuple
+    ax2_left = ax2
+    ax2_right = None
+    if isinstance(ax2, (list, tuple)) and len(ax2) == 2:
+        ax2_left, ax2_right = ax2[0], ax2[1]
+
+    # Create the event manager using the left pane as the primary vane axis
+    event_manager = EventManager(fig, ax1, ax2_left, ui_controller)
     # Derive grid resolution from system mask or grids to avoid mismatches
     derived_res = None
     try:
@@ -255,15 +261,20 @@ def create_reliable_event_system(fig, ax1, ax2, ui_controller, system, col_label
     
     # Create wind vane update callback with family support
     def wind_vane_update_callback(mouse_data):
-        """Callback for updating wind vane with family-based colors."""
+        """Callback for updating one or two wind vanes."""
         try:
             from ..visualization import visualization_core
-            # Check if family assignments are stored in system
             family_assignments = system.get('family_assignments', None)
-            
-            visualization_core.update_wind_vane(ax2, mouse_data, system, col_labels, 
-                                              grad_indices, feature_colors, family_assignments)
-        except Exception as e:
+            # Left/original pane
+            visualization_core.update_wind_vane(ax2_left, mouse_data, system, col_labels,
+                                                grad_indices, feature_colors, family_assignments,
+                                                feature_clock_override=False)
+            # Right/feature clock pane (if present) — reuse the same view for now
+            if ax2_right is not None:
+                visualization_core.update_wind_vane(ax2_right, mouse_data, system, col_labels,
+                                                    grad_indices, feature_colors, family_assignments,
+                                                    feature_clock_override=True)
+        except Exception:
             pass  # Silently handle wind vane callback error
     
     # Set the callback and connect events

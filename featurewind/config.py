@@ -62,6 +62,11 @@ VIS_MODE = 'feature_wind_map'
 # Single feature color override used when --feature is specified
 SINGLE_FEATURE_COLOR = "#EE6677"
 
+# Feature Clock mode: show a second wind vane that displays
+# only the top-N strongest feature vectors with distinct colors.
+FEATURE_CLOCK_ENABLED = False
+FEATURE_CLOCK_TOP_N = 4
+
 # Coloring behavior
 # When visualizing a small number of features, use distinct per-feature colors
 # to avoid visual merging by family hue (helps interpretability for 2–10 features).
