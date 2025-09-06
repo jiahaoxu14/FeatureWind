@@ -177,8 +177,17 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
 
     # Add particle line collection only in feature wind map mode
     try:
-        if getattr(config, 'VIS_MODE', 'feature_wind_map') == 'feature_wind_map' and lc is not None:
+        if (getattr(config, 'VIS_MODE', 'feature_wind_map') == 'feature_wind_map'
+            and lc is not None
+            and not getattr(config, 'FEATURE_CLOCK_ENABLED', False)):
             ax.add_collection(lc)
+        else:
+            # Ensure trails are hidden when Feature Clock is enabled
+            if lc is not None:
+                try:
+                    lc.set_visible(False)
+                except Exception:
+                    pass
     except Exception:
         pass
     

@@ -64,7 +64,7 @@ SINGLE_FEATURE_COLOR = "#EE6677"
 
 # Feature Clock mode: show a second wind vane that displays
 # only the top-N strongest feature vectors with distinct colors.
-FEATURE_CLOCK_ENABLED = False
+FEATURE_CLOCK_ENABLED = True
 FEATURE_CLOCK_TOP_N = 4
 
 # Coloring behavior
