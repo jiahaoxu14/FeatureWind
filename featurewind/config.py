@@ -90,7 +90,7 @@ DATA_POINT_ALPHA = 0.30
 # Edge width for hollow markers
 DATA_POINT_EDGEWIDTH = 0.6
 # Marker size for data points in the main map (Matplotlib scatter 's' in points^2)
-DATA_POINT_SIZE = 48
+DATA_POINT_SIZE = 30
 
 # Z-order for data points to ensure they render on top
 DATA_POINT_ZORDER = 20
