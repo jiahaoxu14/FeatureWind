@@ -156,7 +156,7 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
                 facecolors='none',
                 edgecolors=edge_color,
                 linewidths=edge_width,
-                s=10,
+                s=getattr(config, 'DATA_POINT_SIZE', 48),
                 label=f"Label {lab}",
                 zorder=getattr(config, 'DATA_POINT_ZORDER', 20)
             )
@@ -170,7 +170,7 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
                 color=fill_color,
                 edgecolors='#555555',
                 linewidths=float(getattr(config, 'DATA_POINT_EDGEWIDTH', 0.6)),
-                s=10,
+                s=getattr(config, 'DATA_POINT_SIZE', 48),
                 label=f"Label {lab}",
                 zorder=getattr(config, 'DATA_POINT_ZORDER', 20)
             )
