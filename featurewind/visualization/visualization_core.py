@@ -209,6 +209,12 @@ def prepare_wind_vane_subplot(ax2):
     ax2.set_aspect('equal')
     ax2.set_xticks([])
     ax2.set_yticks([])
+    # Match background to main wind-map styling
+    try:
+        from .color_system import BACKGROUND_COLOR
+        ax2.set_facecolor(BACKGROUND_COLOR)
+    except Exception:
+        pass
     # Title will be set in apply_professional_styling for consistent styling
     
     # Draw reference circle - larger for bigger wind vane
@@ -342,19 +348,9 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
         dominant_feature = cell_dominant_features[cell_i, cell_j]
     
     
-    # Place grid cell point at center of Wind Vane
-    # Draw grid cell marker in Wind Vane (always at center)
-    # Use color of magnitude-dominant feature for center marker
-    # dominant_feature is an absolute index; ensure it is among selected features
-    if (dominant_feature is not None and dominant_feature >= 0 and
-        (dominant_feature in selected_features) and
-        dominant_feature < len(feature_colors)):
-        center_marker_color = feature_colors[dominant_feature]
-    else:
-        center_marker_color = 'black'
-    
-    ax2.scatter(0, 0, c=center_marker_color, s=80, marker='s', edgecolor='black', 
-               linewidth=2, zorder=10, label=f'Cell ({cell_i},{cell_j})')
+    # Place aggregated point at center as a simple black dot (consistent across modes)
+    ax2.scatter(0, 0, c='black', s=30, marker='o', edgecolor='none',
+               zorder=10, label=f'Cell ({cell_i},{cell_j})')
     
     # Draw gradient vector arrows for each feature in the grid cell
     # Calculate dynamic scaling to use 90% of canvas
@@ -388,7 +384,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
         else:
             scale_factor = 1.0
         
-        # Calculate all endpoint positions for convex hull
+        # Calculate positive endpoint positions for convex hull (exclude negative vectors)
         all_endpoints = []
         vector_info = []
         
@@ -396,12 +392,12 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             # Scale the gradient vector to match the consistent magnitude
             scaled_vector = np.array(vector) * scale_factor
             
-            # Positive endpoint
+            # Positive endpoint only
             pos_end = scaled_vector
-            # Negative endpoint
+            # Negative endpoint intentionally excluded from convex hull and drawing
             neg_end = -scaled_vector
             
-            all_endpoints.extend([pos_end, neg_end])
+            all_endpoints.append(pos_end)
             vector_info.append({
                 'vector': scaled_vector,
                 'feat_idx': feat_idx,
@@ -436,8 +432,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                         hull_vertex_indices = set(hull.vertices)
                         for info in vector_info:
                             pos_on_hull = any(np.allclose(info['pos_end'], all_endpoints[idx]) for idx in hull_vertex_indices)
-                            neg_on_hull = any(np.allclose(info['neg_end'], all_endpoints[idx]) for idx in hull_vertex_indices)
-                            if pos_on_hull or neg_on_hull:
+                            if pos_on_hull:
                                 hull_feats.add(info['feat_idx'])
                     except Exception:
                         hull_feats = set()
@@ -494,12 +489,30 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                     ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1,
                              col_labels[feat_idx][:8], fontsize=8, ha='center', va='center', alpha=0.9)
 
-            # Skip classic hull/vane arrow flow in Feature Clock mode
+            # Also draw an enclosing ring (no direction dot) for the Feature Clock
+            try:
+                max_vec_radius = max(np.linalg.norm(info['vector']) for info in vector_info) if vector_info else 0.0
+            except Exception:
+                max_vec_radius = 0.0
+            scale = float(getattr(config, 'WIND_VANE_RING_SCALE', 1.04))
+            max_r = float(getattr(config, 'WIND_VANE_RING_MAX_R', 0.66))
+            ring_r = max_vec_radius * scale
+            if not np.isfinite(ring_r) or ring_r <= 1e-9:
+                ring_r = min(0.2, max_r)
+            ring_r = min(ring_r, max_r)
+
+            ring_color = getattr(config, 'WIND_VANE_RING_COLOR', '#999999')
+            ring = plt.Circle((0.0, 0.0), radius=ring_r, fill=False,
+                              edgecolor=ring_color, linewidth=1.5,
+                              alpha=0.6, zorder=19)
+            ax2.add_patch(ring)
+
+            # Skip classic hull/needle flow in Feature Clock mode
             return
         
         # Handle degenerate cases for convex hull
         if len(vectors_selected) == 1:
-            # Single feature case - draw special visualization
+            # Single feature case - draw positive direction only (no negative vector)
             vector = vectors_selected[0]
             scaled_vector = np.array(vector) * scale_factor
             # Use shared Feature Clock color if available for coherence
@@ -513,11 +526,8 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 except Exception:
                     pass
             
-            # Draw bidirectional arrow
+            # Draw arrow in positive direction only
             ax2.arrow(0, 0, scaled_vector[0], scaled_vector[1], 
-                     head_width=0.05, head_length=0.05, 
-                     fc=color, ec=color, linewidth=2, alpha=0.8, zorder=8)
-            ax2.arrow(0, 0, -scaled_vector[0], -scaled_vector[1], 
                      head_width=0.05, head_length=0.05, 
                      fc=color, ec=color, linewidth=2, alpha=0.8, zorder=8)
             
@@ -545,14 +555,11 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 # ax2.add_patch(hull_polygon)  # Hidden per user request
                 
             except Exception as e:
-                # Degenerate hull (e.g., collinear or duplicate points) — draw all vectors as arrows
+                # Degenerate hull (e.g., collinear or duplicate points) — draw positive vectors as arrows only
                 for i, (vector, feat_idx) in enumerate(zip(vectors_selected, features_selected)):
                     scaled_vector = np.array(vector) * scale_factor
                     color = feature_colors[feat_idx] if feat_idx < len(feature_colors) else 'black'
                     ax2.arrow(0, 0, scaled_vector[0], scaled_vector[1],
-                              head_width=0.04, head_length=0.04,
-                              fc=color, ec=color, linewidth=1.5, alpha=0.7, zorder=8-i)
-                    ax2.arrow(0, 0, -scaled_vector[0], -scaled_vector[1],
                               head_width=0.04, head_length=0.04,
                               fc=color, ec=color, linewidth=1.5, alpha=0.7, zorder=8-i)
         
@@ -603,48 +610,95 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             speed_ratio = cell_speed / max_speed if max_speed > 0 else 0.0
             speed_ratio = max(0.0, min(1.0, speed_ratio))
             magnitude_alpha = max(0.3, min(1.0, 0.3 + 0.7 * speed_ratio))
-            
-            
-            # Wind vane components with FIXED geometry - clearly distinct from thin feature vectors
+            # Wind vane representation: choose between ring+dot or traditional needle
+            vane_style = str(getattr(config, 'WIND_VANE_STYLE', 'needle')).lower()
             perp_direction = np.array([-flow_direction[1], flow_direction[0]])  # Perpendicular
-            
-            # 1. Main shaft (thick central line) - much thicker than feature vectors
-            shaft_length = vane_length * 0.75  # reduced from 0.8
-            shaft_start = -flow_direction * shaft_length * 0.5
-            shaft_end = flow_direction * shaft_length * 0.5
-            ax2.plot([shaft_start[0], shaft_end[0]], [shaft_start[1], shaft_end[1]], 
-                    color=dominant_color, linewidth=6, alpha=magnitude_alpha, 
-                    solid_capstyle='round', zorder=20)  # Much thicker than feature vectors
-            
-            # 2. Large arrow head (pointing in flow direction) - fixed position at radius
-            arrow_head_pos = flow_direction * vane_length  # Fixed at vane_length radius
-            arrow_size = vane_length * 0.32  # reduced from 0.4
-            
-            arrow_vertices = np.array([
-                arrow_head_pos,  # Tip at fixed radius
-                arrow_head_pos - flow_direction * arrow_size + perp_direction * arrow_size * 0.5,  # Left base
-                arrow_head_pos - flow_direction * arrow_size - perp_direction * arrow_size * 0.5   # Right base
-            ])
-            
-            arrow_triangle = plt.Polygon(arrow_vertices, color=dominant_color, 
-                                       alpha=magnitude_alpha, zorder=21)
-            ax2.add_patch(arrow_triangle)
-            
-            # 3. Large flag tail (showing flow origin) - fixed position opposite to arrow
-            flag_center = -flow_direction * vane_length  # Fixed at opposite end
-            flag_size = vane_length * 0.28  # reduced from 0.35
-            
-            # Create rectangular flag
-            flag_vertices = np.array([
-                flag_center + perp_direction * flag_size * 0.5,  # Top
-                flag_center + perp_direction * flag_size * 0.5 + flow_direction * flag_size * 0.6,  # Top-right
-                flag_center - perp_direction * flag_size * 0.5 + flow_direction * flag_size * 0.6,  # Bottom-right
-                flag_center - perp_direction * flag_size * 0.5,  # Bottom
-            ])
-            
-            flag_rectangle = plt.Polygon(flag_vertices, color=dominant_color, 
-                                       alpha=magnitude_alpha, zorder=21)
-            ax2.add_patch(flag_rectangle)
+
+            if vane_style in ('circle', 'ring_dot', 'wedge'):
+                # Ring that encloses all feature vectors + a dot at flow direction
+                try:
+                    max_vec_radius = max(np.linalg.norm(info['vector']) for info in vector_info) if vector_info else 0.0
+                except Exception:
+                    max_vec_radius = 0.0
+                scale = float(getattr(config, 'WIND_VANE_RING_SCALE', 1.04))
+                max_r = float(getattr(config, 'WIND_VANE_RING_MAX_R', 0.66))
+                ring_r = max_vec_radius * scale
+                if not np.isfinite(ring_r) or ring_r <= 1e-9:
+                    ring_r = min(0.2, max_r)  # fallback small ring
+                ring_r = min(ring_r, max_r)
+
+                # Draw enclosing ring
+                ring_color = getattr(config, 'WIND_VANE_RING_COLOR', '#999999')
+                ring = plt.Circle((0.0, 0.0), radius=ring_r, fill=False,
+                                  edgecolor=ring_color, linewidth=1.5,
+                                  alpha=0.6, zorder=19)
+                ax2.add_patch(ring)
+
+                # Direction dot on ring edge — color by magnitude-dominant feature when available
+                dot_r = float(getattr(config, 'WIND_VANE_CIRCLE_RADIUS', 0.055))
+                dot_center = flow_direction * ring_r
+                # Choose color from the selected feature with highest magnitude
+                ring_dot_color = 'black'
+                try:
+                    if mags_selected:
+                        max_idx = int(np.argmax(mags_selected))
+                        feat_for_color = features_selected[max_idx] if max_idx < len(features_selected) else None
+                        if feat_for_color is not None and feat_for_color < len(feature_colors):
+                            ring_dot_color = feature_colors[feat_for_color]
+                    elif (dominant_feature is not None and dominant_feature >= 0 and
+                          (dominant_feature in selected_features) and
+                          dominant_feature < len(feature_colors)):
+                        ring_dot_color = feature_colors[dominant_feature]
+                    elif 'dominant_color' in locals():
+                        ring_dot_color = dominant_color
+                except Exception:
+                    pass
+                dir_dot = plt.Circle((float(dot_center[0]), float(dot_center[1])), radius=dot_r,
+                                     color=ring_dot_color, alpha=magnitude_alpha, zorder=21)
+                ax2.add_patch(dir_dot)
+
+                # Optional faint guide from center for readability
+                if getattr(config, 'WIND_VANE_CIRCLE_GUIDE', False):
+                    ax2.plot([0, dot_center[0]], [0, dot_center[1]], color=ring_dot_color,
+                             linewidth=1.0, alpha=magnitude_alpha*0.5, zorder=20)
+            else:
+                # 1. Main shaft (thick central line) - much thicker than feature vectors
+                shaft_length = vane_length * 0.75  # reduced from 0.8
+                shaft_start = -flow_direction * shaft_length * 0.5
+                shaft_end = flow_direction * shaft_length * 0.5
+                ax2.plot([shaft_start[0], shaft_end[0]], [shaft_start[1], shaft_end[1]], 
+                        color=dominant_color, linewidth=6, alpha=magnitude_alpha, 
+                        solid_capstyle='round', zorder=20)
+                
+                # 2. Large arrow head (pointing in flow direction) - fixed position at radius
+                arrow_head_pos = flow_direction * vane_length  # Fixed at vane_length radius
+                arrow_size = vane_length * 0.32
+                
+                arrow_vertices = np.array([
+                    arrow_head_pos,  # Tip at fixed radius
+                    arrow_head_pos - flow_direction * arrow_size + perp_direction * arrow_size * 0.5,  # Left base
+                    arrow_head_pos - flow_direction * arrow_size - perp_direction * arrow_size * 0.5   # Right base
+                ])
+                
+                arrow_triangle = plt.Polygon(arrow_vertices, color=dominant_color, 
+                                           alpha=magnitude_alpha, zorder=21)
+                ax2.add_patch(arrow_triangle)
+                
+                # 3. Large flag tail (showing flow origin) - fixed position opposite to arrow
+                flag_center = -flow_direction * vane_length  # Fixed at opposite end
+                flag_size = vane_length * 0.28
+                
+                # Create rectangular flag
+                flag_vertices = np.array([
+                    flag_center + perp_direction * flag_size * 0.5,  # Top
+                    flag_center + perp_direction * flag_size * 0.5 + flow_direction * flag_size * 0.6,  # Top-right
+                    flag_center - perp_direction * flag_size * 0.5 + flow_direction * flag_size * 0.6,  # Bottom-right
+                    flag_center - perp_direction * flag_size * 0.5,  # Bottom
+                ])
+                
+                flag_rectangle = plt.Polygon(flag_vertices, color=dominant_color, 
+                                           alpha=magnitude_alpha, zorder=21)
+                ax2.add_patch(flag_rectangle)
         
         # Determine which endpoints are on the convex hull boundary
         if len(all_endpoints) >= 3:
@@ -659,17 +713,12 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             # Check if either endpoint is on the convex hull
             # Find indices by comparing arrays
             pos_on_hull = False
-            neg_on_hull = False
             
             for idx, endpoint in enumerate(all_endpoints):
                 if np.allclose(endpoint, info['pos_end']):
                     pos_on_hull = idx in hull_vertex_indices
                     break
                     
-            for idx, endpoint in enumerate(all_endpoints):
-                if np.allclose(endpoint, info['neg_end']):
-                    neg_on_hull = idx in hull_vertex_indices
-                    break
             
             # Get the consistent magnitude for this feature
             vector_magnitude = info['mag']
@@ -704,7 +753,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                     pos_color = (base_r, base_g, base_b, pos_alpha)
                 except Exception:
                     pos_color = (0.6, 0.6, 0.6, 0.9)
-            elif (pos_on_hull or neg_on_hull) and feat_idx < len(feature_colors):
+            elif pos_on_hull and feat_idx < len(feature_colors):
                 # Vector is on hull boundary - use feature color
                 base_color = feature_colors[feat_idx]
                 
@@ -731,26 +780,17 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                         pos_color = (0.6, 0.6, 0.6, 0.9)
             else:
                 # Vector is NOT on hull boundary
-                if use_shared and shared_color is not None:
-                    try:
-                        from .color_system import hex_to_rgb
-                        base_r, base_g, base_b = hex_to_rgb(shared_color)
-                        pos_alpha = 0.9
-                        pos_color = (base_r, base_g, base_b, pos_alpha)
-                    except Exception:
-                        pos_color = (0.6, 0.6, 0.6, 0.9)
-                else:
-                    gray_value = 0.6
-                    pos_alpha = 0.2
-                    pos_color = (gray_value, gray_value, gray_value, pos_alpha)
+                gray_value = 0.6
+                pos_alpha = 0.2
+                pos_color = (gray_value, gray_value, gray_value, pos_alpha)
             
             # Draw vector arrows
             ax2.annotate('', xy=info['pos_end'], xytext=(0, 0),
                         arrowprops=dict(arrowstyle='->', color=pos_color, lw=2,
                                       shrinkA=0, shrinkB=0, alpha=pos_color[3]))
             
-            # Add feature labels ONLY for vectors on convex hull boundary
-            if (pos_on_hull or neg_on_hull) and feat_idx < len(col_labels):
+            # Add feature labels ONLY for vectors on convex hull boundary (positive only)
+            if pos_on_hull and feat_idx < len(col_labels):
                 label = col_labels[feat_idx][:8]  # Truncate long labels
                 # Label near positive endpoint for consistency
                 ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1, label,

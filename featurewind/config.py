@@ -95,6 +95,16 @@ DATA_POINT_SIZE = 48
 # Z-order for data points to ensure they render on top
 DATA_POINT_ZORDER = 20
 
+# Wind-vane style
+# Use 'ring_dot' to draw a circle that encloses all feature vectors
+# and a small circle on its edge to indicate flow direction.
+WIND_VANE_STYLE = 'ring_dot'  # options: 'ring_dot' (recommended), 'needle'
+WIND_VANE_CIRCLE_RADIUS = 0.055  # radius of the direction dot (axes units)
+WIND_VANE_CIRCLE_GUIDE = False   # draw a faint center→dot guide line
+WIND_VANE_RING_SCALE = 1.04      # multiply max feature-vector radius to pad the ring
+WIND_VANE_RING_MAX_R = 0.66      # clamp ring radius (reference ring is 0.7)
+WIND_VANE_RING_COLOR = '#999999' # ring line color
+
 # Particle trail opacity fade (older segments more transparent)
 # Alpha per segment = base_alpha * (TRAIL_TAIL_MIN_FACTOR + (1-TRAIL_TAIL_MIN_FACTOR) * ((t+1)/TAIL_LENGTH)**TRAIL_TAIL_EXP)
 TRAIL_TAIL_MIN_FACTOR = 0.10  # 0..1, alpha factor for the oldest segment
