@@ -2,10 +2,14 @@
 UI controls module for FeatureWind.
 
 Minimal UI for CLI-driven visualization. Provides an optional single-feature
-label or a hidden placeholder to keep layout consistent.
+label or a hidden placeholder to keep layout consistent, plus snapshot controls.
 """
 
 from .. import config
+import os
+from datetime import datetime
+import matplotlib.pyplot as plt
+from matplotlib.widgets import Button
 
 
 class UIController:
@@ -64,4 +68,69 @@ class UIController:
             ax_k = self.fig.add_axes([0.35, 0.02, 0.30, 0.03])
             ax_k.set_visible(False)
             self.ax_k = ax_k
+        # Add a snapshot button to save Wind Map, Wind Vane, and Feature Clock views
+        try:
+            btn_ax = self.fig.add_axes([0.02, 0.02, 0.14, 0.045])
+            self._snapshot_button = Button(btn_ax, 'Save Snapshots')
+            self._snapshot_button.on_clicked(self._on_snapshot_clicked)
+        except Exception:
+            pass
         # No further controls; interactions are handled via event_manager.
+
+    def save_snapshots(self):
+        """Save snapshots of the Wind Map, Wind Vane, and Feature Clock as PNGs."""
+        try:
+            # Ensure the renderer is ready for tight bbox
+            self.fig.canvas.draw_idle()
+            self.fig.canvas.flush_events()
+            self.fig.canvas.draw()
+
+            # Resolve output directory
+            out_dir = 'output'
+            try:
+                # If createwind.py created an output dir at repo root, prefer it
+                root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                candidate = os.path.join(root, 'output')
+                if os.path.isdir(candidate):
+                    out_dir = candidate
+            except Exception:
+                pass
+            os.makedirs(out_dir, exist_ok=True)
+
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            # Create a per-timestamp subfolder (e.g., output/20250101_235959)
+            ts_dir = os.path.join(out_dir, ts)
+            os.makedirs(ts_dir, exist_ok=True)
+
+            def save_ax(ax, fname):
+                if ax is None:
+                    return
+                try:
+                    renderer = self.fig.canvas.get_renderer()
+                except Exception:
+                    renderer = None
+                if renderer is not None:
+                    bbox = ax.get_tightbbox(renderer).transformed(self.fig.dpi_scale_trans.inverted())
+                    self.fig.savefig(os.path.join(ts_dir, fname), dpi=config.DPI, bbox_inches=bbox)
+                else:
+                    # Fallback: save full figure with suffix
+                    self.fig.savefig(os.path.join(ts_dir, fname), dpi=config.DPI)
+
+            # Use stored axes references instead of titles (titles may be hidden)
+            ax_map = self.ax1
+            ax_vane = None
+            ax_clock = None
+            if isinstance(self.ax2, (list, tuple)) and len(self.ax2) == 2:
+                ax_vane, ax_clock = self.ax2[0], self.ax2[1]
+            else:
+                ax_vane = self.ax2
+
+            # Save files inside the timestamped folder with stable names
+            save_ax(ax_map, 'wind_map.png')
+            save_ax(ax_vane, 'wind_vane.png')
+            save_ax(ax_clock, 'feature_clock.png')
+        except Exception:
+            pass
+
+    def _on_snapshot_clicked(self, event):
+        self.save_snapshots()

@@ -57,8 +57,9 @@ class EventManager:
         try:
             motion_cid = self.fig.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
             click_cid = self.fig.canvas.mpl_connect('button_press_event', self._on_mouse_click)
+            key_cid = self.fig.canvas.mpl_connect('key_press_event', self._on_key_press)
             
-            self.connected_handlers = [motion_cid, click_cid]
+            self.connected_handlers = [motion_cid, click_cid, key_cid]
             self._is_connected = True
             print("✓ Event handlers connected successfully")
             
@@ -156,6 +157,17 @@ class EventManager:
             except Exception as e:
                 pass  # Silently handle UI controller click error
                 self.failed_updates += 1
+
+    def _on_key_press(self, event):
+        """Keyboard shortcut handling (e.g., save snapshots)."""
+        try:
+            from .. import config as _cfg
+            desired = getattr(_cfg, 'SNAPSHOT_HOTKEY', 'a')
+            if isinstance(event.key, str) and event.key.lower() == str(desired).lower():
+                if self.ui_controller and hasattr(self.ui_controller, 'save_snapshots'):
+                    self.ui_controller.save_snapshots()
+        except Exception:
+            pass
     
     def _safe_canvas_update(self):
         """Thread-safe canvas update with timing control."""

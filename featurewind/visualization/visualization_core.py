@@ -848,9 +848,15 @@ def apply_professional_styling(fig, ax1, ax2):
     for spine in ax1.spines.values():
         spine.set_visible(False)
     
-    # Apply unified title styling to both axes
-    title_kwargs = dict(fontsize=14, color=TEXT_COLOR, pad=14, weight='bold')
-    ax1.set_title("Wind Map", **title_kwargs)
+    # Apply unified title styling to both axes (optional)
+    if bool(getattr(config, 'SHOW_TITLES', True)):
+        title_kwargs = dict(fontsize=14, color=TEXT_COLOR, pad=14, weight='bold')
+        ax1.set_title("Wind Map", **title_kwargs)
+    else:
+        try:
+            ax1.set_title("")
+        except Exception:
+            pass
 
     # Style wind vane - align with main plot background
     ax2.set_facecolor(BACKGROUND_COLOR)
@@ -860,8 +866,14 @@ def apply_professional_styling(fig, ax1, ax2):
         spine.set_color(TEXT_COLOR)
         spine.set_linewidth(0.5)
         
-    # Wind vane title styling (identical to map)
-    ax2.set_title("Wind Vane", **title_kwargs)
+    # Wind vane title styling (identical to map; optional)
+    if bool(getattr(config, 'SHOW_TITLES', True)):
+        ax2.set_title("Wind Vane", **title_kwargs)
+    else:
+        try:
+            ax2.set_title("")
+        except Exception:
+            pass
 
 
 def save_figure_frames(fig, output_dir, num_frames=5):

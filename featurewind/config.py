@@ -105,6 +105,15 @@ WIND_VANE_RING_SCALE = 1.04      # multiply max feature-vector radius to pad the
 WIND_VANE_RING_MAX_R = 0.66      # clamp ring radius (reference ring is 0.7)
 WIND_VANE_RING_COLOR = '#999999' # ring line color
 
+# Axes titles
+# When False, hide titles on all canvases (Wind Map, Wind Vane, Feature Clock)
+SHOW_TITLES = False
+
+# UI hotkeys
+# Press this key while the figure is focused to save snapshots of
+# Wind Map, Wind Vane, and Feature Clock panes into the output directory.
+SNAPSHOT_HOTKEY = 'a'
+
 # Particle trail opacity fade (older segments more transparent)
 # Alpha per segment = base_alpha * (TRAIL_TAIL_MIN_FACTOR + (1-TRAIL_TAIL_MIN_FACTOR) * ((t+1)/TAIL_LENGTH)**TRAIL_TAIL_EXP)
 TRAIL_TAIL_MIN_FACTOR = 0.10  # 0..1, alpha factor for the oldest segment

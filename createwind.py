@@ -431,10 +431,15 @@ def main():
             ax2_right = fig.add_axes([pos.x0 + left_w + gap, pos.y0, right_w, pos.height])
             visualization_core.prepare_wind_vane_subplot(ax2_left)
             visualization_core.prepare_wind_vane_subplot(ax2_right)
-            # Titles
+            # Titles (optional)
             try:
-                ax2_left.set_title("Wind Vane", fontsize=12, weight='bold')
-                ax2_right.set_title("Feature Clock", fontsize=12, weight='bold')
+                from featurewind import config as _cfg
+                if bool(getattr(_cfg, 'SHOW_TITLES', True)):
+                    ax2_left.set_title("Wind Vane", fontsize=12, weight='bold')
+                    ax2_right.set_title("Feature Clock", fontsize=12, weight='bold')
+                else:
+                    ax2_left.set_title("")
+                    ax2_right.set_title("")
             except Exception:
                 pass
             ax2_for_events = (ax2_left, ax2_right)
@@ -451,7 +456,8 @@ def main():
     system['grad_indices'] = grad_indices  # Store selected feature indices for color alignment
     
     # Step 7: Setup UI controls
-    ui_controller = ui_controls.UIController(fig, ax1, ax2, system, grid_data, col_labels)
+    # Pass the effective vane axes (single or tuple) so UI can snapshot correctly
+    ui_controller = ui_controls.UIController(fig, ax1, ax2_for_events, system, grid_data, col_labels)
     
     # Pass the all_grad_vectors for proper feature selection in UI
     ui_controller.all_grad_vectors = all_grad_vectors
