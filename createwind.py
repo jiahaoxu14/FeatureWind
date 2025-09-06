@@ -17,6 +17,7 @@ improved modularity, maintainability, and extensibility.
 import sys
 import os
 import argparse
+import re
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
@@ -76,6 +77,14 @@ Examples:
         required=True,
         help='Path to tangent map file (required)'
     )
+
+    # Optional: filter features by name using a regex (e.g., '3$' to keep columns ending with 3)
+    parser.add_argument(
+        '--name-filter', '-F',
+        type=str,
+        default=None,
+        help="Regex to filter feature names before selection (e.g., '3$' for 'worst' metrics)"
+    )
     
     return parser.parse_args()
 
@@ -132,24 +141,46 @@ def main():
         print("Error: specify either --feature NAME or --top-k N|all (or use --list-features).")
         sys.exit(2)
 
+    # Optional: filter feature set by name regex
+    filtered_indices = list(range(len(col_labels)))
+    if args.name_filter:
+        try:
+            pattern = re.compile(args.name_filter)
+            filtered_indices = [i for i, name in enumerate(col_labels) if pattern.search(name)]
+            if len(filtered_indices) == 0:
+                print(f"Error: name-filter '{args.name_filter}' matched 0 features.")
+                sys.exit(2)
+            print(f"Applied name-filter '{args.name_filter}': kept {len(filtered_indices)}/{len(col_labels)} features.")
+        except re.error as e:
+            print(f"Error: invalid regex for --name-filter: {e}")
+            sys.exit(2)
+
     # Parse top-k value from arguments
     if args.feature is None:  # Top-K mode
         if args.top_k is None:
             print("Error: --top-k is required when --feature is not provided.")
             sys.exit(2)
         if isinstance(args.top_k, str) and args.top_k.lower() == 'all':
-            config.k = len(col_labels)
-            print(f"Visualizing all {len(col_labels)} features")
+            # Use all filtered features
+            config.k = len(filtered_indices)
+            grad_indices = filtered_indices
+            print(f"Visualizing all {len(grad_indices)} filtered features")
         else:
             try:
                 config.k = int(args.top_k)
                 if config.k < 1:
                     config.k = 1
-                elif config.k > len(col_labels):
-                    config.k = len(col_labels)
-                    print(f"Note: Only {len(col_labels)} features available, using all")
-                else:
-                    print(f"Visualizing top {config.k} features")
+                # Compute top-k within the filtered set
+                feature_magnitudes = np.linalg.norm(all_grad_vectors, axis=2).mean(axis=0)
+                # Sort within filtered indices by average magnitude (descending)
+                filtered_with_scores = [(i, feature_magnitudes[i]) for i in filtered_indices]
+                filtered_with_scores.sort(key=lambda x: -x[1])
+                grad_indices = [i for i, _ in filtered_with_scores[:config.k]]
+                # Adjust k in case fewer filtered features exist
+                config.k = len(grad_indices)
+                if config.k < int(args.top_k):
+                    print(f"Note: Only {config.k} filtered features available, using all of them")
+                print(f"Visualizing top {config.k} filtered features")
             except ValueError:
                 print(f"Error: Invalid --top-k value '{args.top_k}'. Use an integer or 'all'.")
                 sys.exit(2)
@@ -188,13 +219,11 @@ def main():
         # Update window title
         config.WINDOW_TITLE = f"FeatureWind - Single Feature: {col_labels[feature_idx]}"
     else:
-        # Top-K mode
-        top_k_indices, avg_magnitudes = data_processing.pick_top_k_features(all_grad_vectors, config.k)
-        grad_indices = top_k_indices
-        if config.k == len(col_labels):
-            config.WINDOW_TITLE = f"FeatureWind - All {len(col_labels)} Features"
+        # Top-K mode already computed grad_indices above
+        if args.top_k and isinstance(args.top_k, str) and args.top_k.lower() == 'all':
+            config.WINDOW_TITLE = f"FeatureWind - All {len(grad_indices)} Filtered Features"
         else:
-            config.WINDOW_TITLE = f"FeatureWind - Top {len(grad_indices)} Features"
+            config.WINDOW_TITLE = f"FeatureWind - Top {len(grad_indices)} Filtered Features"
     
     # Adaptive velocity scaling removed: keep config.velocity_scale fixed
     
@@ -523,6 +552,17 @@ def main():
         except Exception as e:
             pass  # Silently handle animation frame error
             return []
+
+        finally:
+            # Auto snapshots: save every K frames when enabled
+            try:
+                if bool(getattr(config, 'AUTO_SNAPSHOT_ENABLED', False)):
+                    kframes = int(getattr(config, 'AUTO_SNAPSHOT_EVERY_K_FRAMES', 0) or 0)
+                    if kframes > 0 and (animation_frame_count % kframes == 0):
+                        if ui_controller and hasattr(ui_controller, 'save_auto_snapshot'):
+                            ui_controller.save_auto_snapshot(animation_frame_count)
+            except Exception:
+                pass
     
     # Create the animation
     anim = None

@@ -126,6 +126,11 @@ CLEAR_SELECTION_HOTKEY = 'c'
 TRAIL_TAIL_MIN_FACTOR = 0.10  # 0..1, alpha factor for the oldest segment
 TRAIL_TAIL_EXP = 1.2          # >1 for stronger decay near the tail
 
+# Auto snapshots
+# When enabled, the UI will capture snapshots automatically every K frames
+AUTO_SNAPSHOT_ENABLED = False
+AUTO_SNAPSHOT_EVERY_K_FRAMES = 3  # capture interval in animation frames
+
 # Particle dynamics mode
 # When True, particle velocities have constant magnitude and follow only the
 # direction of the vector field; "velocity_scale" sets that constant speed.

@@ -34,6 +34,9 @@ class UIController:
         self.system = system
         self.grid_data = grid_data
         self.col_labels = col_labels
+        # Auto-snapshot session state (single folder per run)
+        self._auto_snapshot_dir = None
+        self._auto_snapshot_count = 0
         # Selection state for multi-cell selection on the wind-map
         self.selected_cells = set()  # set of (i, j)
         self._selected_patches = []  # drawn rectangles on ax1
@@ -264,3 +267,52 @@ class UIController:
 
     def _on_snapshot_clicked(self, event):
         self.save_snapshots()
+
+    def save_auto_snapshot(self, frame_index=None):
+        """Save ONLY the Wind Map (ax1) into a single folder for this run.
+
+        Args:
+            frame_index (int, optional): Frame number to include in filename.
+        """
+        try:
+            # Resolve base output directory
+            out_dir = 'output'
+            try:
+                root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                candidate = os.path.join(root, 'output')
+                if os.path.isdir(candidate):
+                    out_dir = candidate
+            except Exception:
+                pass
+
+            # Initialize per-run auto snapshot folder once
+            if self._auto_snapshot_dir is None:
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                self._auto_snapshot_dir = os.path.join(out_dir, f'auto_{ts}')
+                os.makedirs(self._auto_snapshot_dir, exist_ok=True)
+                self._auto_snapshot_count = 0
+
+            # Prepare renderer
+            self.fig.canvas.draw_idle()
+            self.fig.canvas.flush_events()
+            self.fig.canvas.draw()
+
+            # Build filename
+            self._auto_snapshot_count += 1
+            if isinstance(frame_index, int):
+                fname = f'wind_map_frame_{frame_index:06d}.png'
+            else:
+                fname = f'wind_map_{self._auto_snapshot_count:06d}.png'
+
+            # Save only ax1
+            try:
+                renderer = self.fig.canvas.get_renderer()
+            except Exception:
+                renderer = None
+            if renderer is not None:
+                bbox = self.ax1.get_tightbbox(renderer).transformed(self.fig.dpi_scale_trans.inverted())
+                self.fig.savefig(os.path.join(self._auto_snapshot_dir, fname), dpi=config.DPI, bbox_inches=bbox)
+            else:
+                self.fig.savefig(os.path.join(self._auto_snapshot_dir, fname), dpi=config.DPI)
+        except Exception:
+            pass
