@@ -475,6 +475,11 @@ def main():
     event_mgr = event_manager.create_reliable_event_system(
         fig, ax1, ax2_for_events, ui_controller, system, col_labels, grad_indices, feature_colors, grid_res
     )
+    # Allow UI to communicate back to event manager (for selection updates)
+    try:
+        ui_controller.event_manager = event_mgr
+    except Exception:
+        pass
     
     # Store additional family info in event manager for wind vane updates
     if hasattr(event_mgr, 'set_family_info'):

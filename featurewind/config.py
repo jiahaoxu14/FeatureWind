@@ -118,6 +118,9 @@ SHOW_VECTOR_LABELS = True
 # Wind Map, Wind Vane, and Feature Clock panes into the output directory.
 SNAPSHOT_HOTKEY = 'a'
 
+# Clear all selected grid cells
+CLEAR_SELECTION_HOTKEY = 'c'
+
 # Particle trail opacity fade (older segments more transparent)
 # Alpha per segment = base_alpha * (TRAIL_TAIL_MIN_FACTOR + (1-TRAIL_TAIL_MIN_FACTOR) * ((t+1)/TAIL_LENGTH)**TRAIL_TAIL_EXP)
 TRAIL_TAIL_MIN_FACTOR = 0.10  # 0..1, alpha factor for the oldest segment

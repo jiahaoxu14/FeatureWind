@@ -32,7 +32,12 @@ class EventManager:
         self.last_mouse_update = 0
         self.last_click_update = 0
         self.update_lock = Lock()
-        self.mouse_data = {'grid_cell': None, 'grid_res': 40}
+        # Mouse interaction state shared with UI (selection-aware)
+        self.mouse_data = {
+            'grid_cell': None,
+            'grid_res': 40,
+            'selected_cells': []  # list of (i, j) tuples
+        }
         
         # Performance monitoring
         self.event_count = 0
@@ -166,6 +171,11 @@ class EventManager:
             if isinstance(event.key, str) and event.key.lower() == str(desired).lower():
                 if self.ui_controller and hasattr(self.ui_controller, 'save_snapshots'):
                     self.ui_controller.save_snapshots()
+            # Clear selection hotkey
+            clear_key = getattr(_cfg, 'CLEAR_SELECTION_HOTKEY', 'c')
+            if isinstance(event.key, str) and event.key.lower() == str(clear_key).lower():
+                if self.ui_controller and hasattr(self.ui_controller, 'clear_selection'):
+                    self.ui_controller.clear_selection()
         except Exception:
             pass
     

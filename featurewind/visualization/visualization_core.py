@@ -254,35 +254,59 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
         if hasattr(child, 'arrow_patch'):
             child.remove()
     
-    if 'grid_cell' not in mouse_data or mouse_data['grid_cell'] is None:
-        return
-    
-    cell_i, cell_j = mouse_data['grid_cell']
+    # Support multi-cell selections: use aggregated vectors over selected cells when provided
+    selected_cells = mouse_data.get('selected_cells', []) or []
+    use_selection = isinstance(selected_cells, (list, tuple)) and len(selected_cells) > 0
+
+    # Fallback to single hovered cell when no selection
+    if not use_selection:
+        if 'grid_cell' not in mouse_data or mouse_data['grid_cell'] is None:
+            return
+        cell_i, cell_j = mouse_data['grid_cell']
+    else:
+        # If selection exists but no hovered cell, set a dummy cell index for downstream checks
+        # We will avoid using (cell_i, cell_j) in selection mode for data access
+        cell_i, cell_j = (-1, -1)
+
     grid_res = mouse_data.get('grid_res', config.DEFAULT_GRID_RES)
     
-    # Validate grid cell indices against actual grid
-    if cell_i < 0 or cell_j < 0:
-        return
-    # If system provides grid shape, prefer it for bounds
-    try:
-        if 'grid_u_sum' in system:
-            rs, cs = system['grid_u_sum'].shape
-            if cell_i >= rs or cell_j >= cs:
-                return
-    except Exception:
-        if cell_i >= grid_res or cell_j >= grid_res:
+    # Validate grid cell indices against actual grid (only when not aggregating a selection)
+    if not use_selection:
+        if cell_i < 0 or cell_j < 0:
             return
+        # If system provides grid shape, prefer it for bounds
+        try:
+            if 'grid_u_sum' in system:
+                rs, cs = system['grid_u_sum'].shape
+                if cell_i >= rs or cell_j >= cs:
+                    return
+        except Exception:
+            if cell_i >= grid_res or cell_j >= grid_res:
+                return
     
     # Consistent masking check using unified mask from main view
-    masked = False
     unmasked = system.get('unmasked_cells', None)
-    if unmasked is not None and 0 <= cell_i < unmasked.shape[0] and 0 <= cell_j < unmasked.shape[1]:
-        masked = not bool(unmasked[cell_i, cell_j])
-
-    if masked:
-        ax2.text(0.5, 0.5, "Masked cell", transform=ax2.transAxes,
-                 ha='center', va='center', fontsize=10, color='gray')
-        return
+    if use_selection:
+        # Filter selection to unmasked cells
+        valid_cells = []
+        if unmasked is not None and hasattr(unmasked, 'shape'):
+            for (ii, jj) in selected_cells:
+                if 0 <= ii < unmasked.shape[0] and 0 <= jj < unmasked.shape[1] and bool(unmasked[ii, jj]):
+                    valid_cells.append((int(ii), int(jj)))
+        else:
+            valid_cells = [(int(ii), int(jj)) for (ii, jj) in selected_cells]
+        if len(valid_cells) == 0:
+            ax2.text(0.5, 0.5, "Masked selection", transform=ax2.transAxes,
+                     ha='center', va='center', fontsize=10, color='gray')
+            return
+    else:
+        masked = False
+        if unmasked is not None and 0 <= cell_i < unmasked.shape[0] and 0 <= cell_j < unmasked.shape[1]:
+            masked = not bool(unmasked[cell_i, cell_j])
+        if masked:
+            ax2.text(0.5, 0.5, "Masked cell", transform=ax2.transAxes,
+                     ha='center', va='center', fontsize=10, color='gray')
+            return
 
     # Get vectors for ALL features from the all-features grid
     vectors_all = []
@@ -293,64 +317,105 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
         grid_v_all_feats = system['grid_v_all_feats']
         
         for feat_idx in range(len(col_labels)):
-            # Use cell-center values directly (consistent with optimization and no bounds errors)
-            u_val = grid_u_all_feats[feat_idx, cell_i, cell_j]
-            v_val = grid_v_all_feats[feat_idx, cell_i, cell_j]
+            if use_selection:
+                # Sum vectors across selected cells
+                u_sum = 0.0
+                v_sum = 0.0
+                for (ii, jj) in valid_cells:
+                    u_sum += float(grid_u_all_feats[feat_idx, ii, jj])
+                    v_sum += float(grid_v_all_feats[feat_idx, ii, jj])
+                u_val, v_val = u_sum, v_sum
+            else:
+                # Use cell-center values directly (consistent with optimization and no bounds errors)
+                u_val = float(grid_u_all_feats[feat_idx, cell_i, cell_j])
+                v_val = float(grid_v_all_feats[feat_idx, cell_i, cell_j])
             vectors_all.append([u_val, v_val])
             mags_all.append(np.sqrt(u_val**2 + v_val**2))
     else:
         return  # Can't visualize without grid data
 
     # Diagnostics: report whether the hovered cell center lies inside the data convex hull
-    try:
-        from scipy.spatial import Delaunay
-        xmin, xmax, ymin, ymax = config.bounding_box
-        # Derive grid_res from system grids to avoid mismatch
-        rs, cs = system['grid_u_all_feats'].shape[1:]
-        dx = (xmax - xmin) / cs
-        dy = (ymax - ymin) / rs
-        cell_center_x = xmin + (cell_j + 0.5) * dx
-        cell_center_y = ymin + (cell_i + 0.5) * dy
-        # Build/cached triangulation of positions
-        if 'positions' in system and system['positions'] is not None:
-            if 'positions_tris' not in system or system.get('positions_tris_n', 0) != len(system['positions']):
-                try:
-                    system['positions_tris'] = Delaunay(system['positions'])
-                    system['positions_tris_n'] = len(system['positions'])
-                except Exception:
-                    system['positions_tris'] = None
-            tri = system.get('positions_tris', None)
-            if tri is not None:
-                inside = tri.find_simplex(np.array([[cell_center_x, cell_center_y]])) >= 0
-                print(f"  ↳ Cell center ({cell_center_x:.5f}, {cell_center_y:.5f}) inside data hull: {bool(inside)}")
-    except Exception:
-        pass
+    if not use_selection:
+        try:
+            from scipy.spatial import Delaunay
+            xmin, xmax, ymin, ymax = config.bounding_box
+            # Derive grid_res from system grids to avoid mismatch
+            rs, cs = system['grid_u_all_feats'].shape[1:]
+            dx = (xmax - xmin) / cs
+            dy = (ymax - ymin) / rs
+            cell_center_x = xmin + (cell_j + 0.5) * dx
+            cell_center_y = ymin + (cell_i + 0.5) * dy
+            # Build/cached triangulation of positions
+            if 'positions' in system and system['positions'] is not None:
+                if 'positions_tris' not in system or system.get('positions_tris_n', 0) != len(system['positions']):
+                    try:
+                        system['positions_tris'] = Delaunay(system['positions'])
+                        system['positions_tris_n'] = len(system['positions'])
+                    except Exception:
+                        system['positions_tris'] = None
+                tri = system.get('positions_tris', None)
+                if tri is not None:
+                    inside = tri.find_simplex(np.array([[cell_center_x, cell_center_y]])) >= 0
+                    print(f"  ↳ Cell center ({cell_center_x:.5f}, {cell_center_y:.5f}) inside data hull: {bool(inside)}")
+        except Exception:
+            pass
 
     # Print all feature vectors for this unmasked cell to the terminal (on cell change)
     try:
-        last_printed = system.get('vane_last_printed_cell', None)
-        current_cell = (int(cell_i), int(cell_j))
-        if last_printed != current_cell:
-            system['vane_last_printed_cell'] = current_cell
-            print(f"\nWind-Vane cell ({cell_i},{cell_j}) feature vectors:")
-            for feat_idx in range(len(col_labels)):
-                u_val, v_val = vectors_all[feat_idx]
-                mag_val = mags_all[feat_idx]
-                name = col_labels[feat_idx] if feat_idx < len(col_labels) else f"feat_{feat_idx}"
-                print(f"  {feat_idx:3d} | {name:>20s} : (u={u_val:+.5f}, v={v_val:+.5f}) | |v|={mag_val:.5f}")
+        if use_selection:
+            last_printed = system.get('vane_last_printed_sel', None)
+            sel_key = tuple(sorted(valid_cells))
+            if last_printed != sel_key:
+                system['vane_last_printed_sel'] = sel_key
+                print(f"\nWind-Vane selection {list(sel_key)} aggregated feature vectors:")
+                for feat_idx in range(len(col_labels)):
+                    u_val, v_val = vectors_all[feat_idx]
+                    mag_val = mags_all[feat_idx]
+                    name = col_labels[feat_idx] if feat_idx < len(col_labels) else f"feat_{feat_idx}"
+                    print(f"  {feat_idx:3d} | {name:>20s} : (u={u_val:+.5f}, v={v_val:+.5f}) | |v|={mag_val:.5f}")
+        else:
+            last_printed = system.get('vane_last_printed_cell', None)
+            current_cell = (int(cell_i), int(cell_j))
+            if last_printed != current_cell:
+                system['vane_last_printed_cell'] = current_cell
+                print(f"\nWind-Vane cell ({cell_i},{cell_j}) feature vectors:")
+                for feat_idx in range(len(col_labels)):
+                    u_val, v_val = vectors_all[feat_idx]
+                    mag_val = mags_all[feat_idx]
+                    name = col_labels[feat_idx] if feat_idx < len(col_labels) else f"feat_{feat_idx}"
+                    print(f"  {feat_idx:3d} | {name:>20s} : (u={u_val:+.5f}, v={v_val:+.5f}) | |v|={mag_val:.5f}")
     except Exception:
         pass
     
     # Get the dominant feature for this cell
     dominant_feature = -1
-    if 'cell_dominant_features' in system:
+    if use_selection and 'grid_u_all_feats' in system and 'grid_v_all_feats' in system:
+        try:
+            grid_u_all_feats = system['grid_u_all_feats']
+            grid_v_all_feats = system['grid_v_all_feats']
+            # Sum magnitudes across selected cells for each feature and take argmax
+            feat_mags = []
+            for feat_idx in range(len(col_labels)):
+                s = 0.0
+                for (ii, jj) in valid_cells:
+                    u = float(grid_u_all_feats[feat_idx, ii, jj])
+                    v = float(grid_v_all_feats[feat_idx, ii, jj])
+                    s += np.hypot(u, v)
+                feat_mags.append(s)
+            if len(feat_mags) > 0:
+                dominant_feature = int(np.argmax(feat_mags))
+        except Exception:
+            dominant_feature = -1
+    elif 'cell_dominant_features' in system and not use_selection:
         cell_dominant_features = system['cell_dominant_features']
-        dominant_feature = cell_dominant_features[cell_i, cell_j]
+        dominant_feature = int(cell_dominant_features[cell_i, cell_j])
     
     
     # Place aggregated point at center as a simple black dot (consistent across modes)
+    center_label = (f'Selection ({len(valid_cells)} cells)' if use_selection
+                    else f'Cell ({cell_i},{cell_j})')
     ax2.scatter(0, 0, c='black', s=30, marker='o', edgecolor='none',
-               zorder=10, label=f'Cell ({cell_i},{cell_j})')
+               zorder=10, label=center_label)
     
     # Draw gradient vector arrows for each feature in the grid cell
     # Calculate dynamic scaling to use 90% of canvas

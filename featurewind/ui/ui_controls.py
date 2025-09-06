@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
+from matplotlib.patches import Rectangle
 
 
 class UIController:
@@ -33,6 +34,20 @@ class UIController:
         self.system = system
         self.grid_data = grid_data
         self.col_labels = col_labels
+        # Selection state for multi-cell selection on the wind-map
+        self.selected_cells = set()  # set of (i, j)
+        self._selected_patches = []  # drawn rectangles on ax1
+        # Determine grid resolution from system or grid data
+        try:
+            if system.get('unmasked_cells') is not None:
+                self.grid_res = int(system['unmasked_cells'].shape[0])
+            elif system.get('grid_u_sum') is not None:
+                self.grid_res = int(system['grid_u_sum'].shape[0])
+            else:
+                # fallback to cell centers length if available
+                self.grid_res = int(len(grid_data[10])) if grid_data and len(grid_data) > 10 else int(getattr(config, 'DEFAULT_GRID_RES', 40))
+        except Exception:
+            self.grid_res = int(getattr(config, 'DEFAULT_GRID_RES', 40))
         
         # Extract grid data (kept for compatibility with consumers)
         (self.interp_u_sum, self.interp_v_sum, self.interp_argmax,
@@ -76,6 +91,115 @@ class UIController:
         except Exception:
             pass
         # No further controls; interactions are handled via event_manager.
+
+    # EventManager will call this on mouse clicks
+    def handle_mouse_click(self, event):
+        try:
+            # Only handle clicks on the main wind-map axes
+            if event.inaxes != self.ax1 or event.xdata is None or event.ydata is None:
+                return
+            from .. import config as _cfg
+            xmin, xmax, ymin, ymax = _cfg.bounding_box
+            # Outside bounds
+            if not (xmin <= event.xdata <= xmax and ymin <= event.ydata <= ymax):
+                return
+            # Convert to grid cell indices (clamped)
+            j = int((event.xdata - xmin) / (xmax - xmin) * self.grid_res)
+            i = int((event.ydata - ymin) / (ymax - ymin) * self.grid_res)
+            i = max(0, min(self.grid_res - 1, i))
+            j = max(0, min(self.grid_res - 1, j))
+
+            # Left click: toggle selection; Right click (3): clear all
+            if int(getattr(event, 'button', 1)) == 3:
+                # Clear selection
+                self.selected_cells.clear()
+                self._redraw_selection_overlays()
+            else:
+                cell = (i, j)
+                if cell in self.selected_cells:
+                    self.selected_cells.remove(cell)
+                else:
+                    self.selected_cells.add(cell)
+                self._redraw_selection_overlays()
+
+            # Propagate selection to event manager's mouse_data and update wind vane
+            try:
+                # Event manager is attached by the caller after creation
+                if hasattr(self, 'event_manager') and self.event_manager is not None:
+                    self.event_manager.mouse_data['selected_cells'] = sorted(list(self.selected_cells))
+                    # keep grid_res consistent
+                    self.event_manager.mouse_data['grid_res'] = self.grid_res
+                    # Trigger wind vane update (uses either hovered cell or selection)
+                    if hasattr(self.event_manager, 'wind_vane_callback') and self.event_manager.wind_vane_callback:
+                        self.event_manager.wind_vane_callback(self.event_manager.mouse_data)
+                        # Safe canvas update
+                        if hasattr(self.event_manager, '_safe_canvas_update'):
+                            self.event_manager._safe_canvas_update()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _redraw_selection_overlays(self):
+        """Draw or update semi-transparent overlays for selected cells on ax1."""
+        try:
+            # Remove existing patches
+            for p in self._selected_patches:
+                try:
+                    p.remove()
+                except Exception:
+                    pass
+            self._selected_patches.clear()
+
+            if not self.selected_cells:
+                # Force redraw to clear
+                try:
+                    self.fig.canvas.draw_idle()
+                except Exception:
+                    pass
+                return
+
+            from .. import config as _cfg
+            xmin, xmax, ymin, ymax = _cfg.bounding_box
+            dx = (xmax - xmin) / self.grid_res
+            dy = (ymax - ymin) / self.grid_res
+            # Draw a semi-transparent rectangle for each selected cell
+            for (i, j) in self.selected_cells:
+                x_left = xmin + j * dx
+                y_bottom = ymin + i * dy
+                patch = Rectangle((x_left, y_bottom), dx, dy,
+                                      facecolor='yellow', alpha=0.15,
+                                      edgecolor='orange', linewidth=1.0, zorder=30)
+                try:
+                    self.ax1.add_patch(patch)
+                    self._selected_patches.append(patch)
+                except Exception:
+                    pass
+
+            # Request a redraw
+            try:
+                self.fig.canvas.draw_idle()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def clear_selection(self):
+        """Clear all selected cells and update views."""
+        try:
+            if not self.selected_cells:
+                return
+            self.selected_cells.clear()
+            self._redraw_selection_overlays()
+            # Propagate to event manager and refresh wind vane to show hover-only state
+            if hasattr(self, 'event_manager') and self.event_manager is not None:
+                self.event_manager.mouse_data['selected_cells'] = []
+                if hasattr(self.event_manager, 'wind_vane_callback') and self.event_manager.wind_vane_callback:
+                    self.event_manager.wind_vane_callback(self.event_manager.mouse_data)
+                if hasattr(self.event_manager, '_safe_canvas_update'):
+                    self.event_manager._safe_canvas_update()
+        except Exception:
+            pass
 
     def save_snapshots(self):
         """Save snapshots of the Wind Map, Wind Vane, and Feature Clock as PNGs."""
