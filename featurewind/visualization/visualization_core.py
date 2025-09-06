@@ -484,8 +484,8 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 ax2.arrow(0, 0, info['pos_end'][0], info['pos_end'][1],
                           head_width=0.04, head_length=0.04, fc=color, ec=color,
                           linewidth=1.8, alpha=0.9, zorder=8)
-                # Label highlighted vectors
-                if feat_idx < len(col_labels):
+                # Label highlighted vectors (optional)
+                if bool(getattr(config, 'SHOW_VECTOR_LABELS', True)) and feat_idx < len(col_labels):
                     ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1,
                              col_labels[feat_idx][:8], fontsize=8, ha='center', va='center', alpha=0.9)
 
@@ -538,10 +538,11 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                                      linestyle='--', alpha=0.4, zorder=7)
             ax2.add_patch(magnitude_circle)
             
-            # Add feature label
-            ax2.text(scaled_vector[0]*1.2, scaled_vector[1]*1.2, 
-                    col_labels[features_selected[0]][:20], 
-                    ha='center', va='center', fontsize=9, color=color)
+            # Add feature label (optional)
+            if bool(getattr(config, 'SHOW_VECTOR_LABELS', True)):
+                ax2.text(scaled_vector[0]*1.2, scaled_vector[1]*1.2, 
+                        col_labels[features_selected[0]][:20], 
+                        ha='center', va='center', fontsize=9, color=color)
             
         elif len(all_endpoints) >= 3:
             try:
@@ -789,8 +790,8 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                         arrowprops=dict(arrowstyle='->', color=pos_color, lw=2,
                                       shrinkA=0, shrinkB=0, alpha=pos_color[3]))
             
-            # Add feature labels ONLY for vectors on convex hull boundary (positive only)
-            if pos_on_hull and feat_idx < len(col_labels):
+            # Add feature labels ONLY for vectors on convex hull boundary (positive only, optional)
+            if bool(getattr(config, 'SHOW_VECTOR_LABELS', True)) and pos_on_hull and feat_idx < len(col_labels):
                 label = col_labels[feat_idx][:8]  # Truncate long labels
                 # Label near positive endpoint for consistency
                 ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1, label,

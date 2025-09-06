@@ -64,7 +64,7 @@ SINGLE_FEATURE_COLOR = "#EE6677"
 
 # Feature Clock mode: show a second wind vane that displays
 # only the top-N strongest feature vectors with distinct colors.
-FEATURE_CLOCK_ENABLED = True
+FEATURE_CLOCK_ENABLED = False
 FEATURE_CLOCK_TOP_N = 4
 
 # Coloring behavior
@@ -108,6 +108,10 @@ WIND_VANE_RING_COLOR = '#999999' # ring line color
 # Axes titles
 # When False, hide titles on all canvases (Wind Map, Wind Vane, Feature Clock)
 SHOW_TITLES = False
+
+# Vector labels
+# When False, hide feature/vector name annotations in Wind Vane and Feature Clock
+SHOW_VECTOR_LABELS = False
 
 # UI hotkeys
 # Press this key while the figure is focused to save snapshots of
