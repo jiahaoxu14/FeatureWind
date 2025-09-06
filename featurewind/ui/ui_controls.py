@@ -167,9 +167,15 @@ class UIController:
             for (i, j) in self.selected_cells:
                 x_left = xmin + j * dx
                 y_bottom = ymin + i * dy
-                patch = Rectangle((x_left, y_bottom), dx, dy,
-                                      facecolor='yellow', alpha=0.15,
-                                      edgecolor='orange', linewidth=1.0, zorder=30)
+                # Draw only the border in black, no fill
+                patch = Rectangle(
+                    (x_left, y_bottom), dx, dy,
+                    fill=False,
+                    facecolor='none',
+                    edgecolor='black',
+                    linewidth=1.5,
+                    zorder=30,
+                )
                 try:
                     self.ax1.add_patch(patch)
                     self._selected_patches.append(patch)

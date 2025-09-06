@@ -700,9 +700,10 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                                   alpha=0.6, zorder=19)
                 ax2.add_patch(ring)
 
-                # Direction dot on ring edge — color by magnitude-dominant feature when available
+                # Direction dot: always placed ON the ring (position encodes direction only)
                 dot_r = float(getattr(config, 'WIND_VANE_CIRCLE_RADIUS', 0.055))
-                dot_center = flow_direction * ring_r
+                # Keep dot on the ring circumference
+                dot_center = flow_direction * ring_r if sum_magnitude > 1e-12 else np.array([ring_r, 0.0])
                 # Choose color from the selected feature with highest magnitude
                 ring_dot_color = 'black'
                 try:
@@ -719,8 +720,19 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                         ring_dot_color = dominant_color
                 except Exception:
                     pass
+                # Alpha mode: speed vs field strength
+                dot_alpha_mode = str(getattr(config, 'RING_DOT_ALPHA_MODE', 'speed')).lower()
+                if dot_alpha_mode == 'field':
+                    # Normalize summed magnitude against the longest individual vector magnitude
+                    # Use smooth tanh to avoid hard saturation when vectors align strongly
+                    denom = float(max_mag) if 'max_mag' in locals() and max_mag > 1e-12 else (sum_magnitude + 1e-9)
+                    base = float(sum_magnitude) / (denom + 1e-9)
+                    ratio = float(np.tanh(base))  # 0..~1
+                    dot_alpha = max(0.3, min(1.0, 0.3 + 0.7 * ratio))
+                else:
+                    dot_alpha = magnitude_alpha
                 dir_dot = plt.Circle((float(dot_center[0]), float(dot_center[1])), radius=dot_r,
-                                     color=ring_dot_color, alpha=magnitude_alpha, zorder=21)
+                                     color=ring_dot_color, alpha=dot_alpha, zorder=21)
                 ax2.add_patch(dir_dot)
 
                 # Optional faint guide from center for readability

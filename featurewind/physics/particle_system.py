@@ -133,8 +133,18 @@ def get_velocity_at_positions(positions, system, interp_u_sum=None, interp_v_sum
             velocity[:, 0] = current_grid_u[cell_i_indices, cell_j_indices]
             velocity[:, 1] = current_grid_v[cell_i_indices, cell_j_indices]
     
-    # Apply velocity scaling
-    velocity *= config.velocity_scale
+    # Apply velocity according to mode
+    if bool(getattr(config, 'CONSISTENT_PARTICLE_SPEED', False)):
+        # Normalize to a constant magnitude given by velocity_scale
+        norms = np.linalg.norm(velocity, axis=1)
+        # Avoid division by zero; only normalize non-zero vectors
+        nonzero = norms > 1e-12
+        if np.any(nonzero):
+            velocity[nonzero] = (velocity[nonzero] / norms[nonzero, np.newaxis]) * float(getattr(config, 'velocity_scale', 0.06))
+        # Zero vectors remain zero
+    else:
+        # Scale by global factor (field magnitude influences speed)
+        velocity *= config.velocity_scale
     
     # Vectorized safety check to prevent runaway particles
     velocity_magnitudes = np.linalg.norm(velocity, axis=1)
@@ -525,6 +535,40 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
     positions_for_color = his[:, 1:, :].reshape(-1, 2)
     dom_feats_for_segments = get_dominant_features_vectorized(positions_for_color, system)
 
+    # Optional: compute field-strength-based alpha per segment (vectorized)
+    alpha_from_field = bool(getattr(config, 'TRAIL_ALPHA_USES_FIELD_STRENGTH', False))
+    field_alpha = None
+    if alpha_from_field and len(positions_for_color) > 0:
+        try:
+            # Prefer smooth interpolation if available
+            if 'interp_u_sum' in system and 'interp_v_sum' in system:
+                pos_yx = positions_for_color[:, [1, 0]]
+                u_vals = system['interp_u_sum'](pos_yx)
+                v_vals = system['interp_v_sum'](pos_yx)
+            elif 'grid_u_sum' in system and 'grid_v_sum' in system:
+                grid_u = system['grid_u_sum']
+                grid_v = system['grid_v_sum']
+                grid_res_local = grid_u.shape[0]
+                xmin, xmax, ymin, ymax = config.bounding_box
+                x = positions_for_color[:, 0]
+                y = positions_for_color[:, 1]
+                j = np.clip(((x - xmin) / (xmax - xmin) * grid_res_local).astype(int), 0, grid_res_local - 1)
+                i = np.clip(((y - ymin) / (ymax - ymin) * grid_res_local).astype(int), 0, grid_res_local - 1)
+                u_vals = grid_u[i, j]
+                v_vals = grid_v[i, j]
+            else:
+                u_vals = np.zeros(len(positions_for_color))
+                v_vals = np.zeros(len(positions_for_color))
+            mags = np.sqrt(u_vals**2 + v_vals**2)
+            # Robust normalization
+            denom = np.percentile(mags, 99.0)
+            if not np.isfinite(denom) or denom <= 1e-12:
+                denom = mags.max() + 1e-9
+            norm = np.clip(mags / denom, 0.0, 1.0)
+            field_alpha = 0.15 + 0.85 * norm
+        except Exception:
+            field_alpha = None
+
     # Prepare feature index -> RGB map
     feature_rgb_map = {}
     if feature_colors is not None:
@@ -535,9 +579,9 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
 
     # Fill segments and colors
     for i in range(n_active):
-        # Alpha based only on normalized speed (no age factor)
-        speed_alpha = speeds[i] / max_speed
-        alpha_value = np.clip(0.3 + 0.7 * speed_alpha, 0.0, 1.0)
+        # Base alpha: speed-based or field-strength-based
+        speed_alpha = speeds[i] / max_speed if max_speed > 0 else 0.0
+        default_alpha_value = np.clip(0.3 + 0.7 * speed_alpha, 0.0, 1.0)
 
         for t in range(tail_gap):
             seg_idx = i * tail_gap + t
@@ -550,6 +594,10 @@ def update_particle_visualization(system, velocity, family_assignments=None, fea
                 r, g, b = feature_rgb_map[dom_feat]
             else:
                 r, g, b = 0.0, 0.0, 0.0
+            # Base per-segment alpha
+            alpha_value = default_alpha_value
+            if field_alpha is not None and seg_idx < len(field_alpha):
+                alpha_value = float(field_alpha[seg_idx])
             # Apply tail fade: older segments (small t) get lower alpha
             try:
                 min_fac = float(getattr(config, 'TRAIL_TAIL_MIN_FACTOR', 0.1))

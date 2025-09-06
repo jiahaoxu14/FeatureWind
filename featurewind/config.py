@@ -8,7 +8,7 @@ settings used throughout the FeatureWind visualization system.
 import numpy as np
 
 # Global configuration variables
-velocity_scale = 0.06  # Original stable value
+velocity_scale = 1.5  # Original stable value
 k = None  # Number of top features (will be set dynamically)
 bounding_box = None  # Will be computed dynamically
 real_feature_rgba = {}  # Feature to RGBA mapping for particles
@@ -18,7 +18,7 @@ DEFAULT_GRID_RES = 20
 
 # Particle system parameters
 DEFAULT_NUM_PARTICLES = 800  # Increased to ensure visible particle density
-PARTICLE_LIFETIME = 30  # frames - increased to reduce respawn frequency
+PARTICLE_LIFETIME = 20  # frames - increased to reduce respawn frequency
 TAIL_LENGTH = 10  # number of position history points
 
 # Animation parameters
@@ -125,6 +125,21 @@ CLEAR_SELECTION_HOTKEY = 'c'
 # Alpha per segment = base_alpha * (TRAIL_TAIL_MIN_FACTOR + (1-TRAIL_TAIL_MIN_FACTOR) * ((t+1)/TAIL_LENGTH)**TRAIL_TAIL_EXP)
 TRAIL_TAIL_MIN_FACTOR = 0.10  # 0..1, alpha factor for the oldest segment
 TRAIL_TAIL_EXP = 1.2          # >1 for stronger decay near the tail
+
+# Particle dynamics mode
+# When True, particle velocities have constant magnitude and follow only the
+# direction of the vector field; "velocity_scale" sets that constant speed.
+CONSISTENT_PARTICLE_SPEED = True
+
+# Trail opacity mapping
+# When True, particle trail opacity is derived from the local field strength
+# (magnitude of the summed vector field) rather than particle speed.
+TRAIL_ALPHA_USES_FIELD_STRENGTH = True
+
+# Ring-dot opacity mode for wind vane
+# 'speed'  -> alpha tied to particle speed (legacy behavior)
+# 'field'  -> alpha tied to summed field magnitude relative to ring radius
+RING_DOT_ALPHA_MODE = 'field'
 
 
 def initialize_global_state():
