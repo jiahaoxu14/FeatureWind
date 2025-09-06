@@ -487,7 +487,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 # Label highlighted vectors (optional)
                 if bool(getattr(config, 'SHOW_VECTOR_LABELS', True)) and feat_idx < len(col_labels):
                     ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1,
-                             col_labels[feat_idx][:8], fontsize=8, ha='center', va='center', alpha=0.9)
+                             col_labels[feat_idx], fontsize=8, ha='center', va='center', alpha=0.9)
 
             # Also draw an enclosing ring (no direction dot) for the Feature Clock
             try:
@@ -541,7 +541,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             # Add feature label (optional)
             if bool(getattr(config, 'SHOW_VECTOR_LABELS', True)):
                 ax2.text(scaled_vector[0]*1.2, scaled_vector[1]*1.2, 
-                        col_labels[features_selected[0]][:20], 
+                        col_labels[features_selected[0]], 
                         ha='center', va='center', fontsize=9, color=color)
             
         elif len(all_endpoints) >= 3:
@@ -792,7 +792,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             
             # Add feature labels ONLY for vectors on convex hull boundary (positive only, optional)
             if bool(getattr(config, 'SHOW_VECTOR_LABELS', True)) and pos_on_hull and feat_idx < len(col_labels):
-                label = col_labels[feat_idx][:8]  # Truncate long labels
+                label = col_labels[feat_idx]
                 # Label near positive endpoint for consistency
                 ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1, label,
                         fontsize=8, ha='center', va='center', alpha=0.8)

@@ -80,7 +80,7 @@ SHOW_UNMASKED_OVERLAY = False
 
 # Grid lines toggle (main map)
 # Draw interpolation cell boundary grid lines in the main map when True
-SHOW_GRID_LINES = False
+SHOW_GRID_LINES = True
 
 # Data points style (in main map view)
 # Draw data points as solid markers with lower opacity for subtlety
@@ -111,7 +111,7 @@ SHOW_TITLES = False
 
 # Vector labels
 # When False, hide feature/vector name annotations in Wind Vane and Feature Clock
-SHOW_VECTOR_LABELS = False
+SHOW_VECTOR_LABELS = True
 
 # UI hotkeys
 # Press this key while the figure is focused to save snapshots of

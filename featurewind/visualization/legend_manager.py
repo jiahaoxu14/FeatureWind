@@ -88,9 +88,8 @@ def create_family_legend(fig, family_assignments, col_labels, feature_colors,
         
         # List all features in this family
         for feature_name in info['all_features']:
-            # Truncate long names but show more characters
-            display_name = feature_name[:20] + "..." if len(feature_name) > 20 else feature_name
-            ax_families.text(0.08, current_y, f"• {display_name}", 
+            # Show full feature name without truncation
+            ax_families.text(0.08, current_y, f"• {feature_name}", 
                            fontsize=6, va='top', alpha=0.8)
             current_y -= 0.025
         
