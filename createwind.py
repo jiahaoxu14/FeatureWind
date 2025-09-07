@@ -246,6 +246,12 @@ def main():
     # Create the combined (summed) velocity field for the top-k features
     grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (grid_res, grid_res)
     grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (grid_res, grid_res)
+    # Compute global max magnitude of the summed field across all cells (for normalization)
+    try:
+        sum_mag_grid = np.sqrt(grid_u_sum**2 + grid_v_sum**2)
+        global_sum_magnitude_max = float(np.nanmax(sum_mag_grid))
+    except Exception:
+        global_sum_magnitude_max = 0.0
     
     # Report dominant cell counts per feature, ignoring masked cells (unified strategy)
     # Keep counts available for later family-level aggregation diagnostics
@@ -408,6 +414,7 @@ def main():
         'interp_argmax': interp_argmax,
         'cell_centers_x': cell_centers_x,
         'cell_centers_y': cell_centers_y,
+        'global_sum_magnitude_max': global_sum_magnitude_max,
         'final_mask': final_mask,
         'unmasked_cells': unmasked_cells
     }

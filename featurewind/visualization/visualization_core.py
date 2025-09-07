@@ -1114,9 +1114,12 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 # Alpha mode: speed vs field strength
                 dot_alpha_mode = str(getattr(config, 'RING_DOT_ALPHA_MODE', 'speed')).lower()
                 if dot_alpha_mode == 'field':
-                    # Normalize summed magnitude against the longest individual vector magnitude
-                    # Use smooth tanh to avoid hard saturation when vectors align strongly
-                    denom = float(max_mag) if 'max_mag' in locals() and max_mag > 1e-12 else (sum_magnitude + 1e-9)
+                    # Normalize against the global maximum of the summed field across ALL cells
+                    try:
+                        global_max = float(system.get('global_sum_magnitude_max', 0.0)) if isinstance(system, dict) else 0.0
+                    except Exception:
+                        global_max = 0.0
+                    denom = global_max if global_max > 1e-12 else (sum_magnitude + 1e-9)
                     base = float(sum_magnitude) / (denom + 1e-9)
                     ratio = float(np.tanh(base))  # 0..~1
                     dot_alpha = max(0.3, min(1.0, 0.3 + 0.7 * ratio))
