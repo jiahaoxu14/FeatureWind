@@ -74,6 +74,9 @@ COLOR_BY_FEATURE_WHEN_FEW = True
 # Threshold for switching to per-feature colors (count of selected features)
 FEATURE_COLOR_DISTINCT_THRESHOLD = 5
 
+# Always use distinct per-feature colors (no families)
+USE_PER_FEATURE_COLORS = False
+
 # Map overlay (gray background for unmasked cells)
 # Toggle to show or hide the gray cell overlay in the main map view.
 SHOW_UNMASKED_OVERLAY = False

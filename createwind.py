@@ -299,13 +299,28 @@ def main():
     n_features = len(col_labels)
     n_families = min(n_features, config.MAX_FEATURE_FAMILIES)
     
-    # Perform feature clustering based on vector field directional similarity  
+    # Perform feature clustering based on vector field directional similarity
     family_assignments, similarity_matrix, clustering_metrics = feature_clustering.cluster_features_by_direction(
         grid_u_all_feats, grid_v_all_feats, n_families=n_families
     )
-    
-    # Assign Paul Tol colors to families
-    feature_colors = color_system.assign_family_colors(family_assignments)
+
+    # Color assignment
+    if bool(getattr(config, 'USE_PER_FEATURE_COLORS', False)):
+        # Ignore families; assign distinct colors per feature using the Glasbey palette
+        palette = list(getattr(config, 'GLASBEY_COLORS', []))
+        if not palette:
+            palette = ["#1f77b4"]
+        feature_colors = [palette[i % len(palette)] for i in range(len(col_labels))]
+        # For legend consistency, treat each feature as its own family
+        try:
+            import numpy as _np
+            family_assignments = _np.arange(len(col_labels))
+        except Exception:
+            pass
+        print(f"\nUsing per-feature distinct colors for all {len(col_labels)} features (no families).")
+    else:
+        # Assign Paul Tol colors to families
+        feature_colors = color_system.assign_family_colors(family_assignments)
 
     # Diagnostics: show selected features -> family -> color mapping
     try:
@@ -319,20 +334,21 @@ def main():
 
     # If only a few features are selected, switch to distinct per-feature colors to avoid
     # multiple features sharing the same family hue (which can be visually misleading).
-    try:
-        n_selected = len(grad_indices)
-        if (config.COLOR_BY_FEATURE_WHEN_FEW and 
-            isinstance(grad_indices, (list, tuple, np.ndarray)) and 
-            n_selected <= config.FEATURE_COLOR_DISTINCT_THRESHOLD):
-            palette = config.GLASBEY_COLORS
-            for rank, feat_idx in enumerate(grad_indices):
-                if rank < len(palette) and feat_idx < len(feature_colors):
-                    feature_colors[feat_idx] = palette[rank]
-            print(f"\nApplied distinct per-feature colors for {n_selected} selected features (threshold {config.FEATURE_COLOR_DISTINCT_THRESHOLD}).")
-            for rank, feat_idx in enumerate(grad_indices):
-                print(f"  {feat_idx:3d} | {col_labels[feat_idx]} -> color {feature_colors[feat_idx]}")
-    except Exception:
-        pass
+    if not bool(getattr(config, 'USE_PER_FEATURE_COLORS', False)):
+        try:
+            n_selected = len(grad_indices)
+            if (config.COLOR_BY_FEATURE_WHEN_FEW and 
+                isinstance(grad_indices, (list, tuple, np.ndarray)) and 
+                n_selected <= config.FEATURE_COLOR_DISTINCT_THRESHOLD):
+                palette = config.GLASBEY_COLORS
+                for rank, feat_idx in enumerate(grad_indices):
+                    if rank < len(palette) and feat_idx < len(feature_colors):
+                        feature_colors[feat_idx] = palette[rank]
+                print(f"\nApplied distinct per-feature colors for {n_selected} selected features (threshold {config.FEATURE_COLOR_DISTINCT_THRESHOLD}).")
+                for rank, feat_idx in enumerate(grad_indices):
+                    print(f"  {feat_idx:3d} | {col_labels[feat_idx]} -> color {feature_colors[feat_idx]}")
+        except Exception:
+            pass
 
     # In single-feature mode, enforce a consistent, user-configurable color
     try:
