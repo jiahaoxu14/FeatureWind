@@ -214,7 +214,7 @@ def main():
         description='Generate tangent maps from CSV datasets with automatic label handling'
     )
     parser.add_argument('csv_file', help='Input CSV file')
-    parser.add_argument('projection', choices=['tsne'], help='Projection method')
+    parser.add_argument('projection', choices=['tsne', 'mds'], help='Projection method')
     parser.add_argument('output_name', nargs='?', help='Output filename (without extension)')
     
     args = parser.parse_args()

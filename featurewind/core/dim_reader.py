@@ -3,6 +3,7 @@ import sys
 import csv
 import numpy as np
 from .tsne import tsne
+from .mds_torch import mds, distance_matrix_HD_tensor
 import torch
 
 class ProjectionRunner:
@@ -19,12 +20,24 @@ class ProjectionRunner:
         data = torch.tensor(points, dtype=torch.float32, requires_grad=True)
 
         # Usage for DimReader:
-        print("Step 1/3: Computing base t-SNE projection (999 iterations)...")
-        with torch.no_grad():
-            Y_base, params = tsne(data, 2, 999, 10, 15.0, save_params = True)
-        print("Step 2/3: Computing projection with gradients (1 iteration)...")
-        Y, params = tsne(data, no_dims=2, maxIter = 1, initial_dims=10, perplexity=15.0, save_params = False,
-                            initY = params[0], initBeta = params[2], betaTries = 50, initIY =params[1])
+        if self.projection == tsne or (isinstance(self.projection, str) and self.projection.lower() == 'tsne'):
+            print("Step 1/3: Computing base t-SNE projection (999 iterations)...")
+            with torch.no_grad():
+                Y_base, params = tsne(data, 2, 999, 10, 15.0, save_params = True)
+            print("Step 2/3: Computing projection with gradients (1 iteration)...")
+            Y, params = tsne(data, no_dims=2, maxIter = 1, initial_dims=10, perplexity=15.0, save_params = False,
+                                initY = params[0], initBeta = params[2], betaTries = 50, initIY =params[1])
+        elif self.projection == mds or (isinstance(self.projection, str) and self.projection.lower() == 'mds'):
+            print("Step 1/3: Computing base MDS projection (999 iterations)...")
+            with torch.no_grad():
+                dist_hd = distance_matrix_HD_tensor(data)
+                Y_base = mds(dist_hd, n_components=2, max_iter=999)
+            print("Step 2/3: Computing projection with gradients (1 iteration)...")
+            # Recompute with graph enabled so autograd can backprop to input coordinates
+            dist_hd = distance_matrix_HD_tensor(data)
+            Y = mds(dist_hd, n_components=2, max_iter=1)
+        else:
+            raise ValueError("Unsupported projection method. Use 'tsne' or 'mds'.")
         
         # Compute gradients and full Jacobian matrix
         self.outPoints = Y
@@ -88,8 +101,8 @@ class ProjectionRunner:
             
         return v_2d
 
-projections = ["tsne", "Tangent-Map"]
-projectionClasses = [tsne, None]
+projections = ["tsne", "mds", "Tangent-Map"]
+projectionClasses = [tsne, mds, None]
 projectionParamOpts = [["Perplexity", "Max_Iterations", "Number_of_Dimensions"], []]
 
 # read points of cvs file
