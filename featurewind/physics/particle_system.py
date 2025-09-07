@@ -52,6 +52,8 @@ def create_particles(num_particles=None, cell_dominant_features=None, grid_res=N
     particle_positions = np.zeros((num_particles, 2))
     for i in range(num_particles):
         particle_positions[i] = get_random_valid_position()
+    # Keep a copy of initial spawn locations for visualization
+    initial_spawn_positions = particle_positions.copy()
 
     max_lifetime = config.PARTICLE_LIFETIME
     tail_gap = config.TAIL_LENGTH
@@ -73,6 +75,7 @@ def create_particles(num_particles=None, cell_dominant_features=None, grid_res=N
         'tail_gap': tail_gap,
         'max_lifetime': max_lifetime,
         'linecoll': lc,
+        'initial_spawn_positions': initial_spawn_positions,
     }
     
     # Copy over existing system data if provided

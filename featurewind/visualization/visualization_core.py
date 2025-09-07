@@ -81,7 +81,7 @@ def highlight_unmasked_cells(ax, system, grid_res=None, valid_points=None):
 
 
 def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors, lc, 
-                  all_positions=None, all_grad_vectors=None, grid_res=None):
+                  all_positions=None, all_grad_vectors=None, grid_res=None, system=None):
     """
     Prepare the main visualization figure with data points and particle system.
     
@@ -124,65 +124,109 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
         for y in y_boundaries:
             ax.axhline(y, alpha=0.3, linewidth=0.5, color='lightgray', zorder=1)
 
-    # Plot underlying data points with different markers for each label
-    feature_idx = 2  # Use feature index 2 for alpha computation
-    domain_values = np.array([p.domain[feature_idx] for p in valid_points])
-    domain_min, domain_max = domain_values.min(), domain_values.max()
+    # Optional: color cells by dominant feature (uses precomputed argmax per cell)
+    try:
+        if bool(getattr(config, 'SHOW_CELL_DOMINANCE', False)) and isinstance(system, dict):
+            cdf = system.get('cell_dominant_features', None)
+            cx = system.get('cell_centers_x', None)
+            cy = system.get('cell_centers_y', None)
+            if cdf is not None and cx is not None and cy is not None:
+                H, W = cdf.shape
+                from .color_system import hex_to_rgb
+                rgba = np.zeros((H, W, 4), dtype=float)
+                alpha = float(getattr(config, 'CELL_DOM_ALPHA', 0.18))
+                # Respect explicit unmasked cells if present
+                unmasked = system.get('unmasked_cells', None)
+                for i in range(H):
+                    for j in range(W):
+                        if unmasked is not None and (not bool(unmasked[i, j])):
+                            rgba[i, j, :] = (0.0, 0.0, 0.0, 0.0)
+                            continue
+                        fid = int(cdf[i, j])
+                        if 0 <= fid < len(feature_colors):
+                            color_val = feature_colors[fid]
+                            if isinstance(color_val, str):
+                                r, g, b = hex_to_rgb(color_val)
+                            else:
+                                r, g, b = color_val[:3]
+                        else:
+                            r, g, b = (0.6, 0.6, 0.6)
+                        rgba[i, j, :3] = (r, g, b)
+                        rgba[i, j, 3] = alpha
+                # Draw with imshow (cell centers → extent bounds)
+                extent = (xmin, xmax, ymin, ymax)
+                ax.imshow(rgba, origin='lower', extent=extent, interpolation='nearest', zorder=int(getattr(config, 'CELL_DOM_ZORDER', 3)))
+    except Exception:
+        pass
 
-    # Collect all labels from valid_points
-    unique_labels = sorted(set(p.tmap_label for p in valid_points))
+    # Plot underlying data points with different markers for each label (optional)
+    if bool(getattr(config, 'SHOW_DATA_POINTS', True)):
+        feature_idx = 2  # Use feature index 2 for alpha computation
+        try:
+            domain_values = np.array([p.domain[feature_idx] for p in valid_points])
+            domain_min, domain_max = domain_values.min(), domain_values.max()
+        except Exception:
+            domain_min, domain_max = 0.0, 1.0
 
-    # Define multiple distinct markers
-    markers = config.MARKER_STYLES
+        # Collect all labels from valid_points
+        unique_labels = sorted(set(p.tmap_label for p in valid_points))
 
-    for i, lab in enumerate(unique_labels):
-        indices = [j for j, p in enumerate(valid_points) if p.tmap_label == lab]
-        positions_lab = np.array([valid_points[j].position for j in indices])
-        normalized = (np.array([valid_points[j].domain[feature_idx] for j in indices]) - domain_min) / (domain_max - domain_min + 1e-9)
-        alphas = 0.2 + normalized * 0.8
-        marker_style = markers[i % len(markers)]
+        # Define multiple distinct markers
+        markers = config.MARKER_STYLES
 
-        # Hollow or solid data points based on config
-        if getattr(config, 'HOLLOW_DATA_POINTS', True):
-            edge_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
-            edge_width = float(getattr(config, 'DATA_POINT_EDGEWIDTH', 0.6))
-            # Stroke color #555 with configured alpha
-            stroke_val = 0x55 / 255.0
-            edge_color = (stroke_val, stroke_val, stroke_val, edge_alpha)
-            ax.scatter(
-                positions_lab[:, 0],
-                positions_lab[:, 1],
-                marker=marker_style,
-                facecolors='none',
-                edgecolors=edge_color,
-                linewidths=edge_width,
-                s=getattr(config, 'DATA_POINT_SIZE', 48),
-                label=f"Label {lab}",
-                zorder=getattr(config, 'DATA_POINT_ZORDER', 20)
-            )
-        else:
-            fill_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
-            fill_color = (0.5, 0.5, 0.5, fill_alpha)
-            ax.scatter(
-                positions_lab[:, 0],
-                positions_lab[:, 1],
-                marker=marker_style,
-                color=fill_color,
-                edgecolors='#555555',
-                linewidths=float(getattr(config, 'DATA_POINT_EDGEWIDTH', 0.6)),
-                s=getattr(config, 'DATA_POINT_SIZE', 48),
-                label=f"Label {lab}",
-                zorder=getattr(config, 'DATA_POINT_ZORDER', 20)
-            )
+        for i, lab in enumerate(unique_labels):
+            indices = [j for j, p in enumerate(valid_points) if p.tmap_label == lab]
+            positions_lab = np.array([valid_points[j].position for j in indices])
+            try:
+                normalized = (np.array([valid_points[j].domain[feature_idx] for j in indices]) - domain_min) / (domain_max - domain_min + 1e-9)
+            except Exception:
+                normalized = np.zeros(len(indices))
+            alphas = 0.2 + normalized * 0.8
+            marker_style = markers[i % len(markers)]
+
+            # Hollow or solid data points based on config
+            if getattr(config, 'HOLLOW_DATA_POINTS', True):
+                edge_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
+                edge_width = float(getattr(config, 'DATA_POINT_EDGEWIDTH', 0.6))
+                # Stroke color #555 with configured alpha
+                stroke_val = 0x55 / 255.0
+                edge_color = (stroke_val, stroke_val, stroke_val, edge_alpha)
+                ax.scatter(
+                    positions_lab[:, 0],
+                    positions_lab[:, 1],
+                    marker=marker_style,
+                    facecolors='none',
+                    edgecolors=edge_color,
+                    linewidths=edge_width,
+                    s=getattr(config, 'DATA_POINT_SIZE', 48),
+                    label=f"Label {lab}",
+                    zorder=getattr(config, 'DATA_POINT_ZORDER', 20)
+                )
+            else:
+                fill_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
+                fill_color = (0.5, 0.5, 0.5, fill_alpha)
+                ax.scatter(
+                    positions_lab[:, 0],
+                    positions_lab[:, 1],
+                    marker=marker_style,
+                    color=fill_color,
+                    edgecolors='#555555',
+                    linewidths=float(getattr(config, 'DATA_POINT_EDGEWIDTH', 0.6)),
+                    s=getattr(config, 'DATA_POINT_SIZE', 48),
+                    label=f"Label {lab}",
+                    zorder=getattr(config, 'DATA_POINT_ZORDER', 20)
+                )
 
     # Add particle line collection only in feature wind map mode
     try:
+        show_particles = bool(getattr(config, 'SHOW_PARTICLES', True)) and not bool(getattr(config, 'SHOW_INITIAL_SPAWNS', False))
         if (getattr(config, 'VIS_MODE', 'feature_wind_map') == 'feature_wind_map'
             and lc is not None
+            and show_particles
             and not getattr(config, 'FEATURE_CLOCK_ENABLED', False)):
             ax.add_collection(lc)
         else:
-            # Ensure trails are hidden when Feature Clock is enabled
+            # Ensure trails are hidden when not showing particles or when Feature Clock is enabled
             if lc is not None:
                 try:
                     lc.set_visible(False)
@@ -191,8 +235,342 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
     except Exception:
         pass
     
+    # Optionally draw initial particle spawn positions as solid small circles
+    try:
+        if isinstance(system, dict) and bool(getattr(config, 'SHOW_INITIAL_SPAWNS', False)):
+            spawns = system.get('initial_spawn_positions', None)
+            if spawns is not None and len(spawns) > 0:
+                # Filter spawns to only unmasked cells when mask is available
+                try:
+                    unmasked_cells = system.get('unmasked_cells', None)
+                    if unmasked_cells is not None:
+                        grid_res_local = unmasked_cells.shape[0]
+                        xmin, xmax, ymin, ymax = config.bounding_box
+                        import numpy as _np
+                        j_idx = _np.clip(((spawns[:, 0] - xmin) / (xmax - xmin) * grid_res_local).astype(int), 0, grid_res_local - 1)
+                        i_idx = _np.clip(((spawns[:, 1] - ymin) / (ymax - ymin) * grid_res_local).astype(int), 0, grid_res_local - 1)
+                        keep = _np.array([bool(unmasked_cells[i_idx[t], j_idx[t]]) for t in range(len(spawns))])
+                        spawns_draw = spawns[keep]
+                        i_idx = i_idx[keep]
+                        j_idx = j_idx[keep]
+                    else:
+                        spawns_draw = spawns
+                        i_idx = j_idx = None
+                except Exception:
+                    spawns_draw = spawns
+                    i_idx = j_idx = None
+
+                if len(spawns_draw) > 0:
+                    ax.scatter(
+                        spawns_draw[:, 0], spawns_draw[:, 1],
+                        s=getattr(config, 'INITIAL_SPAWN_SIZE', 10),
+                        c=getattr(config, 'INITIAL_SPAWN_COLOR', '#222222'),
+                        alpha=float(getattr(config, 'INITIAL_SPAWN_ALPHA', 0.6)),
+                        zorder=int(getattr(config, 'INITIAL_SPAWN_ZORDER', 26)),
+                        marker='o', edgecolors='none'
+                    )
+                # Add short vectors indicating initial flow direction, colored by cell dominance
+                if bool(getattr(config, 'SHOW_INITIAL_SPAWN_VECTORS', True)):
+                    try:
+                        U_sum = system.get('grid_u_sum', None)
+                        V_sum = system.get('grid_v_sum', None)
+                        cdf = system.get('cell_dominant_features', None)
+                        xmin, xmax, ymin, ymax = config.bounding_box
+                        grid_res_local = U_sum.shape[0] if U_sum is not None else int(getattr(config, 'DEFAULT_GRID_RES', 20))
+                        # Compute raw vectors at spawn cells
+                        import numpy as _np
+                        if i_idx is None or j_idx is None:
+                            j_idx = _np.clip(((spawns[:, 0] - xmin) / (xmax - xmin) * grid_res_local).astype(int), 0, grid_res_local - 1)
+                            i_idx = _np.clip(((spawns[:, 1] - ymin) / (ymax - ymin) * grid_res_local).astype(int), 0, grid_res_local - 1)
+                            spawns_draw = spawns
+                        if U_sum is not None and V_sum is not None:
+                            U0 = U_sum[i_idx, j_idx]
+                            V0 = V_sum[i_idx, j_idx]
+                        else:
+                            U0 = _np.zeros(len(spawns))
+                            V0 = _np.zeros(len(spawns))
+                        # Scale vectors
+                        rel = float(getattr(config, 'INITIAL_SPAWN_VEC_REL_SCALE', 0.03))
+                        abs_scale = float(getattr(config, 'INITIAL_SPAWN_VEC_ABS_SCALE', 0.0))
+                        plot_width = float(xmax - xmin)
+                        mags = _np.sqrt(U0**2 + V0**2)
+                        eps = 1e-12
+                        if abs_scale > 0:
+                            scale = abs_scale
+                        else:
+                            p95 = _np.percentile(mags, 95) if mags.size > 0 else 1.0
+                            target = rel * plot_width
+                            scale = target / (p95 + eps)
+                        U = U0 * scale
+                        V = V0 * scale
+                        # Colors by dominant feature id
+                        colors = []
+                        for ii, jj in zip(i_idx, j_idx):
+                            try:
+                                fid = int(cdf[ii, jj]) if cdf is not None else -1
+                                if 0 <= fid < len(feature_colors):
+                                    colors.append(feature_colors[fid])
+                                else:
+                                    colors.append('#333333')
+                            except Exception:
+                                colors.append('#333333')
+                        ax.quiver(spawns_draw[:, 0], spawns_draw[:, 1], U, V,
+                                  angles='xy', scale_units='xy', scale=1.0,
+                                  color=colors, alpha=float(getattr(config, 'INITIAL_SPAWN_VEC_ALPHA', 0.9)),
+                                  zorder=int(getattr(config, 'INITIAL_SPAWN_VEC_ZORDER', 27)),
+                                  width=float(getattr(config, 'INITIAL_SPAWN_VEC_WIDTH', 0.003)))
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    
     # Grid lines are manually drawn above, so no need for ax.grid()
     ax.set_axisbelow(True)  # Put grid behind other elements
+
+    # Optional: overlay per-feature gradient vectors at data points (paper figures)
+    try:
+        from .. import config as _cfg
+        if bool(getattr(_cfg, 'SHOW_DATA_VECTORS_ON_MAP', False)) and \
+           all_positions is not None and all_grad_vectors is not None and \
+           isinstance(grad_indices, (list, tuple, np.ndarray)) and len(grad_indices) > 0:
+            xmin, xmax, ymin, ymax = _cfg.bounding_box
+            plot_width = float(xmax - xmin)
+            # Build a robust scale
+            rel = float(getattr(_cfg, 'DATA_VECTOR_REL_SCALE', 0.03))
+            abs_scale = float(getattr(_cfg, 'DATA_VECTOR_ABS_SCALE', 0.0))
+            alpha = float(getattr(_cfg, 'DATA_VECTOR_ALPHA', 0.55))
+            z = int(getattr(_cfg, 'DATA_VECTOR_ZORDER', 25))
+            # For each selected feature, draw its vectors
+            import numpy as _np
+            P = _np.asarray(all_positions)
+            # Optional mask: prefer explicit unmasked_cells from system
+            respect_mask = bool(getattr(_cfg, 'SHOW_VECTOR_OVERLAY_RESPECT_MASK', False))
+            cell_mask = None
+            if respect_mask and isinstance(system, dict):
+                try:
+                    if system.get('unmasked_cells') is not None:
+                        cell_mask = _np.asarray(system.get('unmasked_cells'))
+                    else:
+                        U_sum = system.get('grid_u_sum', None)
+                        V_sum = system.get('grid_v_sum', None)
+                        if U_sum is not None and V_sum is not None:
+                            mags = _np.sqrt(U_sum**2 + V_sum**2)
+                            thr = float(getattr(_cfg, 'MASK_THRESHOLD', 1e-6))
+                            cell_mask = (mags > thr)
+                except Exception:
+                    cell_mask = None
+            # Feature subset resolution: allow a single configured feature override
+            cfg_feat = getattr(_cfg, 'DATA_VECTOR_FEATURE', None)
+            feat_indices = list(grad_indices)
+            try:
+                if isinstance(cfg_feat, int):
+                    feat_indices = [int(cfg_feat)]
+                elif isinstance(cfg_feat, (list, tuple, np.ndarray)):
+                    feat_indices = [int(i) for i in cfg_feat]
+                elif isinstance(cfg_feat, str) and len(cfg_feat) > 0:
+                    # If comma-separated ints, parse; else do substring match
+                    if ',' in cfg_feat:
+                        parts = [p.strip() for p in cfg_feat.split(',') if p.strip()]
+                        parsed = []
+                        for p in parts:
+                            try:
+                                parsed.append(int(p))
+                            except Exception:
+                                pass
+                        if parsed:
+                            feat_indices = parsed
+                        else:
+                            low = cfg_feat.lower()
+                            matches = [i for i, name in enumerate(col_labels) if low in str(name).lower()]
+                            if matches:
+                                feat_indices = [matches[0]]
+                    else:
+                        low = cfg_feat.lower()
+                        matches = [i for i, name in enumerate(col_labels) if low in str(name).lower()]
+                        if matches:
+                            feat_indices = [matches[0]]
+            except Exception:
+                pass
+
+            for feat_idx in feat_indices:
+                if feat_idx < 0 or feat_idx >= all_grad_vectors.shape[1]:
+                    continue
+                V = _np.asarray(all_grad_vectors)[:, int(feat_idx), :]  # shape (N,2)
+                # Auto scale: target 95th pct length to rel*plot_width
+                norms = _np.linalg.norm(V, axis=1)
+                eps = 1e-12
+                if abs_scale > 0:
+                    scale = abs_scale
+                else:
+                    p95 = _np.percentile(norms, 95) if norms.size > 0 else 1.0
+                    target = rel * plot_width
+                    scale = target / (p95 + eps)
+                U = V[:, 0] * scale
+                W = V[:, 1] * scale
+                color = feature_colors[feat_idx] if feat_idx < len(feature_colors) else '#333333'
+                # Optional masking by cell
+                if respect_mask and cell_mask is not None and grid_res is not None:
+                    try:
+                        xmin, xmax, ymin, ymax = _cfg.bounding_box
+                        j_idx = _np.clip(((P[:, 0] - xmin) / (xmax - xmin) * grid_res).astype(int), 0, grid_res - 1)
+                        i_idx = _np.clip(((P[:, 1] - ymin) / (ymax - ymin) * grid_res).astype(int), 0, grid_res - 1)
+                        keep = _np.array([bool(cell_mask[i_idx[t], j_idx[t]]) for t in range(len(P))])
+                        P_draw = P[keep]
+                        U_draw = U[keep]
+                        W_draw = W[keep]
+                    except Exception:
+                        P_draw, U_draw, W_draw = P, U, W
+                else:
+                    P_draw, U_draw, W_draw = P, U, W
+                ax.quiver(P_draw[:, 0], P_draw[:, 1], U_draw, W_draw,
+                          angles='xy', scale_units='xy', scale=1.0,
+                          color=color, alpha=alpha, zorder=z, width=0.002)
+    except Exception:
+        pass
+
+    # Optional: overlay grid (interpolated) vectors per cell
+    try:
+        from .. import config as _cfg
+        if bool(getattr(_cfg, 'SHOW_GRID_VECTORS_ON_MAP', False)) and isinstance(system, dict):
+            cx = system.get('cell_centers_x', None)
+            cy = system.get('cell_centers_y', None)
+            if cx is not None and cy is not None:
+                GX, GY = np.meshgrid(cx, cy)
+                # Resolve feature choice
+                choice = getattr(_cfg, 'GRID_VECTOR_FEATURE', None)
+                alpha = float(getattr(_cfg, 'GRID_VECTOR_ALPHA', 0.50))
+                z = int(getattr(_cfg, 'GRID_VECTOR_ZORDER', 24))
+                rel = float(getattr(_cfg, 'GRID_VECTOR_REL_SCALE', 0.05))
+                abs_scale = float(getattr(_cfg, 'GRID_VECTOR_ABS_SCALE', 0.0))
+                xmin, xmax, ymin, ymax = _cfg.bounding_box
+                plot_width = float(xmax - xmin)
+                # Build a single base mask: prefer explicit unmasked_cells
+                base_mask = None
+                if bool(getattr(_cfg, 'SHOW_VECTOR_OVERLAY_RESPECT_MASK', False)):
+                    try:
+                        if system.get('unmasked_cells') is not None:
+                            base_mask = np.asarray(system.get('unmasked_cells'))
+                        else:
+                            U_sum = system.get('grid_u_sum', None)
+                            V_sum = system.get('grid_v_sum', None)
+                            if U_sum is not None and V_sum is not None:
+                                sum_mags = np.sqrt(U_sum**2 + V_sum**2)
+                                thr = float(getattr(_cfg, 'MASK_THRESHOLD', 1e-6))
+                                base_mask = (sum_mags > thr)
+                    except Exception:
+                        base_mask = None
+                # Determine which grid to draw
+                U_grid = None
+                V_grid = None
+                color = '#333333'
+                if isinstance(choice, str) and choice.strip().lower() == 'sum':
+                    U_grid = system.get('grid_u_sum', None)
+                    V_grid = system.get('grid_v_sum', None)
+                    color = '#000000'
+                else:
+                    # Choose a feature index
+                    feat_indices = list(grad_indices) if isinstance(grad_indices, (list, tuple, np.ndarray)) else []
+                    try:
+                        if isinstance(choice, int):
+                            feat_indices = [int(choice)]
+                        elif isinstance(choice, str) and len(choice) > 0:
+                            low = choice.lower()
+                            matches = [i for i, name in enumerate(col_labels) if low in str(name).lower()]
+                            if matches:
+                                feat_indices = [matches[0]]
+                    except Exception:
+                        pass
+                    if feat_indices:
+                        f = int(feat_indices[0])
+                        U_all = system.get('grid_u_all_feats', None)
+                        V_all = system.get('grid_v_all_feats', None)
+                        if U_all is not None and V_all is not None and 0 <= f < U_all.shape[0]:
+                            U_grid = U_all[f]
+                            V_grid = V_all[f]
+                            color = feature_colors[f] if f < len(feature_colors) else '#333333'
+                # Draw if available; support multiple features
+                if isinstance(choice, str) and choice.strip().lower() == 'sum':
+                    if U_grid is not None and V_grid is not None:
+                        mags = np.sqrt(U_grid**2 + V_grid**2)
+                        eps = 1e-12
+                        if abs_scale > 0:
+                            scale = abs_scale
+                        else:
+                            p95 = np.percentile(mags, 95) if mags.size > 0 else 1.0
+                            target = rel * plot_width
+                            scale = target / (p95 + eps)
+                        # Apply base mask from summed field if available
+                        U_plot = U_grid * scale
+                        V_plot = V_grid * scale
+                        if base_mask is not None and base_mask.shape == U_plot.shape:
+                            M = base_mask
+                            ax.quiver(GX[M], GY[M], U_plot[M], V_plot[M],
+                                  angles='xy', scale_units='xy', scale=1.0,
+                                  color=color, alpha=alpha, zorder=z, width=0.002)
+                        else:
+                            ax.quiver(GX, GY, U_plot, V_plot,
+                                      angles='xy', scale_units='xy', scale=1.0,
+                                      color=color, alpha=alpha, zorder=z, width=0.002)
+                else:
+                    # Determine list of feature indices as above
+                    feat_indices = list(grad_indices) if isinstance(grad_indices, (list, tuple, np.ndarray)) else []
+                    try:
+                        if isinstance(choice, int):
+                            feat_indices = [int(choice)]
+                        elif isinstance(choice, (list, tuple, np.ndarray)):
+                            feat_indices = [int(i) for i in choice]
+                        elif isinstance(choice, str) and len(choice) > 0:
+                            if ',' in choice:
+                                parts = [p.strip() for p in choice.split(',') if p.strip()]
+                                parsed = []
+                                for p in parts:
+                                    try:
+                                        parsed.append(int(p))
+                                    except Exception:
+                                        pass
+                                if parsed:
+                                    feat_indices = parsed
+                                else:
+                                    low = choice.lower()
+                                    matches = [i for i, name in enumerate(col_labels) if low in str(name).lower()]
+                                    if matches:
+                                        feat_indices = [matches[0]]
+                            else:
+                                low = choice.lower()
+                                matches = [i for i, name in enumerate(col_labels) if low in str(name).lower()]
+                                if matches:
+                                    feat_indices = [matches[0]]
+                    except Exception:
+                        pass
+                    U_all = system.get('grid_u_all_feats', None)
+                    V_all = system.get('grid_v_all_feats', None)
+                    if U_all is not None and V_all is not None:
+                        for f in feat_indices:
+                            if 0 <= f < U_all.shape[0]:
+                                U_grid = U_all[int(f)]
+                                V_grid = V_all[int(f)]
+                                c = feature_colors[f] if f < len(feature_colors) else '#333333'
+                                mags = np.sqrt(U_grid**2 + V_grid**2)
+                                eps = 1e-12
+                                if abs_scale > 0:
+                                    scale = abs_scale
+                                else:
+                                    p95 = np.percentile(mags, 95) if mags.size > 0 else 1.0
+                                    target = rel * plot_width
+                                    scale = target / (p95 + eps)
+                                U_plot = U_grid * scale
+                                V_plot = V_grid * scale
+                                if base_mask is not None and base_mask.shape == U_plot.shape:
+                                    M = base_mask
+                                    ax.quiver(GX[M], GY[M], U_plot[M], V_plot[M],
+                                              angles='xy', scale_units='xy', scale=1.0,
+                                              color=c, alpha=alpha, zorder=z, width=0.002)
+                                else:
+                                    ax.quiver(GX, GY, U_plot, V_plot,
+                                              angles='xy', scale_units='xy', scale=1.0,
+                                              color=c, alpha=alpha, zorder=z, width=0.002)
+    except Exception:
+        pass
 
     return 0
 
@@ -609,16 +987,30 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                         col_labels[features_selected[0]], 
                         ha='center', va='center', fontsize=9, color=color, zorder=23)
             
-        elif len(all_endpoints) >= 3:
+        elif len(all_endpoints) >= 3 and bool(getattr(config, 'WIND_VANE_USE_CONVEX_HULL', True)):
             try:
                 # Calculate convex hull
                 hull = ConvexHull(all_endpoints)
                 
-                # Calculate convex hull for boundary detection (but don't draw it)
+                # Calculate convex hull for boundary detection; optionally draw it
                 hull_points = np.array(all_endpoints)[hull.vertices]
-                # hull_polygon = plt.Polygon(hull_points, fill=True, alpha=0.1, 
-                #                          facecolor='lightblue', edgecolor='blue', linewidth=1)
-                # ax2.add_patch(hull_polygon)  # Hidden per user request
+                if bool(getattr(config, 'WIND_VANE_SHOW_HULL', False)):
+                    edge_c = getattr(config, 'WIND_VANE_HULL_EDGE_COLOR', '#1f77b4')
+                    edge_w = float(getattr(config, 'WIND_VANE_HULL_EDGE_WIDTH', 1.0))
+                    z_hull = int(getattr(config, 'WIND_VANE_HULL_ZORDER', 18))
+                    # Draw boundary only (no fill inside the hull)
+                    hull_polygon = plt.Polygon(
+                        hull_points,
+                        closed=True,
+                        fill=False,
+                        edgecolor=edge_c,
+                        linewidth=edge_w,
+                        zorder=z_hull,
+                    )
+                    ax2.add_patch(hull_polygon)
+                    # If user wants ONLY the filled hull, return early
+                    if bool(getattr(config, 'WIND_VANE_ONLY_HULL', False)):
+                        return
                 
             except Exception as e:
                 # Degenerate hull (e.g., collinear or duplicate points) — draw positive vectors as arrows only
@@ -778,10 +1170,13 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 ax2.add_patch(flag_rectangle)
         
         # Determine which endpoints are on the convex hull boundary
-        if len(all_endpoints) >= 3:
-            hull_vertex_indices = set(hull.vertices) if 'hull' in locals() else set()
+        if not bool(getattr(config, 'WIND_VANE_USE_CONVEX_HULL', True)):
+            hull_vertex_indices = set(range(len(all_endpoints)))  # treat all as on hull
         else:
-            hull_vertex_indices = set()
+            if len(all_endpoints) >= 3:
+                hull_vertex_indices = set(hull.vertices) if 'hull' in locals() else set()
+            else:
+                hull_vertex_indices = set()
         
         for info in vector_info:
             feat_idx = info['feat_idx']

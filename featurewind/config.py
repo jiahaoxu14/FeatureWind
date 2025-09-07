@@ -14,12 +14,13 @@ bounding_box = None  # Will be computed dynamically
 real_feature_rgba = {}  # Feature to RGBA mapping for particles
 
 # Default grid resolution
-DEFAULT_GRID_RES = 20
+DEFAULT_GRID_RES = 15
 
 # Particle system parameters
 DEFAULT_NUM_PARTICLES = 800  # Increased to ensure visible particle density
 PARTICLE_LIFETIME = 20  # frames - increased to reduce respawn frequency
 TAIL_LENGTH = 10  # number of position history points
+SHOW_PARTICLES = True  # When False, hide particles and disable particle animation
 
 # Animation parameters
 ANIMATION_FRAMES = 200
@@ -38,7 +39,7 @@ GLASBEY_COLORS = [
 ]
 
 # Grid computation parameters
-MASK_BUFFER_FACTOR = 0.2    # Buffer size around data points for interpolation (in cell units)
+MASK_BUFFER_FACTOR = 0.5    # Buffer size around data points for interpolation (in cell units)
 # Unified masking threshold for summed magnitude checks
 MASK_THRESHOLD = 1e-6
 
@@ -87,6 +88,7 @@ SHOW_GRID_LINES = True
 
 # Data points style (in main map view)
 # Draw data points as solid markers with lower opacity for subtlety
+SHOW_DATA_POINTS = True
 HOLLOW_DATA_POINTS = False
 # Alpha for solid data points (lower = more transparent)
 DATA_POINT_ALPHA = 0.30
@@ -98,6 +100,19 @@ DATA_POINT_SIZE = 30
 # Z-order for data points to ensure they render on top
 DATA_POINT_ZORDER = 20
 
+# Initial particle spawn markers (for visualization)
+SHOW_INITIAL_SPAWNS = False
+INITIAL_SPAWN_SIZE = 4           # matplotlib scatter 's' in points^2
+INITIAL_SPAWN_COLOR = '#222222'   # solid fill color
+INITIAL_SPAWN_ALPHA = 0.6         # 0..1
+INITIAL_SPAWN_ZORDER = 26
+SHOW_INITIAL_SPAWN_VECTORS = True
+INITIAL_SPAWN_VEC_REL_SCALE = 0.03
+INITIAL_SPAWN_VEC_ABS_SCALE = 0.0
+INITIAL_SPAWN_VEC_ALPHA = 0.9
+INITIAL_SPAWN_VEC_ZORDER = 27
+INITIAL_SPAWN_VEC_WIDTH = 0.003
+
 # Wind-vane style
 # Use 'ring_dot' to draw a circle that encloses all feature vectors
 # and a small circle on its edge to indicate flow direction.
@@ -107,6 +122,13 @@ WIND_VANE_CIRCLE_GUIDE = False   # draw a faint center→dot guide line
 WIND_VANE_RING_SCALE = 1.04      # multiply max feature-vector radius to pad the ring
 WIND_VANE_RING_MAX_R = 0.66      # clamp ring radius (reference ring is 0.7)
 WIND_VANE_RING_COLOR = '#999999' # ring line color
+WIND_VANE_USE_CONVEX_HULL = True  # when False, do not de-emphasize non-hull vectors
+WIND_VANE_SHOW_HULL = True       # when True and convex hull is used, draw the hull boundary
+WIND_VANE_HULL_COLOR = '#727272'  # face color for hull fill
+WIND_VANE_HULL_ALPHA = 0.3       # face alpha for hull fill
+WIND_VANE_HULL_EDGE_COLOR = "#727272"
+WIND_VANE_HULL_EDGE_WIDTH = 2.0
+WIND_VANE_HULL_ZORDER = 30
 
 # Axes titles
 # When False, hide titles on all canvases (Wind Map, Wind Vane, Feature Clock)
@@ -115,6 +137,49 @@ SHOW_TITLES = False
 # Vector labels
 # When False, hide feature/vector name annotations in Wind Vane and Feature Clock
 SHOW_VECTOR_LABELS = True
+
+# Wind-Map data-point vector overlay (for paper figures)
+# When True, draw per-feature gradient vectors at each data point on the Wind-Map.
+SHOW_DATA_VECTORS_ON_MAP = False
+# Relative target length of the 95th percentile vector (fraction of plot width)
+DATA_VECTOR_REL_SCALE = 0.06
+# Fixed absolute scale in data units (if > 0, overrides relative scaling)
+DATA_VECTOR_ABS_SCALE = 0.0
+# Choose which feature's vectors to show on the map overlay.
+# Accepts: None (use selected features), an integer index, a list/tuple of
+# integer indices (e.g., [1,3,5]), a comma-separated string of indices
+# (e.g., '1,3,5'), or a case-insensitive substring of the feature name to
+# match the first hit.
+DATA_VECTOR_FEATURE = 1
+# Appearance
+DATA_VECTOR_ALPHA = 1.0
+DATA_VECTOR_ZORDER = 25
+
+# Wind-Map grid (interpolated) vector overlay
+# When True, draw vectors at each grid cell after interpolation.
+SHOW_GRID_VECTORS_ON_MAP = False
+# Choose grid vectors to draw: None (use selected features),
+# 'sum' (use summed field), an integer index, a list/tuple (e.g., [2,4]),
+# a comma-separated string of indices (e.g., '2,4'), or a substring match.
+GRID_VECTOR_FEATURE = 'sum'
+# Scaling for grid vectors (same semantics as data-point overlay)
+GRID_VECTOR_REL_SCALE = 0.05
+GRID_VECTOR_ABS_SCALE = 0.0
+GRID_VECTOR_ALPHA = 0.50
+GRID_VECTOR_ZORDER = 24
+
+# Mask-awareness for vector overlays
+# When True, data-point and grid-cell vector overlays respect the final mask
+# (i.e., vectors are shown only for unmasked cells based on the summed field).
+SHOW_VECTOR_OVERLAY_RESPECT_MASK = True
+
+# Cell dominance coloring
+# When True, color each grid cell by its dominant feature's color.
+SHOW_CELL_DOMINANCE = False
+# Opacity for the cell dominance color overlay (0..1)
+CELL_DOM_ALPHA = 0.18
+# Z-order for the cell dominance overlay
+CELL_DOM_ZORDER = 3
 
 # UI hotkeys
 # Press this key while the figure is focused to save snapshots of

@@ -117,6 +117,7 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
     # Apply buffer-based masking on the final summed field only.
     # Any cell outside data points and their buffer (defined by MASK_BUFFER_FACTOR)
     # is zeroed out before building continuous interpolators.
+    final_mask = None
     try:
         xmin, xmax, ymin, ymax = config.bounding_box
         grid_res_local = grid_u_sum.shape[0]
@@ -201,7 +202,8 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
     
     return (interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, 
             grid_u_feats, grid_v_feats, cell_dominant_features, 
-            grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y)
+            grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y,
+            final_mask)
 
 
     # Removed: build_grids_alternative (unused)

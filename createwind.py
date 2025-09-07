@@ -240,7 +240,8 @@ def main():
     # Unpack grid data
     (interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, 
      grid_u_feats, grid_v_feats, cell_dominant_features, 
-     grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y) = grid_data
+     grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y,
+     final_mask) = grid_data
 
     # Create the combined (summed) velocity field for the top-k features
     grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (grid_res, grid_res)
@@ -388,6 +389,14 @@ def main():
                 config.real_feature_rgba[feat_idx] = (r, g, b, 1.0)
     
     # Step 5: Create system dictionary; if in feature wind mode, add particles
+    # Build unmasked boolean (True where unmasked)
+    try:
+        unmasked_cells = None
+        if final_mask is not None:
+            unmasked_cells = (~final_mask).astype(bool)
+    except Exception:
+        unmasked_cells = None
+
     system = {
         'grid_u_sum': grid_u_sum,
         'grid_v_sum': grid_v_sum,
@@ -396,11 +405,18 @@ def main():
         'cell_dominant_features': cell_dominant_features,
         'interp_u_sum': interp_u_sum,
         'interp_v_sum': interp_v_sum,
-        'interp_argmax': interp_argmax
+        'interp_argmax': interp_argmax,
+        'cell_centers_x': cell_centers_x,
+        'cell_centers_y': cell_centers_y,
+        'final_mask': final_mask,
+        'unmasked_cells': unmasked_cells
     }
-    if getattr(config, 'VIS_MODE', 'feature_wind_map') == 'feature_wind_map':
+    # Create particles if showing trails, or if we want to visualize initial spawns only
+    show_particles_cfg = bool(getattr(config, 'SHOW_PARTICLES', True))
+    show_spawns_only = bool(getattr(config, 'SHOW_INITIAL_SPAWNS', False))
+    if getattr(config, 'VIS_MODE', 'feature_wind_map') == 'feature_wind_map' and (show_particles_cfg or show_spawns_only):
         system = particle_system.create_particles(
-            config.DEFAULT_NUM_PARTICLES, cell_dominant_features, grid_res, 
+            config.DEFAULT_NUM_PARTICLES, cell_dominant_features, grid_res,
             system)
     
     # Step 6: Setup figure with professional styling and legends
@@ -436,7 +452,7 @@ def main():
     # Prepare the main subplot
     lc = system['linecoll'] if 'linecoll' in system else None
     visualization_core.prepare_figure(ax1, valid_points, col_labels, config.k, grad_indices, 
-                                    feature_colors, lc, all_positions, all_grad_vectors, grid_res)
+                                    feature_colors, lc, all_positions, all_grad_vectors, grid_res, system)
 
     # If in DimReader mode, draw filled isocontours
     # In single-feature mode, use only that feature's field for contours
@@ -538,16 +554,16 @@ def main():
         animation_frame_count += 1
         
         try:
-            # Update particles with family-based coloring
-            if hasattr(particle_system, 'update_particles_with_families'):
-                # Use enhanced particle update with family coloring
-                result = particle_system.update_particles_with_families(
-                    system, interp_u_sum, interp_v_sum, grid_u_sum, grid_v_sum, 
-                    grid_res, family_assignments, feature_colors, grad_indices)
-            else:
-                # Fallback to standard particle update
-                result = particle_system.update_particles(
-                    system, interp_u_sum, interp_v_sum, grid_u_sum, grid_v_sum, grid_res)
+            # Optionally update particles (never when showing spawns-only)
+            result = []
+            if (bool(getattr(config, 'SHOW_PARTICLES', True)) and not bool(getattr(config, 'SHOW_INITIAL_SPAWNS', False))) and 'linecoll' in system:
+                if hasattr(particle_system, 'update_particles_with_families'):
+                    result = particle_system.update_particles_with_families(
+                        system, interp_u_sum, interp_v_sum, grid_u_sum, grid_v_sum, 
+                        grid_res, family_assignments, feature_colors, grad_indices)
+                else:
+                    result = particle_system.update_particles(
+                        system, interp_u_sum, interp_v_sum, grid_u_sum, grid_v_sum, grid_res)
             
             # Periodic performance check (every 150 frames ~ 5 seconds at 30 FPS)
             if animation_frame_count % 150 == 0:
@@ -580,7 +596,10 @@ def main():
     
     # Create the animation
     anim = None
-    if getattr(config, 'VIS_MODE', 'feature_wind_map') == 'feature_wind_map':
+    # Start animation only if particle trails are shown (not when spawns-only)
+    if (getattr(config, 'VIS_MODE', 'feature_wind_map') == 'feature_wind_map'
+        and bool(getattr(config, 'SHOW_PARTICLES', True))
+        and not bool(getattr(config, 'SHOW_INITIAL_SPAWNS', False))):
         anim = FuncAnimation(fig, update_frame, frames=config.ANIMATION_FRAMES, 
                             interval=config.ANIMATION_INTERVAL, blit=False)
     
