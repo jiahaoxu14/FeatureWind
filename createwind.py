@@ -240,8 +240,7 @@ def main():
     # Unpack grid data
     (interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, 
      grid_u_feats, grid_v_feats, cell_dominant_features, 
-     grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y, 
-     cell_soft_dominance) = grid_data
+     grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y) = grid_data
 
     # Create the combined (summed) velocity field for the top-k features
     grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (grid_res, grid_res)
@@ -395,7 +394,6 @@ def main():
         'grid_u_all_feats': grid_u_all_feats,
         'grid_v_all_feats': grid_v_all_feats,
         'cell_dominant_features': cell_dominant_features,
-        'cell_soft_dominance': cell_soft_dominance,
         'interp_u_sum': interp_u_sum,
         'interp_v_sum': interp_v_sum,
         'interp_argmax': interp_argmax

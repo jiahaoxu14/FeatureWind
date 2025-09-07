@@ -357,43 +357,7 @@ def get_magnitude_at_position(position, feature_idx, system):
     return 0.0
 
 
-def get_dominance_at_position(position, feature_idx, system):
-    """
-    Get dominance/uncertainty measure for a feature at a position.
-    
-    Args:
-        position (np.ndarray): Position coordinates [x, y] 
-        feature_idx (int): Feature index
-        system (dict): Particle system dictionary
-        
-    Returns:
-        float: Dominance value (0-1, higher = more dominant)
-    """
-    if 'cell_soft_dominance' not in system or feature_idx < 0:
-        # Fallback: use hard dominance
-        dominant_feat = get_dominant_feature_at_position(position, system)
-        return 1.0 if dominant_feat == feature_idx else 0.3
-        
-    xmin, xmax, ymin, ymax = config.bounding_box
-    cell_soft_dominance = system['cell_soft_dominance']
-    
-    if cell_soft_dominance is None or feature_idx >= cell_soft_dominance.shape[2]:
-        return 0.5  # Neutral dominance
-    
-    grid_res = cell_soft_dominance.shape[0]
-    
-    # Convert position to grid cell indices
-    if xmin <= position[0] <= xmax and ymin <= position[1] <= ymax:
-        cell_j = int((position[0] - xmin) / (xmax - xmin) * grid_res)
-        cell_i = int((position[1] - ymin) / (ymax - ymin) * grid_res)
-        
-        # Clamp to valid range
-        cell_i = max(0, min(grid_res - 1, cell_i))
-        cell_j = max(0, min(grid_res - 1, cell_j))
-        
-        return cell_soft_dominance[cell_i, cell_j, feature_idx]
-    
-    return 0.5
+## Removed soft-dominance access (unused)
 
 
 def update_particle_colors_family_based(system, family_assignments=None, feature_colors=None):

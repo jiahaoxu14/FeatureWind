@@ -77,31 +77,7 @@ def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y):
     return grid_u, grid_v
 
 
-def compute_soft_dominance(cell_mags, temperature=None):
-    """
-    Compute soft dominance probabilities using temperature-based softmax.
-    
-    Args:
-        cell_mags (np.ndarray): Feature magnitudes at a grid cell
-        temperature (float, optional): Softmax temperature parameter
-        
-    Returns:
-        tuple: (softmax_probs, dominant_idx)
-    """
-    if temperature is None:
-        temperature = config.TEMPERATURE_SOFTMAX
-    
-    # Add small epsilon to avoid division by zero
-    cell_mags_safe = cell_mags + 1e-8
-    
-    # Compute softmax probabilities
-    softmax_scores = np.exp(cell_mags_safe / temperature)
-    softmax_probs = softmax_scores / np.sum(softmax_scores)
-    
-    # Get dominant feature index
-    dominant_idx = np.argmax(cell_mags)
-    
-    return softmax_probs, dominant_idx
+## Removed soft dominance computation (unused in visuals)
 
 
 def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels, output_dir="."):
@@ -198,22 +174,13 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
     
     # Create dominant features for each grid cell using ALL features
     cell_dominant_features = np.zeros((grid_res, grid_res), dtype=int)
-    # Store soft dominance probabilities for better visualization
-    cell_soft_dominance = np.zeros((grid_res, grid_res, num_features))
     
     for i in range(grid_res):
         for j in range(grid_res):
             # Get magnitudes directly from cell centers (no averaging needed)
             cell_mags = grid_mag_all_feats[:, i, j]
-            
-            
-            # Compute soft dominance using temperature-based softmax
-            softmax_probs, dominant_idx = compute_soft_dominance(cell_mags)
-            
-            # Store probabilities for this cell
-            cell_soft_dominance[i, j, :] = softmax_probs
-            
-            # Store the dominant feature (still need one for compatibility)
+            # Hard argmax (dominant feature index)
+            dominant_idx = int(np.argmax(cell_mags))
             cell_dominant_features[i, j] = dominant_idx
     
     
@@ -234,8 +201,7 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
     
     return (interp_u_sum, interp_v_sum, interp_argmax, grid_x, grid_y, 
             grid_u_feats, grid_v_feats, cell_dominant_features, 
-            grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y, 
-            cell_soft_dominance)
+            grid_u_all_feats, grid_v_all_feats, cell_centers_x, cell_centers_y)
 
 
     # Removed: build_grids_alternative (unused)

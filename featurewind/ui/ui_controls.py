@@ -56,7 +56,7 @@ class UIController:
         (self.interp_u_sum, self.interp_v_sum, self.interp_argmax,
          self.grid_x, self.grid_y, self.grid_u_feats, self.grid_v_feats,
          self.cell_dominant_features, self.grid_u_all_feats, self.grid_v_all_feats,
-         self.cell_centers_x, self.cell_centers_y, self.cell_soft_dominance) = grid_data
+         self.cell_centers_x, self.cell_centers_y) = grid_data
 
         # Current state (top_k mode only)
         self.current_mode = {'mode': 'top_k'}
