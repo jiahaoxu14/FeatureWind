@@ -548,11 +548,11 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 color = cmap.get(feat_idx, getattr(config, 'GLASBEY_COLORS', ['#1f77b4'])[0])
                 ax2.arrow(0, 0, info['pos_end'][0], info['pos_end'][1],
                           head_width=0.04, head_length=0.04, fc=color, ec=color,
-                          linewidth=1.8, alpha=0.9, zorder=8)
+                          linewidth=1.8, alpha=0.9, zorder=22)
                 # Label highlighted vectors (optional)
                 if bool(getattr(config, 'SHOW_VECTOR_LABELS', True)) and feat_idx < len(col_labels):
                     ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1,
-                             col_labels[feat_idx], fontsize=8, ha='center', va='center', alpha=0.9)
+                             col_labels[feat_idx], fontsize=8, ha='center', va='center', alpha=0.9, zorder=23)
 
             # Also draw an enclosing ring (no direction dot) for the Feature Clock
             try:
@@ -594,7 +594,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             # Draw arrow in positive direction only
             ax2.arrow(0, 0, scaled_vector[0], scaled_vector[1], 
                      head_width=0.05, head_length=0.05, 
-                     fc=color, ec=color, linewidth=2, alpha=0.8, zorder=8)
+                     fc=color, ec=color, linewidth=2, alpha=0.8, zorder=22)
             
             # Draw magnitude circle
             from matplotlib.patches import Circle
@@ -607,7 +607,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             if bool(getattr(config, 'SHOW_VECTOR_LABELS', True)):
                 ax2.text(scaled_vector[0]*1.2, scaled_vector[1]*1.2, 
                         col_labels[features_selected[0]], 
-                        ha='center', va='center', fontsize=9, color=color)
+                        ha='center', va='center', fontsize=9, color=color, zorder=23)
             
         elif len(all_endpoints) >= 3:
             try:
@@ -625,9 +625,9 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 for i, (vector, feat_idx) in enumerate(zip(vectors_selected, features_selected)):
                     scaled_vector = np.array(vector) * scale_factor
                     color = feature_colors[feat_idx] if feat_idx < len(feature_colors) else 'black'
-                    ax2.arrow(0, 0, scaled_vector[0], scaled_vector[1],
-                              head_width=0.04, head_length=0.04,
-                              fc=color, ec=color, linewidth=1.5, alpha=0.7, zorder=8-i)
+                ax2.arrow(0, 0, scaled_vector[0], scaled_vector[1],
+                          head_width=0.04, head_length=0.04,
+                          fc=color, ec=color, linewidth=1.5, alpha=0.7, zorder=22)
         
         # Wind meter removed per user request
 
@@ -704,14 +704,13 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 dot_r = float(getattr(config, 'WIND_VANE_CIRCLE_RADIUS', 0.055))
                 # Keep dot on the ring circumference
                 dot_center = flow_direction * ring_r if sum_magnitude > 1e-12 else np.array([ring_r, 0.0])
-                # Choose color from the selected feature with highest magnitude
+                # Choose color from the selected feature with the highest projection
+                # onto the aggregated flow direction (directional contribution)
                 ring_dot_color = 'black'
                 try:
-                    if mags_selected:
-                        max_idx = int(np.argmax(mags_selected))
-                        feat_for_color = features_selected[max_idx] if max_idx < len(features_selected) else None
-                        if feat_for_color is not None and feat_for_color < len(feature_colors):
-                            ring_dot_color = feature_colors[feat_for_color]
+                    if 'best_feature_idx' in locals() and best_feature_idx is not None:
+                        if 0 <= best_feature_idx < len(feature_colors):
+                            ring_dot_color = feature_colors[best_feature_idx]
                     elif (dominant_feature is not None and dominant_feature >= 0 and
                           (dominant_feature in selected_features) and
                           dominant_feature < len(feature_colors)):
@@ -863,7 +862,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 pos_color = (gray_value, gray_value, gray_value, pos_alpha)
             
             # Draw vector arrows
-            ax2.annotate('', xy=info['pos_end'], xytext=(0, 0),
+            ax2.annotate('', xy=info['pos_end'], xytext=(0, 0), zorder=22,
                         arrowprops=dict(arrowstyle='->', color=pos_color, lw=2,
                                       shrinkA=0, shrinkB=0, alpha=pos_color[3]))
             
@@ -872,7 +871,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 label = col_labels[feat_idx]
                 # Label near positive endpoint for consistency
                 ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1, label,
-                        fontsize=8, ha='center', va='center', alpha=0.8)
+                        fontsize=8, ha='center', va='center', alpha=0.8, zorder=23)
 
 
 def setup_figure_layout():
