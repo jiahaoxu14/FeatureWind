@@ -124,7 +124,7 @@ CLEAR_SELECTION_HOTKEY = 'c'
 # Particle trail opacity fade (older segments more transparent)
 # Alpha per segment = base_alpha * (TRAIL_TAIL_MIN_FACTOR + (1-TRAIL_TAIL_MIN_FACTOR) * ((t+1)/TAIL_LENGTH)**TRAIL_TAIL_EXP)
 TRAIL_TAIL_MIN_FACTOR = 0.10  # 0..1, alpha factor for the oldest segment
-TRAIL_TAIL_EXP = 1.2          # >1 for stronger decay near the tail
+TRAIL_TAIL_EXP = 2.0          # >1 for stronger decay near the tail
 
 # Auto snapshots
 # When enabled, the UI will capture snapshots automatically every K frames
