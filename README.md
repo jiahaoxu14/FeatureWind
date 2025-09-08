@@ -61,23 +61,6 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
   - `--name-filter REGEX` to filter the feature set before selection (e.g., `'3$'` to keep columns ending with 3).
   - `--list-features` to print all feature names from the `.tmap`.
 
-- Key configuration: `featurewind/config.py`
-  - Data point coloring by feature value (main map):
-    - `DATA_POINT_COLOR_BY_FEATURE`: None | int index | substring (e.g., `"radius1"`, `"radius"`).
-    - `DATA_POINT_COLOR_MAP`: `'grayscale'` or any Matplotlib colormap (`'viridis'`, `'magma'`, `'cividis'`, `'plasma'`, `'turbo'`).
-    - `DATA_POINT_COLOR_INVERT`: False (default). Set True to reverse mapping.
-    - `DATA_POINT_ALPHA`, `DATA_POINT_SIZE`, `HOLLOW_DATA_POINTS` control style.
-  - Wind Vane labels:
-    - `SHOW_VECTOR_LABELS`: True/False.
-    - `WIND_VANE_LABEL_FONTSIZE`: main wind vane label size.
-    - `FEATURE_CLOCK_LABEL_FONTSIZE`: label size when Feature Clock is enabled.
-  - Ring “direction dot” opacity:
-    - `RING_DOT_ALPHA_MODE`: `'field'` (default, uses global field strength) or `'speed'` (particle speed).
-    - Opacity range is mapped to `[0.15, 1.0]` (low→high).
-  - Families and colors:
-    - Features are clustered by directional similarity (spectral clustering) into up to `MAX_FEATURE_FAMILIES` families.
-    - Family colors use the Paul Tol palette (colorblind‑safe). Set `USE_PER_FEATURE_COLORS=True` to give each feature a distinct color instead.
-
 
 ## Examples
 - Breast Cancer (WDBC)
