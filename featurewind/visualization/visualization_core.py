@@ -159,63 +159,145 @@ def prepare_figure(ax, valid_points, col_labels, k, grad_indices, feature_colors
     except Exception:
         pass
 
-    # Plot underlying data points with different markers for each label (optional)
+    # Plot underlying data points; optionally color by a feature's value
     if bool(getattr(config, 'SHOW_DATA_POINTS', True)):
-        feature_idx = 2  # Use feature index 2 for alpha computation
-        try:
-            domain_values = np.array([p.domain[feature_idx] for p in valid_points])
-            domain_min, domain_max = domain_values.min(), domain_values.max()
-        except Exception:
-            domain_min, domain_max = 0.0, 1.0
+        # Resolve which feature to color by
+        color_by = getattr(config, 'DATA_POINT_COLOR_BY_FEATURE', None)
+        target_feat_idx = None
+        if color_by is not None:
+            # Accept integer index or substring match on label
+            try:
+                if isinstance(color_by, int):
+                    target_feat_idx = int(color_by)
+                elif isinstance(color_by, str) and len(col_labels) > 0:
+                    lower = color_by.lower()
+                    # First substring hit
+                    for idx, name in enumerate(col_labels):
+                        if lower in str(name).lower():
+                            target_feat_idx = idx
+                            break
+                    # Fallback: token-based loose match (handles spaces/underscores)
+                    if target_feat_idx is None:
+                        import re as _re
+                        tokens = [t for t in _re.split(r"[^a-z0-9]+", lower) if t]
+                        if tokens:
+                            for idx, name in enumerate(col_labels):
+                                name_l = _re.sub(r"[^a-z0-9]+", " ", str(name).lower())
+                                if any(t in name_l for t in tokens):
+                                    target_feat_idx = idx
+                                    break
+                # Bounds check
+                if target_feat_idx is not None and not (0 <= target_feat_idx < len(col_labels)):
+                    target_feat_idx = None
+            except Exception:
+                target_feat_idx = None
 
+        # Precompute normalization for selected feature if any
+        values_all = None
+        if target_feat_idx is not None:
+            try:
+                values_all = np.array([p.domain[target_feat_idx] for p in valid_points], dtype=float)
+                vmin, vmax = float(np.nanmin(values_all)), float(np.nanmax(values_all))
+                denom = (vmax - vmin) if (vmax > vmin) else 1.0
+                norm_all = (values_all - vmin) / (denom + 1e-12)
+                if bool(getattr(config, 'DATA_POINT_COLOR_INVERT', False)):
+                    norm_all = 1.0 - norm_all
+            except Exception:
+                # Could not extract values; disable color-by
+                target_feat_idx = None
+                norm_all = None
+        
+        # Informative prints for debugging configuration
+        try:
+            if getattr(config, 'DATA_POINT_COLOR_BY_FEATURE', None) is not None:
+                if target_feat_idx is None:
+                    print("[info] Data point color-by feature not resolved; falling back to default point styling.")
+                else:
+                    print(f"[info] Coloring data points by feature #{target_feat_idx}: '{col_labels[target_feat_idx]}'.")
+        except Exception:
+            pass
+        
         # Collect all labels from valid_points
         unique_labels = sorted(set(p.tmap_label for p in valid_points))
 
-        # Define multiple distinct markers
+        # Define markers per label
         markers = config.MARKER_STYLES
 
         for i, lab in enumerate(unique_labels):
             indices = [j for j, p in enumerate(valid_points) if p.tmap_label == lab]
             positions_lab = np.array([valid_points[j].position for j in indices])
-            try:
-                normalized = (np.array([valid_points[j].domain[feature_idx] for j in indices]) - domain_min) / (domain_max - domain_min + 1e-9)
-            except Exception:
-                normalized = np.zeros(len(indices))
-            alphas = 0.2 + normalized * 0.8
             marker_style = markers[i % len(markers)]
 
-            # Hollow or solid data points based on config
-            if getattr(config, 'HOLLOW_DATA_POINTS', True):
-                edge_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
-                edge_width = float(getattr(config, 'DATA_POINT_EDGEWIDTH', 0.6))
-                # Stroke color #555 with configured alpha
-                stroke_val = 0x55 / 255.0
-                edge_color = (stroke_val, stroke_val, stroke_val, edge_alpha)
+            if target_feat_idx is not None and norm_all is not None:
+                # Map values to colors using configurable palette
+                cmap_name = getattr(config, 'DATA_POINT_COLOR_MAP', 'grayscale')
+                inv = bool(getattr(config, 'DATA_POINT_COLOR_INVERT', False))
+                vals = norm_all[indices]
+                try:
+                    if isinstance(cmap_name, str) and cmap_name.lower() in ('grayscale', 'gray', 'grey'):
+                        # Grayscale: default mapping is higher→darker unless inverted
+                        gray_vals = (1.0 - vals) if not inv else vals
+                        base_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
+                        colors_rgba = np.stack([gray_vals, gray_vals, gray_vals, np.full_like(gray_vals, base_alpha)], axis=1)
+                    else:
+                        import matplotlib.pyplot as _plt
+                        # Resolve colormap and optionally reverse
+                        cmap = _plt.get_cmap(cmap_name)
+                        s = (1.0 - vals) if inv else vals
+                        colors_rgba = cmap(s)
+                        # Override alpha with configured base alpha
+                        base_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
+                        if colors_rgba.ndim == 1:
+                            # Single value case
+                            colors_rgba = np.tile(colors_rgba, (len(vals), 1))
+                        colors_rgba[:, 3] = base_alpha
+                except Exception:
+                    # Fallback to neutral gray
+                    base_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
+                    colors_rgba = np.tile(np.array([0.6, 0.6, 0.6, base_alpha]), (len(vals), 1))
+
                 ax.scatter(
                     positions_lab[:, 0],
                     positions_lab[:, 1],
                     marker=marker_style,
-                    facecolors='none',
-                    edgecolors=edge_color,
-                    linewidths=edge_width,
+                    c=colors_rgba,
+                    edgecolors='none',
                     s=getattr(config, 'DATA_POINT_SIZE', 48),
                     label=f"Label {lab}",
                     zorder=getattr(config, 'DATA_POINT_ZORDER', 20)
                 )
             else:
-                fill_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
-                fill_color = (0.5, 0.5, 0.5, fill_alpha)
-                ax.scatter(
-                    positions_lab[:, 0],
-                    positions_lab[:, 1],
-                    marker=marker_style,
-                    color=fill_color,
-                    edgecolors='#555555',
-                    linewidths=float(getattr(config, 'DATA_POINT_EDGEWIDTH', 0.6)),
-                    s=getattr(config, 'DATA_POINT_SIZE', 48),
-                    label=f"Label {lab}",
-                    zorder=getattr(config, 'DATA_POINT_ZORDER', 20)
-                )
+                # Fallback: legacy hollow/solid styles
+                if getattr(config, 'HOLLOW_DATA_POINTS', True):
+                    edge_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
+                    edge_width = float(getattr(config, 'DATA_POINT_EDGEWIDTH', 0.6))
+                    stroke_val = 0x55 / 255.0
+                    edge_color = (stroke_val, stroke_val, stroke_val, edge_alpha)
+                    ax.scatter(
+                        positions_lab[:, 0],
+                        positions_lab[:, 1],
+                        marker=marker_style,
+                        facecolors='none',
+                        edgecolors=edge_color,
+                        linewidths=edge_width,
+                        s=getattr(config, 'DATA_POINT_SIZE', 48),
+                        label=f"Label {lab}",
+                        zorder=getattr(config, 'DATA_POINT_ZORDER', 20)
+                    )
+                else:
+                    fill_alpha = float(getattr(config, 'DATA_POINT_ALPHA', 0.35))
+                    fill_color = (0.5, 0.5, 0.5, fill_alpha)
+                    ax.scatter(
+                        positions_lab[:, 0],
+                        positions_lab[:, 1],
+                        marker=marker_style,
+                        color=fill_color,
+                        edgecolors='#555555',
+                        linewidths=float(getattr(config, 'DATA_POINT_EDGEWIDTH', 0.6)),
+                        s=getattr(config, 'DATA_POINT_SIZE', 48),
+                        label=f"Label {lab}",
+                        zorder=getattr(config, 'DATA_POINT_ZORDER', 20)
+                    )
 
     # Add particle line collection only in feature wind map mode
     try:
@@ -675,7 +757,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             valid_cells = [(int(ii), int(jj)) for (ii, jj) in selected_cells]
         if len(valid_cells) == 0:
             ax2.text(0.5, 0.5, "Masked selection", transform=ax2.transAxes,
-                     ha='center', va='center', fontsize=10, color='gray')
+                     ha='center', va='center', fontsize=int(getattr(config, 'WIND_VANE_INFO_FONTSIZE', 10)), color='gray')
             return
     else:
         masked = False
@@ -683,7 +765,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             masked = not bool(unmasked[cell_i, cell_j])
         if masked:
             ax2.text(0.5, 0.5, "Masked cell", transform=ax2.transAxes,
-                     ha='center', va='center', fontsize=10, color='gray')
+                     ha='center', va='center', fontsize=int(getattr(config, 'WIND_VANE_INFO_FONTSIZE', 10)), color='gray')
             return
 
     # Get vectors for ALL features from the all-features grid
@@ -930,7 +1012,8 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 # Label highlighted vectors (optional)
                 if bool(getattr(config, 'SHOW_VECTOR_LABELS', True)) and feat_idx < len(col_labels):
                     ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1,
-                             col_labels[feat_idx], fontsize=8, ha='center', va='center', alpha=0.9, zorder=23)
+                             col_labels[feat_idx], fontsize=int(getattr(config, 'FEATURE_CLOCK_LABEL_FONTSIZE', 9)),
+                             ha='center', va='center', alpha=0.9, zorder=23)
 
             # Also draw an enclosing ring (no direction dot) for the Feature Clock
             try:
@@ -985,7 +1068,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             if bool(getattr(config, 'SHOW_VECTOR_LABELS', True)):
                 ax2.text(scaled_vector[0]*1.2, scaled_vector[1]*1.2, 
                         col_labels[features_selected[0]], 
-                        ha='center', va='center', fontsize=9, color=color, zorder=23)
+                        ha='center', va='center', fontsize=int(getattr(config, 'WIND_VANE_LABEL_FONTSIZE', 9)), color=color, zorder=23)
             
         elif len(all_endpoints) >= 3 and bool(getattr(config, 'WIND_VANE_USE_CONVEX_HULL', True)):
             try:
@@ -1067,7 +1150,8 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             cell_speed = float(np.linalg.norm(sum_vector)) * float(getattr(config, 'velocity_scale', 1.0))
             speed_ratio = cell_speed / max_speed if max_speed > 0 else 0.0
             speed_ratio = max(0.0, min(1.0, speed_ratio))
-            magnitude_alpha = max(0.3, min(1.0, 0.3 + 0.7 * speed_ratio))
+            # Map speed ratio [0,1] -> alpha in [0.15, 1.0]
+            magnitude_alpha = max(0.15, min(1.0, 0.15 + 0.85 * speed_ratio))
             # Wind vane representation: choose between ring+dot or traditional needle
             vane_style = str(getattr(config, 'WIND_VANE_STYLE', 'needle')).lower()
             perp_direction = np.array([-flow_direction[1], flow_direction[0]])  # Perpendicular
@@ -1122,7 +1206,8 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                     denom = global_max if global_max > 1e-12 else (sum_magnitude + 1e-9)
                     base = float(sum_magnitude) / (denom + 1e-9)
                     ratio = float(np.tanh(base))  # 0..~1
-                    dot_alpha = max(0.3, min(1.0, 0.3 + 0.7 * ratio))
+                    # Map field strength ratio [0,1] -> alpha in [0.15, 1.0]
+                    dot_alpha = max(0.15, min(1.0, 0.15 + 0.85 * ratio))
                 else:
                     dot_alpha = magnitude_alpha
                 dir_dot = plt.Circle((float(dot_center[0]), float(dot_center[1])), radius=dot_r,
@@ -1269,7 +1354,7 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                 label = col_labels[feat_idx]
                 # Label near positive endpoint for consistency
                 ax2.text(info['pos_end'][0] * 1.1, info['pos_end'][1] * 1.1, label,
-                        fontsize=8, ha='center', va='center', alpha=0.8, zorder=23)
+                        fontsize=int(getattr(config, 'WIND_VANE_LABEL_FONTSIZE', 9)), ha='center', va='center', alpha=0.8, zorder=23)
 
 
 def setup_figure_layout():

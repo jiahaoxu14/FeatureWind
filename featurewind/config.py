@@ -8,17 +8,17 @@ settings used throughout the FeatureWind visualization system.
 import numpy as np
 
 # Global configuration variables
-velocity_scale = 1.5  # Original stable value
+velocity_scale = 1.2  # Original stable value
 k = None  # Number of top features (will be set dynamically)
 bounding_box = None  # Will be computed dynamically
 real_feature_rgba = {}  # Feature to RGBA mapping for particles
 
 # Default grid resolution
-DEFAULT_GRID_RES = 15
+DEFAULT_GRID_RES = 25
 
 # Particle system parameters
 DEFAULT_NUM_PARTICLES = 800  # Increased to ensure visible particle density
-PARTICLE_LIFETIME = 20  # frames - increased to reduce respawn frequency
+PARTICLE_LIFETIME = 25  # frames - increased to reduce respawn frequency
 TAIL_LENGTH = 10  # number of position history points
 SHOW_PARTICLES = True  # When False, hide particles and disable particle animation
 
@@ -92,6 +92,18 @@ SHOW_DATA_POINTS = True
 HOLLOW_DATA_POINTS = False
 # Alpha for solid data points (lower = more transparent)
 DATA_POINT_ALPHA = 0.30
+# Optional: color data points by a specific feature's value
+# Accepts: None (disabled), an integer feature index, or a case-insensitive substring
+# of the feature name to match the first hit.
+DATA_POINT_COLOR_BY_FEATURE = None
+# Colormap for value-to-color mapping. Options:
+#  - 'grayscale' (default)
+#  - any Matplotlib colormap name (e.g., 'viridis', 'magma', 'cividis', 'plasma', 'turbo')
+DATA_POINT_COLOR_MAP = 'viridis'
+# If True, invert mapping:
+#  - grayscale: higher values become lighter (default: higher→darker)
+#  - other colormaps: reverse the colormap (high→low end)
+DATA_POINT_COLOR_INVERT = False
 # Edge width for hollow markers
 DATA_POINT_EDGEWIDTH = 0.6
 # Marker size for data points in the main map (Matplotlib scatter 's' in points^2)
@@ -122,7 +134,7 @@ WIND_VANE_CIRCLE_GUIDE = False   # draw a faint center→dot guide line
 WIND_VANE_RING_SCALE = 1.04      # multiply max feature-vector radius to pad the ring
 WIND_VANE_RING_MAX_R = 0.66      # clamp ring radius (reference ring is 0.7)
 WIND_VANE_RING_COLOR = '#999999' # ring line color
-WIND_VANE_USE_CONVEX_HULL = False  # when False, do not de-emphasize non-hull vectors
+WIND_VANE_USE_CONVEX_HULL = True  # when False, do not de-emphasize non-hull vectors
 WIND_VANE_SHOW_HULL = False       # when True and convex hull is used, draw the hull boundary
 WIND_VANE_HULL_COLOR = '#727272'  # face color for hull fill
 WIND_VANE_HULL_ALPHA = 0.3       # face alpha for hull fill
@@ -137,6 +149,13 @@ SHOW_TITLES = False
 # Vector labels
 # When False, hide feature/vector name annotations in Wind Vane and Feature Clock
 SHOW_VECTOR_LABELS = True
+# Font sizes for labels in wind-vane views
+# Default label size for wind vane feature labels
+WIND_VANE_LABEL_FONTSIZE = 11
+# Label size in Feature Clock mode
+FEATURE_CLOCK_LABEL_FONTSIZE = 9
+# Font size for informational texts (e.g., masked cell/selection)
+WIND_VANE_INFO_FONTSIZE = 10
 
 # Wind-Map data-point vector overlay (for paper figures)
 # When True, draw per-feature gradient vectors at each data point on the Wind-Map.
