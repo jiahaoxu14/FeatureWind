@@ -80,37 +80,15 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
 
 
 ## Examples
-
-- Iris
-  - Dataset: `examples/iris/iris.csv`
-  - Generate + visualize:
-    ```bash
-    python generate_tangent_map.py examples/iris/iris.csv tsne iris_tsne
-    python createwind.py --tangent-map examples/iris/iris_tsne.tmap --top-k 4
-    ```
-
 - Breast Cancer (WDBC)
   - Dataset: `examples/breast_cancer/breast_cancer_wdbc.csv` (provided). Label codes: 0 = benign, 1 = malignant.
   - Generate + visualize:
     ```bash
     python generate_tangent_map.py examples/breast_cancer/breast_cancer_wdbc.csv tsne breast_tsne
-    python createwind.py --tangent-map examples/breast_cancer/breast_tsne.tmap --top-k 8
+    python createwind.py --tangent-map examples/breast_cancer/breast_tsne.tmap --top-k all
     # or select features ending with "3"
     python createwind.py --tangent-map examples/breast_cancer/breast_tsne.tmap --name-filter '3$' --top-k all
     ```
-  - Linear classifiers (analysis scripts):
-    - Malignant vs. Benign:
-      ```bash
-      python examples/breast_cancer/train_linear_classifier.py \
-        --csv examples/breast_cancer/breast_cancer_wdbc.csv --penalty l2 --cv 5 --balanced
-      ```
-      Outputs `*_linear_feature_importance.csv` with standardized coefficients (comparable across features).
-    - Malignant subclusters (k=2 inside malignant):
-      ```bash
-      python examples/breast_cancer/train_malignant_subclusters.py \
-        --csv examples/breast_cancer/breast_cancer_wdbc.csv --cv 5 --balanced
-      ```
-      Writes `*_malignant_subcluster_assignments.csv` and `*_malignant_subcluster_linear_importance.csv`.
 
 
 ## Tips and Troubleshooting
