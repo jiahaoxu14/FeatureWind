@@ -39,7 +39,7 @@ GLASBEY_COLORS = [
 ]
 
 # Grid computation parameters
-MASK_BUFFER_FACTOR = 0.5    # Buffer size around data points for interpolation (in cell units)
+MASK_BUFFER_FACTOR = 0.2    # Buffer size around data points for interpolation (in cell units)
 # Unified masking threshold for summed magnitude checks
 MASK_THRESHOLD = 1e-6
 
