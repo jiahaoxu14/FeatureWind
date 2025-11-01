@@ -32,7 +32,7 @@ function bilinearSample(grid, gx, gy) {
   return top * (1 - b) + bot * b
 }
 
-export default function CanvasWind({ payload, particleCount = 300, onHover }) {
+export default function CanvasWind({ payload, particleCount = 600, onHover, showGrid = true }) {
   const canvasRef = useRef(null)
 
   const {
@@ -42,6 +42,9 @@ export default function CanvasWind({ payload, particleCount = 300, onHover }) {
     vAll = [],
     positions = [],
     selection = {},
+    dominant = null,
+    unmasked = null,
+    colors = [],
   } = payload || {}
 
   const indices = useMemo(() => {
@@ -54,6 +57,27 @@ export default function CanvasWind({ payload, particleCount = 300, onHover }) {
   const uSum = useMemo(() => sumSelectedGrid(uAll, indices), [uAll, indices])
   const vSum = useMemo(() => sumSelectedGrid(vAll, indices), [vAll, indices])
 
+  // Precompute magnitude grid and a robust scale (p95) for alpha mapping
+  const magInfo = useMemo(() => {
+    if (!uSum || !vSum) return null
+    const H = uSum.length, W = uSum[0].length
+    const mags = new Float32Array(H * W)
+    let k = 0
+    for (let i = 0; i < H; i++) {
+      const ui = uSum[i]
+      const vi = vSum[i]
+      for (let j = 0; j < W; j++, k++) {
+        const u = ui[j], v = vi[j]
+        mags[k] = Math.hypot(u, v)
+      }
+    }
+    // Compute p99 (closer to Python’s 99th percentile usage)
+    const arr = Array.from(mags)
+    arr.sort((a, b) => a - b)
+    const p99 = arr.length ? arr[Math.floor(arr.length * 0.99)] : 1.0
+    return { H, W, mags, p99: p99 || 1.0 }
+  }, [uSum, vSum])
+
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || !uSum || !vSum) return
@@ -63,11 +87,52 @@ export default function CanvasWind({ payload, particleCount = 300, onHover }) {
     const Hpx = canvas.height
     const W = grid_res, H = grid_res
 
-    // Particles
-    const particles = Array.from({ length: particleCount }, () => ({
-      x: xmin + Math.random() * (xmax - xmin),
-      y: ymin + Math.random() * (ymax - ymin),
-    }))
+    // Trail configuration (mirrors defaults in featurewind/config.py)
+    const TAIL_LENGTH = 10
+    const TRAIL_TAIL_MIN = 0.10
+    const TRAIL_TAIL_EXP = 2.0
+    const MAX_LIFETIME = 25
+    const CONSISTENT_SPEED = true
+    const SPEED_CONST_REL = 0.06 // fraction of plot width per second (approx Python)
+    const SPEED_SCALE = 1.0 // used when CONSISTENT_SPEED=false
+
+    // Optional mask helpers
+    let hasMask = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
+
+    // Precompute list of unmasked cells for efficient respawn
+    let unmaskedList = []
+    if (hasMask) {
+      for (let i = 0; i < H; i++) {
+        for (let j = 0; j < W; j++) {
+          if (unmasked[i][j]) unmaskedList.push([i, j])
+        }
+      }
+      if (unmaskedList.length === 0) hasMask = false
+    }
+
+    function randomSpawn() {
+      if (hasMask && unmaskedList.length) {
+        const idx = Math.floor(Math.random() * unmaskedList.length)
+        const [i, j] = unmaskedList[idx]
+        const dx = (xmax - xmin) / W
+        const dy = (ymax - ymin) / H
+        const x = xmin + j * dx + Math.random() * dx
+        const y = ymin + i * dy + Math.random() * dy
+        return { x, y }
+      } else {
+        return {
+          x: xmin + Math.random() * (xmax - xmin),
+          y: ymin + Math.random() * (ymax - ymin),
+        }
+      }
+    }
+
+    // Particles with trail histories and lifetimes
+    const particles = Array.from({ length: particleCount }, () => {
+      const { x, y } = randomSpawn()
+      const hist = Array.from({ length: TAIL_LENGTH + 1 }, () => ({ x, y }))
+      return { x, y, age: 0, hist }
+    })
 
     function worldToGrid(x, y) {
       const gx = (x - xmin) / (xmax - xmin) * (W - 1)
@@ -83,14 +148,51 @@ export default function CanvasWind({ payload, particleCount = 300, onHover }) {
     function step(dt) {
       for (const p of particles) {
         const [gx, gy] = worldToGrid(p.x, p.y)
-        const u = bilinearSample(uSum, gx, gy)
-        const v = bilinearSample(vSum, gx, gy)
+        let u = bilinearSample(uSum, gx, gy)
+        let v = bilinearSample(vSum, gx, gy)
+
+        // Apply mask: zero velocity in masked regions
+        if (hasMask) {
+          const mi = Math.max(0, Math.min(H - 1, Math.round(gy)))
+          const mj = Math.max(0, Math.min(W - 1, Math.round(gx)))
+          if (!unmasked[mi][mj]) {
+            u = 0; v = 0
+          }
+        }
+
+        // Consistent speed option
+        if (CONSISTENT_SPEED) {
+          const mag = Math.hypot(u, v)
+          if (mag > 1e-9) {
+            const width = (xmax - xmin)
+            const s = SPEED_CONST_REL * width
+            u = (u / mag) * s
+            v = (v / mag) * s
+          } else {
+            u = 0; v = 0
+          }
+        } else {
+          u *= SPEED_SCALE
+          v *= SPEED_SCALE
+        }
+
         p.x += u * dt
         p.y += v * dt
-        // respawn if out of bounds
-        if (p.x < xmin || p.x > xmax || p.y < ymin || p.y > ymax) {
-          p.x = xmin + Math.random() * (xmax - xmin)
-          p.y = ymin + Math.random() * (ymax - ymin)
+        p.age += 1
+        // shift history (simple but fine for small tails)
+        for (let t = TAIL_LENGTH; t >= 1; t--) {
+          p.hist[t].x = p.hist[t - 1].x
+          p.hist[t].y = p.hist[t - 1].y
+        }
+        p.hist[0].x = p.x
+        p.hist[0].y = p.y
+        // respawn if out of bounds or over age
+        if (p.x < xmin || p.x > xmax || p.y < ymin || p.y > ymax || p.age > MAX_LIFETIME) {
+          const { x: nx, y: ny } = randomSpawn()
+          p.x = nx
+          p.y = ny
+          p.age = 0
+          for (let t = 0; t <= TAIL_LENGTH; t++) { p.hist[t].x = nx; p.hist[t].y = ny }
         }
       }
     }
@@ -103,22 +205,92 @@ export default function CanvasWind({ payload, particleCount = 300, onHover }) {
       step(dt)
       ctx.clearRect(0, 0, Wpx, Hpx)
 
-      // Draw base positions (for sanity)
-      ctx.fillStyle = 'rgba(120,120,120,0.5)'
+      // Draw grid lines (cell boundaries)
+      if (showGrid) {
+        ctx.strokeStyle = 'rgba(180,180,180,0.35)'
+        ctx.lineWidth = 0.5
+        // vertical lines at x boundaries
+        for (let k = 0; k <= W; k++) {
+          const xk = xmin + (k / W) * (xmax - xmin)
+          const sx = (xk - xmin) / (xmax - xmin) * Wpx
+          ctx.beginPath()
+          ctx.moveTo(sx, 0)
+          ctx.lineTo(sx, Hpx)
+          ctx.stroke()
+        }
+        // horizontal lines at y boundaries
+        for (let k = 0; k <= H; k++) {
+          const yk = ymin + (k / H) * (ymax - ymin)
+          const sy = Hpx - (yk - ymin) / (ymax - ymin) * Hpx
+          ctx.beginPath()
+          ctx.moveTo(0, sy)
+          ctx.lineTo(Wpx, sy)
+          ctx.stroke()
+        }
+      }
+
+      // Optional: draw base points lightly
+      ctx.fillStyle = 'rgba(120,120,120,0.35)'
       for (const [x, y] of positions) {
         const [sx, sy] = worldToScreen(x, y)
         ctx.beginPath()
-        ctx.arc(sx, sy, 2, 0, Math.PI * 2)
+        ctx.arc(sx, sy, 1.6, 0, Math.PI * 2)
         ctx.fill()
       }
 
-      // Draw particles
-      ctx.fillStyle = 'rgba(20,20,20,0.9)'
+      // Draw trails as fading line segments (colored by dominant feature)
+      ctx.lineWidth = 1.2
+      ctx.lineCap = 'round'
+      const p99 = magInfo?.p99 || 1.0
+
+      function hexToRgb(hex) {
+        if (!hex || typeof hex !== 'string') return [20, 20, 20]
+        const m = hex.match(/^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i)
+        if (!m) return [20, 20, 20]
+        return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+      }
       for (const p of particles) {
-        const [sx, sy] = worldToScreen(p.x, p.y)
-        ctx.beginPath()
-        ctx.arc(sx, sy, 1.5, 0, Math.PI * 2)
-        ctx.fill()
+        for (let t = TAIL_LENGTH - 1; t >= 0; t--) {
+          const aTail = TRAIL_TAIL_MIN + (1 - TRAIL_TAIL_MIN) * Math.pow((t + 1) / TAIL_LENGTH, TRAIL_TAIL_EXP)
+          const x1 = p.hist[t + 1].x
+          const y1 = p.hist[t + 1].y
+          const x0 = p.hist[t].x
+          const y0 = p.hist[t].y
+          // Field-strength based alpha at segment head
+          const [gx0, gy0] = worldToGrid(x0, y0)
+          const u0 = bilinearSample(uSum, gx0, gy0)
+          const v0 = bilinearSample(vSum, gx0, gy0)
+          const m = Math.hypot(u0, v0)
+          const aField = Math.max(0, Math.min(1, m / p99))
+
+          // Sample dominant feature index (nearest cell) and color
+          let rgb = [20, 20, 20]
+          if (dominant && colors && colors.length) {
+            const mi = Math.max(0, Math.min(H - 1, Math.round(gy0)))
+            const mj = Math.max(0, Math.min(W - 1, Math.round(gx0)))
+            const fid = dominant[mi]?.[mj]
+            if (typeof fid === 'number' && fid >= 0 && fid < colors.length) {
+              rgb = hexToRgb(colors[fid])
+            }
+          }
+
+          // Respect mask: drop segments fully in masked cells
+          if (hasMask) {
+            const mi = Math.max(0, Math.min(H - 1, Math.round(gy0)))
+            const mj = Math.max(0, Math.min(W - 1, Math.round(gx0)))
+            if (!unmasked[mi][mj]) continue
+          }
+
+          const alpha = 0.9 * aTail * aField
+          if (alpha <= 0.01) continue
+          const [sx0, sy0] = worldToScreen(x0, y0)
+          const [sx1, sy1] = worldToScreen(x1, y1)
+          ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha.toFixed(3)})`
+          ctx.beginPath()
+          ctx.moveTo(sx1, sy1)
+          ctx.lineTo(sx0, sy0)
+          ctx.stroke()
+        }
       }
       requestAnimationFrame(draw)
     }

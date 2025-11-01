@@ -297,6 +297,15 @@ def compute():
         "meta": {"dtypeHint": "float32", "order": "row-major"},
     }
 
+    # Provide unmasked grid so the frontend can respect masking
+    try:
+        if final_mask is not None:
+            import numpy as _np
+            unmasked = _np.logical_not(final_mask).astype(_np.uint8)
+            response["unmasked"] = tolist(unmasked)
+    except Exception:
+        pass
+
     if include_raw:
         response["gradVectors"] = tolist(all_grad_vectors)
 
