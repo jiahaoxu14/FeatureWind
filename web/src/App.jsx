@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import './styles.css'
 import { uploadFile, compute } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
 import WindVane from './components/WindVane.jsx'
@@ -74,12 +75,48 @@ export default function App() {
   }, [dataset?.datasetId, topK, gridRes, maskBufferFactor])
 
   return (
-    <div style={{ fontFamily: 'system-ui, sans-serif', padding: 16 }}>
-      <h2>FeatureWind Web (MVP)</h2>
-      <div style={{ display: 'flex', gap: 24 }}>
-        <div style={{ minWidth: 320 }}>
-          <div style={{ marginBottom: 8 }}>
+    <div className="app">
+      <div className="header">
+        <h2 className="title">FeatureWind Web</h2>
+        <p className="subtitle">Interactive feature wind visualization</p>
+      </div>
+      <div className="content">
+        <div className="main">
+          {payload ? (
+            <div className="row">
+              <div className="panel canvas-frame">
+                <p className="panel-title">Wind Map</p>
+                <CanvasWind
+                  payload={payload}
+                  onHover={setHoverPos}
+                  showGrid={showGrid}
+                  particleCount={particleCount}
+                  consistentSpeed={consistentSpeed}
+                  speedConstRel={speedConstRel}
+                  speedScale={speedScale}
+                  tailLength={tailLength}
+                  trailTailMin={trailTailMin}
+                  trailTailExp={trailTailExp}
+                  maxLifetime={maxLifetime}
+                  size={580}
+                />
+              </div>
+              <div className="panel canvas-frame">
+                <p className="panel-title">Wind Vane {hoverPos ? `(x=${hoverPos.x.toFixed(3)}, y=${hoverPos.y.toFixed(3)})` : '(center)'}</p>
+                <WindVane payload={payload} focus={hoverPos} size={580} />
+              </div>
+            </div>
+          ) : (
+            <div className="row">
+              <div className="panel placeholder" style={{ width: 580, height: 580 }}>Wind Map</div>
+              <div className="panel placeholder" style={{ width: 580, height: 580 }}>Wind Vane</div>
+            </div>
+          )}
+        </div>
+        <div className="row">
+          <div className="panel padded file-row" style={{ flex: 1 }}>
             <input
+              className="file-input"
               type="file"
               accept=".tmap,.json"
               onChange={(e) => {
@@ -88,15 +125,15 @@ export default function App() {
                 if (f) handleUpload(f)
               }}
             />
+            {dataset && (
+              <div className="meta">
+                <div>Dataset</div> <div><code>{dataset.datasetId}</code></div>
+                <div>Type</div> <div>{dataset.type}</div>
+                <div>Features</div> <div>{dataset.col_labels?.length ?? 0}</div>
+              </div>
+            )}
           </div>
-          {dataset && (
-            <div style={{ marginBottom: 8 }}>
-              <div>Dataset: <code>{dataset.datasetId}</code></div>
-              <div>Type: {dataset.type}</div>
-              <div>Features: {dataset.col_labels?.length ?? 0}</div>
-            </div>
-          )}
-          <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8, alignItems: 'center' }}>
+          <div className="panel padded controls-grid" style={{ flex: 2 }}>
             <label>Top-K</label>
             <input type="number" min={1} value={topK} onChange={(e) => setTopK(e.target.value)} />
             <label>Grid Res</label>
@@ -123,38 +160,7 @@ export default function App() {
             <label>Max Lifetime</label>
             <input type="number" min={1} max={300} value={maxLifetime} onChange={(e) => setMaxLifetime(Number(e.target.value))} />
           </div>
-          {/* Compute button removed; recompute happens automatically on changes */}
-          {error && <div style={{ color: 'crimson', marginTop: 8 }}>{error}</div>}
-        </div>
-        <div style={{ flex: 1 }}>
-          {payload ? (
-            <div style={{ display: 'flex', gap: 16 }}>
-              <CanvasWind
-                payload={payload}
-                onHover={setHoverPos}
-                showGrid={showGrid}
-                particleCount={particleCount}
-                consistentSpeed={consistentSpeed}
-                speedConstRel={speedConstRel}
-                speedScale={speedScale}
-                tailLength={tailLength}
-                trailTailMin={trailTailMin}
-                trailTailExp={trailTailExp}
-                maxLifetime={maxLifetime}
-                size={600}
-              />
-              <div>
-                <div style={{ marginBottom: 8, fontSize: 13, color: '#666' }}>
-                  Wind Vane {hoverPos ? `(x=${hoverPos.x.toFixed(3)}, y=${hoverPos.y.toFixed(3)})` : '(center)'}
-                </div>
-                <WindVane payload={payload} focus={hoverPos} size={240} />
-              </div>
-            </div>
-          ) : (
-            <div style={{ border: '1px dashed #aaa', width: 600, height: 600, display: 'grid', placeItems: 'center', color: '#888' }}>
-              Choose a .tmap file to visualize
-            </div>
-          )}
+          {error && <div className="hint" style={{ color: '#b91c1c', alignSelf: 'center' }}>{error}</div>}
         </div>
       </div>
     </div>

@@ -1,0 +1,51 @@
+/* Minimal, clean styling for a scientific demo */
+
+:root {
+  --bg: #f9fafb;
+  --panel: #ffffff;
+  --border: #e5e7eb;
+  --text: #111827;
+  --muted: #6b7280;
+  --accent: #2563eb;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+
+.app { max-width: 1280px; margin: 0 auto; padding: 20px 24px; }
+.header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+.title { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: 0.2px; }
+.subtitle { margin: 0; font-size: 13px; color: var(--muted); }
+
+.content { display: flex; flex-direction: column; gap: 24px; align-items: stretch; }
+.main { width: 100%; }
+
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+.panel.padded { padding: 12px; }
+
+.file-row { display: flex; flex-direction: column; gap: 8px; }
+.file-input { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+
+.meta { font-size: 13px; color: var(--muted); display: grid; grid-template-columns: 88px 1fr; gap: 4px 8px; }
+.meta code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: #f3f4f6; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border); color: #374151; }
+
+.controls-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 10px; align-items: center; }
+.controls-grid label { font-size: 13px; color: var(--muted); }
+.controls-grid input[type="number"],
+.controls-grid input[type="text"],
+.controls-grid select { height: 32px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text); }
+.controls-grid input[type="checkbox"] { width: 16px; height: 16px; }
+
+.hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.spacer { height: 8px; }
+
+.placeholder { border: 1px dashed var(--border); color: var(--muted); background: #fff; display: grid; place-items: center; border-radius: 8px; }
+
+.row { display: flex; gap: 16px; }
+.col { display: flex; flex-direction: column; gap: 8px; }
+
+.canvas-frame { padding: 8px; }
+.vane-header { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+
+.panel-title { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--text); }
