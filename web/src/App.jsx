@@ -13,9 +13,10 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [hoverPos, setHoverPos] = useState(null)
+  const [selectedCells, setSelectedCells] = useState([]) // array of {i,j}
   // Interactive config (frontend + backend overrides)
   const [showGrid, setShowGrid] = useState(true)
-  const [particleCount, setParticleCount] = useState(600)
+  const [particleCount, setParticleCount] = useState(1000)
   const [consistentSpeed, setConsistentSpeed] = useState(true)
   const [speedConstRel, setSpeedConstRel] = useState(0.06)
   const [speedScale, setSpeedScale] = useState(1.0)
@@ -74,6 +75,41 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataset?.datasetId, topK, gridRes, maskBufferFactor])
 
+  // Selection handlers
+  function toggleCell(i, j) {
+    setSelectedCells((prev) => {
+      const exists = prev.some((c) => c.i === i && c.j === j)
+      if (exists) return prev.filter((c) => !(c.i === i && c.j === j))
+      return [...prev, { i, j }]
+    })
+  }
+  function setSingleCell(i, j) {
+    setSelectedCells([{ i, j }])
+  }
+  function clearSelection() { setSelectedCells([]) }
+
+  // Keyboard: 'c' clears selection
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'c' || e.key === 'C') clearSelection() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Derive focus for Wind Vane: center of last selected cell, else hover, else center
+  const vaneFocus = (() => {
+    const bbox = payload?.bbox || [0,1,0,1]
+    const [xmin,xmax,ymin,ymax] = bbox
+    const H = payload?.grid_res || 25
+    const W = H
+    if (selectedCells && selectedCells.length > 0) {
+      const { i, j } = selectedCells[selectedCells.length - 1]
+      const x = xmin + (j + 0.5) * (xmax - xmin) / W
+      const y = ymin + (i + 0.5) * (ymax - ymin) / H
+      return { x, y }
+    }
+    return hoverPos || null
+  })()
+
   return (
     <div className="app">
       <div className="header">
@@ -89,6 +125,7 @@ export default function App() {
                 <CanvasWind
                   payload={payload}
                   onHover={setHoverPos}
+                  onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
                   showGrid={showGrid}
                   particleCount={particleCount}
                   consistentSpeed={consistentSpeed}
@@ -99,11 +136,12 @@ export default function App() {
                   trailTailExp={trailTailExp}
                   maxLifetime={maxLifetime}
                   size={580}
+                  selectedCells={selectedCells}
                 />
               </div>
               <div className="panel canvas-frame">
-                <p className="panel-title">Wind Vane {hoverPos ? `(x=${hoverPos.x.toFixed(3)}, y=${hoverPos.y.toFixed(3)})` : '(center)'}</p>
-                <WindVane payload={payload} focus={hoverPos} size={580} />
+                <p className="panel-title">Wind Vane {vaneFocus ? `(x=${vaneFocus.x.toFixed(3)}, y=${vaneFocus.y.toFixed(3)})` : '(center)'}</p>
+                <WindVane payload={payload} focus={vaneFocus} size={580} />
               </div>
             </div>
           ) : (
@@ -159,6 +197,11 @@ export default function App() {
             <input type="number" step="0.1" min={0.5} max={6} value={trailTailExp} onChange={(e) => setTrailTailExp(Number(e.target.value))} />
             <label>Max Lifetime</label>
             <input type="number" min={1} max={300} value={maxLifetime} onChange={(e) => setMaxLifetime(Number(e.target.value))} />
+            <div className="spacer" />
+            <label>Selection</label>
+            <div>
+              <button onClick={clearSelection} style={{ height: 32, padding: '0 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff' }}>Clear (C)</button>
+            </div>
           </div>
           {error && <div className="hint" style={{ color: '#b91c1c', alignSelf: 'center' }}>{error}</div>}
         </div>

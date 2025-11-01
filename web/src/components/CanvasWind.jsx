@@ -34,8 +34,9 @@ function bilinearSample(grid, gx, gy) {
 
 export default function CanvasWind({
   payload,
-  particleCount = 600,
+  particleCount = 1000,
   onHover,
+  onSelectCell,
   showGrid = true,
   consistentSpeed = true,
   speedConstRel = 0.06,
@@ -45,8 +46,15 @@ export default function CanvasWind({
   trailTailExp = 2.0,
   maxLifetime = 200,
   size = 600,
+  selectedCells = [],
 }) {
   const canvasRef = useRef(null)
+  // Keep dynamic props in refs to avoid reinitializing particles on toggle
+  const showGridRef = useRef(!!showGrid)
+  const selectedRef = useRef(selectedCells)
+  // keep selection fresh for the draw loop without resetting particles
+  useEffect(() => { selectedRef.current = selectedCells || [] }, [selectedCells])
+  useEffect(() => { showGridRef.current = !!showGrid }, [showGrid])
 
   const {
     bbox = [0, 1, 0, 1],
@@ -238,7 +246,7 @@ export default function CanvasWind({
       ctx.clearRect(0, 0, Wpx, Hpx)
 
       // Draw grid lines (cell boundaries)
-      if (showGrid) {
+      if (showGridRef.current) {
         ctx.strokeStyle = 'rgba(180,180,180,0.35)'
         ctx.lineWidth = 0.5
         // vertical lines at x boundaries
@@ -257,6 +265,31 @@ export default function CanvasWind({
           ctx.beginPath()
           ctx.moveTo(0, sy)
           ctx.lineTo(Wpx, sy)
+          ctx.stroke()
+        }
+      }
+
+      // Highlight selected grid cells (semi-transparent overlay)
+      if (selectedRef.current && selectedRef.current.length > 0) {
+        ctx.lineWidth = 1.2
+        ctx.strokeStyle = 'rgba(37,99,235,0.7)'
+        ctx.fillStyle = 'rgba(37,99,235,0.10)'
+        for (const cell of selectedRef.current) {
+          const i = Math.max(0, Math.min(H - 1, cell.i|0))
+          const j = Math.max(0, Math.min(W - 1, cell.j|0))
+          const x0 = xmin + (j / W) * (xmax - xmin)
+          const x1 = xmin + ((j + 1) / W) * (xmax - xmin)
+          const y0 = ymin + (i / H) * (ymax - ymin)
+          const y1 = ymin + ((i + 1) / H) * (ymax - ymin)
+          const sx0 = (x0 - xmin) / (xmax - xmin) * Wpx
+          const sx1 = (x1 - xmin) / (xmax - xmin) * Wpx
+          const sy0 = Hpx - (y0 - ymin) / (ymax - ymin) * Hpx
+          const sy1 = Hpx - (y1 - ymin) / (ymax - ymin) * Hpx
+          const w = sx1 - sx0
+          const h = sy0 - sy1
+          ctx.beginPath()
+          ctx.rect(sx0, sy1, w, h)
+          ctx.fill()
           ctx.stroke()
         }
       }
@@ -340,9 +373,25 @@ export default function CanvasWind({
     }
     canvas.addEventListener('mousemove', handleMove)
 
+    // Click handler to select grid cell
+    function handleClick(e) {
+      if (!onSelectCell) return
+      const rect = canvas.getBoundingClientRect()
+      const cx = e.clientX - rect.left
+      const cy = e.clientY - rect.top
+      const x = xmin + (cx / Wpx) * (xmax - xmin)
+      const y = ymin + ((Hpx - cy) / Hpx) * (ymax - ymin)
+      // grid indices
+      const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
+      const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
+      onSelectCell({ i, j, shift: !!e.shiftKey })
+    }
+    canvas.addEventListener('click', handleClick)
+
     return () => {
       cancelAnimationFrame(raf)
       canvas.removeEventListener('mousemove', handleMove)
+      canvas.removeEventListener('click', handleClick)
     }
   }, [bbox, grid_res, uSum, vSum, positions, particleCount])
 
