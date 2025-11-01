@@ -140,8 +140,8 @@ export default function App() {
                 />
               </div>
               <div className="panel canvas-frame">
-                <p className="panel-title">Wind Vane {vaneFocus ? `(x=${vaneFocus.x.toFixed(3)}, y=${vaneFocus.y.toFixed(3)})` : '(center)'}</p>
-                <WindVane payload={payload} focus={vaneFocus} size={580} />
+                <p className="panel-title">Wind Vane {selectedCells.length > 0 ? `(selection: ${selectedCells.length} cells)` : (vaneFocus ? `(x=${vaneFocus.x.toFixed(3)}, y=${vaneFocus.y.toFixed(3)})` : '(center)')}</p>
+                <WindVane payload={payload} focus={vaneFocus} selectedCells={selectedCells} size={580} />
               </div>
             </div>
           ) : (
