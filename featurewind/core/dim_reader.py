@@ -16,8 +16,19 @@ class ProjectionRunner:
         self.points = points
         # self.origPoints = points
 
-        # Convert data to PyTorch tensor with requires_grad=True
-        data = torch.tensor(points, dtype=torch.float32, requires_grad=True)
+        # Choose best available device (CUDA > MPS > CPU)
+        if torch.cuda.is_available():
+            device = torch.device('cuda')
+            print("Using device: CUDA")
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            device = torch.device('mps')
+            print("Using device: MPS")
+        else:
+            device = torch.device('cpu')
+            print("Using device: CPU")
+
+        # Convert data to PyTorch tensor on selected device with requires_grad=True
+        data = torch.tensor(points, dtype=torch.float32, device=device, requires_grad=True)
 
         # Usage for DimReader:
         if self.projection == tsne or (isinstance(self.projection, str) and self.projection.lower() == 'tsne'):
@@ -46,7 +57,7 @@ class ProjectionRunner:
 
         print(f"Step 3/3: Computing gradients for {n_points} points...")
         # Initialize Jacobian matrix: J[2*i:2*i+2, :] = gradients for point i
-        self.jacobian = torch.zeros(2 * n_points, n_features, dtype=torch.float32)
+        self.jacobian = torch.zeros(2 * n_points, n_features, dtype=torch.float32, device=device)
 
         for i in range(len(Y)):
             # Show progress every 10% or every 50 points, whichever is more frequent
@@ -63,10 +74,10 @@ class ProjectionRunner:
             self.jacobian[2*i+1, :] = grad_y
 
         # Convert gradients to NumPy array (backward compatibility)
-        self.grads = torch.stack(grads).detach().numpy()
+        self.grads = torch.stack(grads).detach().cpu().numpy()
         
         # Store Jacobian as NumPy array for easier integration
-        self.jacobian_numpy = self.jacobian.detach().numpy()
+        self.jacobian_numpy = self.jacobian.detach().cpu().numpy()
         print("✓ Tangent map generation completed successfully!")
 
     def get_jacobian_for_point(self, point_idx):

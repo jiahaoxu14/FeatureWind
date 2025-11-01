@@ -3,45 +3,44 @@ import numpy as np
 
 
 def distance_matrix_HD_tensor(dataHDw):
-
+    # Compute pairwise distances using torch on the same device as input
     return torch.cdist(dataHDw, dataHDw)
 
 
 def distance_matrix_2D_tensor(dat2D):
-
     return torch.cdist(dat2D, dat2D)
 
 
-def stress_tensor(distHD, dist2D):  # distHD, dist2D (numpy) -> stress (float)
-    s = ((distHD - dist2D) ** 2).sum() / (distHD ** 2).sum()  # numpy, eliminate sqrt for efficiency
+def stress_tensor(distHD, dist2D):  # distHD, dist2D are tensors
+    s = ((distHD - dist2D) ** 2).sum() / (distHD ** 2).sum()  # eliminate sqrt for efficiency
     return s
 
 
 def mds(dataHDw, n_components=2, n_init=10, max_iter=1000, random_state=101, eps=1e-9, n_jobs=12):
     # we will denote the original distance metric with D
     def mds_stress(d):
-        v = dataHDw - d
-
         return ((dataHDw - d) ** 2).sum()
 
     def create_B(d):
-        d[d == 0.0] = np.inf
+        # Avoid division by zero
+        d = d.clone()
+        d.masked_fill_(d == 0, torch.inf)
         B = dataHDw / d
-        for i in range(len(B)):
-            B[i][i] = 0.0
-
-        diag = -B.sum(axis=0)
-
-        for i in range(len(diag)):
-            B[i][i] = diag[i]
-
-        return (B)
+        # Zero diagonal before computing diag
+        B.fill_diagonal_(0.0)
+        diag = -B.sum(dim=0)
+        # Set diagonal to diag values
+        B = B.clone()
+        for i in range(B.shape[0]):
+            B[i, i] = diag[i]
+        return B
 
     # steps of SMACOF
-    np.random.seed(random_state)
+    # Device follows input tensor
+    device = dataHDw.device
     n, m = dataHDw.shape
-    # choose a random pivot point
-    x_m = torch.tensor(np.random.rand(n, n_components))
+    # Random initialization on the correct device
+    x_m = torch.randn(n, n_components, device=device)
 
     # denote the subspace distance matrix as d
     d = distance_matrix_HD_tensor(x_m)
@@ -56,7 +55,7 @@ def mds(dataHDw, n_components=2, n_init=10, max_iter=1000, random_state=101, eps
 
         d = distance_matrix_HD_tensor(x_min)
         stress_new = mds_stress(d)
-        if stress_old - stress_new < tol:
+        if (stress_old - stress_new) < tol:
             break
         else:
             x_m = x_min

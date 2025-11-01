@@ -48,6 +48,8 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
   - t‑SNE: `featurewind/core/tsne.py`
   - MDS: `featurewind/core/mds_torch.py`
 
+  Acceleration: If a compatible GPU is available, the pipeline runs fully on GPU (CUDA on NVIDIA, or MPS on Apple Silicon). It automatically falls back to CPU when no GPU is detected.
+
 - .tmap format (simplified):
   - `tmap`: list of entries with `domain` (original normalized feature values), `range` (2D position), `tangent` (2×D gradients), `class` (label).
   - `Col_labels`: feature names.
@@ -102,4 +104,3 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
 ## License
 
 This repository contains research/visualization code. See source files for details. If you plan to redistribute or publish derivatives, please include appropriate attribution.
-

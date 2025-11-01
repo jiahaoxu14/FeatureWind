@@ -6,13 +6,11 @@ Computes the entropy H and the probability vector P for a given distance vector 
 This function is used in the process of computing the conditional probabilities in t-SNE.
 '''
 def Hbeta_torch(D, beta=1.0):
+    # Use same device/dtype as inputs
     P = torch.exp(-D.clone() * beta)
-
     sumP = torch.sum(P)
-
     H = torch.log(sumP) + beta * torch.sum(D * P) / sumP
     P = P / sumP
-
     return H, P
 
 
@@ -27,13 +25,14 @@ def x2p_torch(X, tol=1e-5, perplexity=10.0, max_tries = 400, init_beta = None):
     (n, d) = X.shape
 
     X.requires_grad_(True)
+    device, dtype = X.device, X.dtype
 
     sum_X = torch.sum(X*X, 1)
     D = torch.add(torch.add(-2 * torch.mm(X, X.t()), sum_X).t(), sum_X)
 
-    P = torch.zeros(n, n)
-    beta = torch.ones(n, 1)
-    logU = torch.log(torch.tensor([perplexity]))
+    P = torch.zeros(n, n, device=device, dtype=dtype)
+    beta = torch.ones(n, 1, device=device, dtype=dtype)
+    logU = torch.log(torch.tensor([perplexity], device=device, dtype=dtype))
     n_list = [i for i in range(n)]
 
     if init_beta is not None:
@@ -57,7 +56,8 @@ def x2p_torch(X, tol=1e-5, perplexity=10.0, max_tries = 400, init_beta = None):
         # Evaluate whether the perplexity is within tolerance
         Hdiff = H - logU
         tries = 0
-        while torch.abs(Hdiff) > tol and tries < max_tries:
+        # Use .item() to extract scalar for comparison
+        while torch.abs(Hdiff).item() > tol and tries < max_tries:
 
             # If not, increase or decrease precision
             if Hdiff > 0:
@@ -125,16 +125,17 @@ def tsne(X, no_dims=2, maxIter = 999, initial_dims=50, perplexity=30.0, save_par
     # Initialize variables
     # X = pca_torch(X, initial_dims)
     (n, d) = X.shape
+    device, dtype = X.device, X.dtype
     max_iter = maxIter
     initial_momentum = 0.5
     final_momentum = 0.8
     eta = 500
     min_gain = 0.01
 
-    Y = torch.from_numpy(np.random.randn(n, no_dims)) # randomly initialize embedding
-    dY = torch.zeros(n, no_dims) # gradient of the cost function with respect to Y
-    iY = torch.zeros(n, no_dims) # Momentum term for updating Y
-    gains = torch.ones(n, no_dims) # indivitual gains for each dimension to accelerate convergence
+    Y = torch.randn(n, no_dims, device=device, dtype=dtype)  # randomly initialize embedding
+    dY = torch.zeros(n, no_dims, device=device, dtype=dtype) # gradient of the cost function with respect to Y
+    iY = torch.zeros(n, no_dims, device=device, dtype=dtype) # Momentum term for updating Y
+    gains = torch.ones(n, no_dims, device=device, dtype=dtype) # individual gains for each dimension to accelerate convergence
 
 
     if initY is not None:
@@ -147,7 +148,7 @@ def tsne(X, no_dims=2, maxIter = 999, initial_dims=50, perplexity=30.0, save_par
     P = P + P.t()
     P = P / torch.sum(P)
     P = P * 4.    # early exaggeration
-    P = torch.max(P, torch.tensor([1e-21]))
+    P = torch.max(P, torch.tensor([1e-21], device=device, dtype=dtype))
 
     # Run iterations
     for iter in range(max_iter):
@@ -158,7 +159,7 @@ def tsne(X, no_dims=2, maxIter = 999, initial_dims=50, perplexity=30.0, save_par
         num = 1. / (1. + torch.add(torch.add(num, sum_Y).t(), sum_Y))
         num[range(n), range(n)] = 0.
         Q = num / torch.sum(num)
-        Q = torch.max(Q, torch.tensor([1e-12]))
+        Q = torch.max(Q, torch.tensor([1e-12], device=device, dtype=dtype))
 
         # Compute gradient
         PQ = P - Q
@@ -171,7 +172,7 @@ def tsne(X, no_dims=2, maxIter = 999, initial_dims=50, perplexity=30.0, save_par
         else:
             momentum = final_momentum
 
-        gains = (gains + 0.2) * ((dY > 0.) != (iY > 0.)).double() + (gains * 0.8) * ((dY > 0.) == (iY > 0.)).double()
+        gains = (gains + 0.2) * ((dY > 0.) != (iY > 0.)).float() + (gains * 0.8) * ((dY > 0.) == (iY > 0.)).float()
         gains[gains < min_gain] = min_gain
         iY = momentum * iY - eta * (gains * dY)
         Y = Y + iY
