@@ -173,6 +173,7 @@ def compute():
     feature_index = body.get("featureIndex")
     grid_res = int(body.get("gridRes") or getattr(fw_config, "DEFAULT_GRID_RES", 25))
     include_raw = bool(body.get("includeRawGradients", False))
+    cfg_overrides = body.get("config") or {}
 
     if not dataset_id or dataset_id not in DATASETS:
         return jsonify({"error": "Unknown dataset_id"}), 404
@@ -251,22 +252,38 @@ def compute():
         top_k_indices = _np.array(tk_indices).tolist()
         selection_obj = {"topKIndices": top_k_indices}
 
-    # Build grids (send-all includes per-feature grids regardless of selection)
-    (
-        interp_u_sum,
-        interp_v_sum,
-        interp_argmax,
-        grid_x,
-        grid_y,
-        grid_u_feats,
-        grid_v_feats,
-        cell_dominant_features,
-        grid_u_all_feats,
-        grid_v_all_feats,
-        cell_centers_x,
-        cell_centers_y,
-        final_mask,
-    ) = fw_grid.build_grids(all_positions, grid_res, top_k_indices, all_grad_vectors, col_labels, output_dir=os.path.dirname(path))
+    # Apply per-request config overrides safely
+    orig_MASK_BUFFER_FACTOR = getattr(fw_config, "MASK_BUFFER_FACTOR", 0.2)
+    try:
+        if isinstance(cfg_overrides, dict):
+            if "maskBufferFactor" in cfg_overrides:
+                try:
+                    fw_config.MASK_BUFFER_FACTOR = float(cfg_overrides["maskBufferFactor"])  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+        # Build grids (send-all includes per-feature grids regardless of selection)
+        (
+            interp_u_sum,
+            interp_v_sum,
+            interp_argmax,
+            grid_x,
+            grid_y,
+            grid_u_feats,
+            grid_v_feats,
+            cell_dominant_features,
+            grid_u_all_feats,
+            grid_v_all_feats,
+            cell_centers_x,
+            cell_centers_y,
+            final_mask,
+        ) = fw_grid.build_grids(all_positions, grid_res, top_k_indices, all_grad_vectors, col_labels, output_dir=os.path.dirname(path))
+    finally:
+        # Restore global to avoid cross-request bleed
+        try:
+            fw_config.MASK_BUFFER_FACTOR = orig_MASK_BUFFER_FACTOR  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     # Colors: simple per-feature palette
     palette = list(getattr(fw_config, "GLASBEY_COLORS", []))

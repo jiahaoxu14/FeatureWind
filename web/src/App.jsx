@@ -13,6 +13,17 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [hoverPos, setHoverPos] = useState(null)
+  // Interactive config (frontend + backend overrides)
+  const [showGrid, setShowGrid] = useState(true)
+  const [particleCount, setParticleCount] = useState(600)
+  const [consistentSpeed, setConsistentSpeed] = useState(true)
+  const [speedConstRel, setSpeedConstRel] = useState(0.06)
+  const [speedScale, setSpeedScale] = useState(1.0)
+  const [tailLength, setTailLength] = useState(10)
+  const [trailTailMin, setTrailTailMin] = useState(0.10)
+  const [trailTailExp, setTrailTailExp] = useState(2.0)
+  const [maxLifetime, setMaxLifetime] = useState(200)
+  const [maskBufferFactor, setMaskBufferFactor] = useState(0.2)
 
   async function handleUpload() {
     if (!file) return
@@ -35,6 +46,7 @@ export default function App() {
         algorithm: algo,
         topK: Number(topK),
         gridRes: Number(gridRes),
+        config: { maskBufferFactor: Number(maskBufferFactor) }
       })
       setPayload(res)
     } catch (e) {
@@ -60,7 +72,7 @@ export default function App() {
               <div>Features: {dataset.col_labels?.length ?? 0}</div>
             </div>
           )}
-          <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8, alignItems: 'center' }}>
             <label>Algorithm</label>
             <select value={algo} onChange={(e) => setAlgo(e.target.value)}>
               <option value="tsne">t-SNE</option>
@@ -70,6 +82,27 @@ export default function App() {
             <input type="number" min={1} value={topK} onChange={(e) => setTopK(e.target.value)} />
             <label>Grid Res</label>
             <input type="number" min={8} max={200} value={gridRes} onChange={(e) => setGridRes(e.target.value)} />
+            <label>Mask Buffer</label>
+            <input type="number" step="0.05" min={0} max={2} value={maskBufferFactor}
+                   onChange={(e) => setMaskBufferFactor(e.target.value)} />
+            <label>Show Grid</label>
+            <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+            <label>Particles</label>
+            <input type="number" min={50} max={5000} value={particleCount} onChange={(e) => setParticleCount(Number(e.target.value))} />
+            <label>Consistent Speed</label>
+            <input type="checkbox" checked={consistentSpeed} onChange={(e) => setConsistentSpeed(e.target.checked)} />
+            <label>Speed (const rel)</label>
+            <input type="number" step="0.01" min={0.0} max={1.0} value={speedConstRel} onChange={(e) => setSpeedConstRel(Number(e.target.value))} />
+            <label>Speed Scale</label>
+            <input type="number" step="0.1" min={0.1} max={10} value={speedScale} onChange={(e) => setSpeedScale(Number(e.target.value))} />
+            <label>Tail Length</label>
+            <input type="number" min={2} max={60} value={tailLength} onChange={(e) => setTailLength(Number(e.target.value))} />
+            <label>Tail Min Alpha</label>
+            <input type="number" step="0.05" min={0} max={1} value={trailTailMin} onChange={(e) => setTrailTailMin(Number(e.target.value))} />
+            <label>Tail Exp</label>
+            <input type="number" step="0.1" min={0.5} max={6} value={trailTailExp} onChange={(e) => setTrailTailExp(Number(e.target.value))} />
+            <label>Max Lifetime</label>
+            <input type="number" min={1} max={300} value={maxLifetime} onChange={(e) => setMaxLifetime(Number(e.target.value))} />
           </div>
           <div style={{ marginTop: 8 }}>
             <button onClick={handleCompute} disabled={!dataset || busy}>{busy ? 'Computing…' : 'Compute'}</button>
@@ -79,7 +112,19 @@ export default function App() {
         <div style={{ flex: 1 }}>
           {payload ? (
             <div style={{ display: 'flex', gap: 16 }}>
-              <CanvasWind payload={payload} onHover={setHoverPos} />
+              <CanvasWind
+                payload={payload}
+                onHover={setHoverPos}
+                showGrid={showGrid}
+                particleCount={particleCount}
+                consistentSpeed={consistentSpeed}
+                speedConstRel={speedConstRel}
+                speedScale={speedScale}
+                tailLength={tailLength}
+                trailTailMin={trailTailMin}
+                trailTailExp={trailTailExp}
+                maxLifetime={maxLifetime}
+              />
               <div>
                 <div style={{ marginBottom: 8, fontSize: 13, color: '#666' }}>
                   Wind Vane {hoverPos ? `(x=${hoverPos.x.toFixed(3)}, y=${hoverPos.y.toFixed(3)})` : '(center)'}

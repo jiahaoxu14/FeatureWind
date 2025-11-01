@@ -32,7 +32,19 @@ function bilinearSample(grid, gx, gy) {
   return top * (1 - b) + bot * b
 }
 
-export default function CanvasWind({ payload, particleCount = 600, onHover, showGrid = true }) {
+export default function CanvasWind({
+  payload,
+  particleCount = 600,
+  onHover,
+  showGrid = true,
+  consistentSpeed = true,
+  speedConstRel = 0.06,
+  speedScale = 1.0,
+  tailLength = 10,
+  trailTailMin = 0.10,
+  trailTailExp = 2.0,
+  maxLifetime = 200,
+}) {
   const canvasRef = useRef(null)
 
   const {
@@ -88,13 +100,13 @@ export default function CanvasWind({ payload, particleCount = 600, onHover, show
     const W = grid_res, H = grid_res
 
     // Trail configuration (mirrors defaults in featurewind/config.py)
-    const TAIL_LENGTH = 10
-    const TRAIL_TAIL_MIN = 0.10
-    const TRAIL_TAIL_EXP = 2.0
-    const MAX_LIFETIME = 25
-    const CONSISTENT_SPEED = true
-    const SPEED_CONST_REL = 0.06 // fraction of plot width per second (approx Python)
-    const SPEED_SCALE = 1.0 // used when CONSISTENT_SPEED=false
+    const TAIL_LENGTH = Math.max(1, Math.floor(tailLength))
+    const TRAIL_TAIL_MIN = Math.max(0, Math.min(1, trailTailMin))
+    const TRAIL_TAIL_EXP = Math.max(0.5, trailTailExp)
+    const MAX_LIFETIME = Math.max(1, Math.floor(maxLifetime))
+    const CONSISTENT_SPEED = !!consistentSpeed
+    const SPEED_CONST_REL = speedConstRel // fraction of plot width per second
+    const SPEED_SCALE = speedScale // used when CONSISTENT_SPEED=false
 
     // Optional mask helpers
     let hasMask = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
@@ -146,21 +158,34 @@ export default function CanvasWind({ payload, particleCount = 600, onHover, show
     }
 
     function step(dt) {
+      const MASK_THRESHOLD = 1e-6
+      function isMaskedAt(x, y) {
+        // Convert to grid indices
+        const gx = (x - xmin) / (xmax - xmin) * (W - 1)
+        const gy = (y - ymin) / (ymax - ymin) * (H - 1)
+        const mi = Math.max(0, Math.min(H - 1, Math.round(gy)))
+        const mj = Math.max(0, Math.min(W - 1, Math.round(gx)))
+        // 1) Use explicit unmasked grid when available
+        if (hasMask) {
+          return !unmasked[mi][mj]
+        }
+        // 2) Fallback: use field magnitude threshold
+        const u = bilinearSample(uSum, gx, gy)
+        const v = bilinearSample(vSum, gx, gy)
+        if (Math.hypot(u, v) <= MASK_THRESHOLD) return true
+        // 3) Last resort: dominance grid -1 means masked
+        if (dominant && dominant[mi] && typeof dominant[mi][mj] === 'number') {
+          return dominant[mi][mj] === -1
+        }
+        return false
+      }
+
       for (const p of particles) {
         const [gx, gy] = worldToGrid(p.x, p.y)
         let u = bilinearSample(uSum, gx, gy)
         let v = bilinearSample(vSum, gx, gy)
 
-        // Apply mask: zero velocity in masked regions
-        if (hasMask) {
-          const mi = Math.max(0, Math.min(H - 1, Math.round(gy)))
-          const mj = Math.max(0, Math.min(W - 1, Math.round(gx)))
-          if (!unmasked[mi][mj]) {
-            u = 0; v = 0
-          }
-        }
-
-        // Consistent speed option
+        // Consistent speed option (like Python's CONSISTENT_PARTICLE_SPEED)
         if (CONSISTENT_SPEED) {
           const mag = Math.hypot(u, v)
           if (mag > 1e-9) {
@@ -176,18 +201,24 @@ export default function CanvasWind({ payload, particleCount = 600, onHover, show
           v *= SPEED_SCALE
         }
 
+        // Integrate position
         p.x += u * dt
         p.y += v * dt
         p.age += 1
-        // shift history (simple but fine for small tails)
+
+        // Shift history
         for (let t = TAIL_LENGTH; t >= 1; t--) {
           p.hist[t].x = p.hist[t - 1].x
           p.hist[t].y = p.hist[t - 1].y
         }
         p.hist[0].x = p.x
         p.hist[0].y = p.y
-        // respawn if out of bounds or over age
-        if (p.x < xmin || p.x > xmax || p.y < ymin || p.y > ymax || p.age > MAX_LIFETIME) {
+
+        // Respawn if out of bounds, over-age, or in masked region
+        const outOfBounds = p.x < xmin || p.x > xmax || p.y < ymin || p.y > ymax
+        const overAge = p.age > MAX_LIFETIME
+        const inMasked = isMaskedAt(p.x, p.y)
+        if (outOfBounds || overAge || inMasked) {
           const { x: nx, y: ny } = randomSpawn()
           p.x = nx
           p.y = ny
