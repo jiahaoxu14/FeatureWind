@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { uploadFile, compute } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
 import WindVane from './components/WindVane.jsx'
@@ -6,7 +6,6 @@ import WindVane from './components/WindVane.jsx'
 export default function App() {
   const [file, setFile] = useState(null)
   const [dataset, setDataset] = useState(null)
-  const [algo, setAlgo] = useState('tsne')
   const [topK, setTopK] = useState(5)
   const [gridRes, setGridRes] = useState(25)
   const [payload, setPayload] = useState(null)
@@ -25,25 +24,32 @@ export default function App() {
   const [maxLifetime, setMaxLifetime] = useState(200)
   const [maskBufferFactor, setMaskBufferFactor] = useState(0.2)
 
-  async function handleUpload() {
-    if (!file) return
+  async function handleUpload(selected) {
+    const f = selected || file
+    if (!f) return
     setError('')
     try {
-      const res = await uploadFile(file)
+      // Only accept .tmap or .json uploads
+      const lower = (f.name || '').toLowerCase()
+      if (!(lower.endsWith('.tmap') || lower.endsWith('.json'))) {
+        setError('Please upload a .tmap (or JSON with tmap structure).')
+        return
+      }
+      const res = await uploadFile(f)
       setDataset(res)
     } catch (e) {
       setError(e.message)
     }
   }
 
-  async function handleCompute() {
-    if (!dataset) return
+  async function handleCompute(forDatasetId) {
+    const dsId = forDatasetId || (dataset && dataset.datasetId)
+    if (!dsId) return
     setBusy(true)
     setError('')
     try {
       const res = await compute({
-        dataset_id: dataset.datasetId,
-        algorithm: algo,
+        dataset_id: dsId,
         topK: Number(topK),
         gridRes: Number(gridRes),
         config: { maskBufferFactor: Number(maskBufferFactor) }
@@ -56,14 +62,32 @@ export default function App() {
     }
   }
 
+  // Auto compute whenever dataset or server-affecting options change
+  useEffect(() => {
+    const dsId = dataset && dataset.datasetId
+    if (!dsId) return
+    const t = setTimeout(() => {
+      handleCompute(dsId)
+    }, 200) // small debounce to avoid rapid recomputes while typing
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset?.datasetId, topK, gridRes, maskBufferFactor])
+
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', padding: 16 }}>
       <h2>FeatureWind Web (MVP)</h2>
       <div style={{ display: 'flex', gap: 24 }}>
         <div style={{ minWidth: 320 }}>
           <div style={{ marginBottom: 8 }}>
-            <input type="file" accept=".tmap,.json,.csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-            <button onClick={handleUpload} disabled={!file}>Upload</button>
+            <input
+              type="file"
+              accept=".tmap,.json"
+              onChange={(e) => {
+                const f = e.target.files?.[0] || null
+                setFile(f)
+                if (f) handleUpload(f)
+              }}
+            />
           </div>
           {dataset && (
             <div style={{ marginBottom: 8 }}>
@@ -73,11 +97,6 @@ export default function App() {
             </div>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8, alignItems: 'center' }}>
-            <label>Algorithm</label>
-            <select value={algo} onChange={(e) => setAlgo(e.target.value)}>
-              <option value="tsne">t-SNE</option>
-              <option value="mds">MDS</option>
-            </select>
             <label>Top-K</label>
             <input type="number" min={1} value={topK} onChange={(e) => setTopK(e.target.value)} />
             <label>Grid Res</label>
@@ -104,9 +123,7 @@ export default function App() {
             <label>Max Lifetime</label>
             <input type="number" min={1} max={300} value={maxLifetime} onChange={(e) => setMaxLifetime(Number(e.target.value))} />
           </div>
-          <div style={{ marginTop: 8 }}>
-            <button onClick={handleCompute} disabled={!dataset || busy}>{busy ? 'Computing…' : 'Compute'}</button>
-          </div>
+          {/* Compute button removed; recompute happens automatically on changes */}
           {error && <div style={{ color: 'crimson', marginTop: 8 }}>{error}</div>}
         </div>
         <div style={{ flex: 1 }}>
@@ -124,17 +141,18 @@ export default function App() {
                 trailTailMin={trailTailMin}
                 trailTailExp={trailTailExp}
                 maxLifetime={maxLifetime}
+                size={600}
               />
               <div>
                 <div style={{ marginBottom: 8, fontSize: 13, color: '#666' }}>
                   Wind Vane {hoverPos ? `(x=${hoverPos.x.toFixed(3)}, y=${hoverPos.y.toFixed(3)})` : '(center)'}
                 </div>
-                <WindVane payload={payload} focus={hoverPos} />
+                <WindVane payload={payload} focus={hoverPos} size={240} />
               </div>
             </div>
           ) : (
-            <div style={{ border: '1px dashed #aaa', width: 800, height: 600, display: 'grid', placeItems: 'center', color: '#888' }}>
-              Upload a dataset and click Compute
+            <div style={{ border: '1px dashed #aaa', width: 600, height: 600, display: 'grid', placeItems: 'center', color: '#888' }}>
+              Choose a .tmap file to visualize
             </div>
           )}
         </div>

@@ -44,6 +44,7 @@ export default function CanvasWind({
   trailTailMin = 0.10,
   trailTailExp = 2.0,
   maxLifetime = 200,
+  size = 600,
 }) {
   const canvasRef = useRef(null)
 
@@ -348,9 +349,9 @@ export default function CanvasWind({
   return (
     <canvas
       ref={canvasRef}
-      width={800}
-      height={600}
-      style={{ width: '800px', height: '600px', border: '1px solid #ddd' }}
+      width={size}
+      height={size}
+      style={{ width: `${size}px`, height: `${size}px`, border: '1px solid #ddd' }}
     />
   )
 }
