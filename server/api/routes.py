@@ -192,6 +192,11 @@ def compute():
     # Load and construct base arrays
     if dtype == "tmap":
         valid_points, all_grad_vectors, all_positions, col_labels = fw_data.preprocess_tangent_map(path)
+        # Extract per-point labels from tmap entries for frontend marker shapes
+        try:
+            point_labels = [p.tmap_label for p in valid_points]
+        except Exception:
+            point_labels = None
     elif dtype == "csv":
         # Read CSV with potential headers, normalize columns, then compute projection & grads
         points, col_labels = _read_csv_points_with_headers(path)
@@ -214,6 +219,13 @@ def compute():
             if hasattr(Y, "numpy"):
                 Y = Y.numpy()
         all_positions = Y
+
+        # CSV path typically lacks per-point labels; default to a single label
+        try:
+            n_pts = int(getattr(all_positions, "shape", [0])[0])
+            point_labels = [0] * n_pts
+        except Exception:
+            point_labels = None
 
         # Grads: (N, 2, M) -> (N, M, 2)
         import numpy as _np
@@ -383,6 +395,8 @@ def compute():
         "vAll": tolist(grid_v_all_feats),
         "dominant": tolist(cell_dominant_features),
         "colors": colors,
+        # Per-point labels (for marker shapes). Strings or numbers as provided.
+        **({"point_labels": tolist(point_labels)} if point_labels is not None else {}),
         # Return family assignments when available
         **({"family_assignments": tolist(family_assignments)} if 'family_assignments' in locals() else {}),
         "global_sum_magnitude_max": global_sum_magnitude_max,

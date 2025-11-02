@@ -63,6 +63,7 @@ export default function CanvasWind({
     uAll = [],
     vAll = [],
     positions = [],
+    point_labels = null,
     selection = {},
     dominant = null,
     unmasked = null,
@@ -296,13 +297,131 @@ export default function CanvasWind({
         }
       }
 
-      // Optional: draw base points lightly
-      ctx.fillStyle = 'rgba(120,120,120,0.35)'
-      for (const [x, y] of positions) {
-        const [sx, sy] = worldToScreen(x, y)
+      // Optional: draw base points with shapes per label (like Python)
+      // Shape cycle mirrors matplotlib-style markers used in the original
+      const SHAPES = ['o','s','^','D','v','<','>','p','*','h','H','+','x']
+      // Bigger, light-gray markers for better visibility
+      const shapeSize = 3.2
+      ctx.fillStyle = '#d9d9d9'
+      // Dark gray/near-black borders for all points
+      ctx.strokeStyle = '#222222'
+      ctx.lineWidth = 0.8
+
+      function drawRegularPolygon(cx, cy, radius, sides, rotation = 0) {
+        if (sides < 3) return
         ctx.beginPath()
-        ctx.arc(sx, sy, 1.6, 0, Math.PI * 2)
+        for (let i = 0; i < sides; i++) {
+          const a = rotation + (i * 2 * Math.PI) / sides
+          const x = cx + radius * Math.cos(a)
+          const y = cy + radius * Math.sin(a)
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+        }
+        ctx.closePath()
         ctx.fill()
+        ctx.stroke()
+      }
+      function drawDiamond(cx, cy, r) {
+        ctx.beginPath()
+        ctx.moveTo(cx, cy - r * 1.2)
+        ctx.lineTo(cx - r * 1.2, cy)
+        ctx.lineTo(cx, cy + r * 1.2)
+        ctx.lineTo(cx + r * 1.2, cy)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+      }
+      function drawTriangle(cx, cy, r, orientation) {
+        ctx.beginPath()
+        if (orientation === 'up') {
+          ctx.moveTo(cx, cy - r * 1.3)
+          ctx.lineTo(cx - r * 1.1, cy + r * 0.9)
+          ctx.lineTo(cx + r * 1.1, cy + r * 0.9)
+        } else if (orientation === 'down') {
+          ctx.moveTo(cx, cy + r * 1.3)
+          ctx.lineTo(cx - r * 1.1, cy - r * 0.9)
+          ctx.lineTo(cx + r * 1.1, cy - r * 0.9)
+        } else if (orientation === 'left') {
+          ctx.moveTo(cx - r * 1.3, cy)
+          ctx.lineTo(cx + r * 0.9, cy - r * 1.1)
+          ctx.lineTo(cx + r * 0.9, cy + r * 1.1)
+        } else {
+          // right
+          ctx.moveTo(cx + r * 1.3, cy)
+          ctx.lineTo(cx - r * 0.9, cy - r * 1.1)
+          ctx.lineTo(cx - r * 0.9, cy + r * 1.1)
+        }
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+      }
+      function drawStar(cx, cy, r, points = 5) {
+        const inner = r * 0.5
+        ctx.beginPath()
+        for (let i = 0; i < points * 2; i++) {
+          const angle = (i * Math.PI) / points - Math.PI / 2
+          const rad = (i % 2 === 0) ? r : inner
+          const x = cx + Math.cos(angle) * rad
+          const y = cy + Math.sin(angle) * rad
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+        }
+        ctx.closePath(); ctx.fill(); ctx.stroke()
+      }
+      function drawPlus(cx, cy, r) {
+        ctx.beginPath()
+        ctx.moveTo(cx - r, cy)
+        ctx.lineTo(cx + r, cy)
+        ctx.moveTo(cx, cy - r)
+        ctx.lineTo(cx, cy + r)
+        ctx.stroke()
+      }
+      function drawCross(cx, cy, r) {
+        ctx.beginPath()
+        ctx.moveTo(cx - r, cy - r)
+        ctx.lineTo(cx + r, cy + r)
+        ctx.moveTo(cx + r, cy - r)
+        ctx.lineTo(cx - r, cy + r)
+        ctx.stroke()
+      }
+      function drawMarker(cx, cy, shape, r) {
+        switch (shape) {
+          case 'o':
+            ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break
+          case 's':
+            ctx.beginPath(); ctx.rect(cx - r, cy - r, 2 * r, 2 * r); ctx.fill(); ctx.stroke(); break
+          case '^': drawTriangle(cx, cy, r, 'up'); break
+          case 'v': drawTriangle(cx, cy, r, 'down'); break
+          case '<': drawTriangle(cx, cy, r, 'left'); break
+          case '>': drawTriangle(cx, cy, r, 'right'); break
+          case 'D': drawDiamond(cx, cy, r); break
+          case 'p': drawRegularPolygon(cx, cy, r * 1.1, 5); break
+          case 'h': drawRegularPolygon(cx, cy, r * 1.1, 6); break
+          case 'H': drawRegularPolygon(cx, cy, r * 1.15, 6, Math.PI / 6); break
+          case '*': drawStar(cx, cy, r * 1.2); break
+          case '+': drawPlus(cx, cy, r * 1.2); break
+          case 'x': drawCross(cx, cy, r * 1.2); break
+          default:
+            ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); break
+        }
+      }
+
+      if (Array.isArray(point_labels) && point_labels.length === positions.length) {
+        // Build stable mapping value→index using sorted unique labels
+        const unique = Array.from(new Set(point_labels.map((l) => String(l))))
+        unique.sort()
+        const map = new Map(unique.map((val, idx) => [val, idx]))
+        for (let idx = 0; idx < positions.length; idx++) {
+          const [x, y] = positions[idx]
+          const [sx, sy] = worldToScreen(x, y)
+          const li = map.get(String(point_labels[idx])) || 0
+          const shape = SHAPES[li % SHAPES.length]
+          drawMarker(sx, sy, shape, shapeSize)
+        }
+      } else {
+        // Fallback: simple circles (larger, gray) with border
+        for (const [x, y] of positions) {
+          const [sx, sy] = worldToScreen(x, y)
+          ctx.beginPath(); ctx.arc(sx, sy, shapeSize, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+        }
       }
 
       // Draw trails as fading line segments (colored by feature family)
@@ -434,6 +553,7 @@ export default function CanvasWind({
     uSum,
     vSum,
     positions,
+    point_labels,
     colors,
     dominant,
     featureIndices,

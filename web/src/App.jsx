@@ -30,6 +30,21 @@ export default function App() {
   // Manual feature selection (overrides Top-K for visualization when non-empty)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
 
+  // Pending UI values (change immediately in controls, apply on Update)
+  const [pTopK, setPTopK] = useState(topK)
+  const [pGridRes, setPGridRes] = useState(gridRes)
+  const [pMaskBufferFactor, setPMaskBufferFactor] = useState(maskBufferFactor)
+  const [pShowGrid, setPShowGrid] = useState(showGrid)
+  const [pShowHull, setPShowHull] = useState(showHull)
+  const [pParticleCount, setPParticleCount] = useState(particleCount)
+  const [pConsistentSpeed, setPConsistentSpeed] = useState(consistentSpeed)
+  const [pSpeedConstRel, setPSpeedConstRel] = useState(speedConstRel)
+  const [pSpeedScale, setPSpeedScale] = useState(speedScale)
+  const [pTailLength, setPTailLength] = useState(tailLength)
+  const [pTrailTailMin, setPTrailTailMin] = useState(trailTailMin)
+  const [pTrailTailExp, setPTrailTailExp] = useState(trailTailExp)
+  const [pMaxLifetime, setPMaxLifetime] = useState(maxLifetime)
+
   // Clamp manual feature selection when payload changes (e.g., new dataset)
   useEffect(() => {
     const n = (payload?.col_labels?.length) || 0
@@ -51,7 +66,7 @@ export default function App() {
       const res = await uploadFile(f)
       // Default Top-K to all features in the dataset
       const m = Array.isArray(res.col_labels) ? res.col_labels.length : 0
-      if (m > 0) setTopK(m)
+      if (m > 0) { setTopK(m); setPTopK(m) }
       setDataset(res)
     } catch (e) {
       setError(e.message)
@@ -84,9 +99,9 @@ export default function App() {
     if (!dsId) return
     const t = setTimeout(() => {
       handleCompute(dsId)
-    }, 200) // small debounce to avoid rapid recomputes while typing
+    }, 200)
     return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Only recompute when applied values change or dataset changes
   }, [dataset?.datasetId, topK, gridRes, maskBufferFactor])
 
   // Selection handlers
@@ -275,10 +290,10 @@ export default function App() {
                 <>
                   <label>Top-K</label>
                   <div className="slider-row">
-                    <input type="range" min={1} max={maxFeatures} step={1} value={topK}
+                    <input type="range" min={1} max={maxFeatures} step={1} value={pTopK}
                       disabled={selectedFeatureIndices.length > 0}
-                      onChange={(e) => setTopK(Math.max(1, Number(e.target.value)))} />
-                    <span className="control-val">{topK}</span>
+                      onChange={(e) => setPTopK(Math.max(1, Number(e.target.value)))} />
+                    <span className="control-val">{pTopK}</span>
                   </div>
                 </>
               )
@@ -288,80 +303,106 @@ export default function App() {
 
             <label>Grid Res</label>
             <div className="slider-row">
-              <input type="range" min={8} max={200} step={1} value={gridRes}
-                onChange={(e) => setGridRes(Number(e.target.value))} />
-              <span className="control-val">{gridRes}</span>
+              <input type="range" min={8} max={200} step={1} value={pGridRes}
+                onChange={(e) => setPGridRes(Number(e.target.value))} />
+              <span className="control-val">{pGridRes}</span>
             </div>
 
             <label>Mask Buffer</label>
             <div className="slider-row">
-              <input type="range" min={0} max={2} step={0.05} value={maskBufferFactor}
-                onChange={(e) => setMaskBufferFactor(Number(e.target.value))} />
-              <span className="control-val">{maskBufferFactor.toFixed(2)}</span>
+              <input type="range" min={0} max={2} step={0.05} value={pMaskBufferFactor}
+                onChange={(e) => setPMaskBufferFactor(Number(e.target.value))} />
+              <span className="control-val">{pMaskBufferFactor.toFixed(2)}</span>
             </div>
 
             <label>Show Grid</label>
-            <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+            <input type="checkbox" checked={pShowGrid} onChange={(e) => setPShowGrid(e.target.checked)} />
 
             <label>Show Convex Hull</label>
-            <input type="checkbox" checked={showHull} onChange={(e) => setShowHull(e.target.checked)} />
+            <input type="checkbox" checked={pShowHull} onChange={(e) => setPShowHull(e.target.checked)} />
 
             <label>Particles</label>
             <div className="slider-row">
-              <input type="range" min={50} max={5000} step={50} value={particleCount}
-                onChange={(e) => setParticleCount(Number(e.target.value))} />
-              <span className="control-val">{particleCount}</span>
+              <input type="range" min={50} max={5000} step={50} value={pParticleCount}
+                onChange={(e) => setPParticleCount(Number(e.target.value))} />
+              <span className="control-val">{pParticleCount}</span>
             </div>
 
             <label>Consistent Speed</label>
-            <input type="checkbox" checked={consistentSpeed} onChange={(e) => setConsistentSpeed(e.target.checked)} />
+            <input type="checkbox" checked={pConsistentSpeed} onChange={(e) => setPConsistentSpeed(e.target.checked)} />
 
             <label>Speed (const rel)</label>
             <div className="slider-row">
-              <input type="range" min={0} max={0.2} step={0.005} value={speedConstRel}
-                onChange={(e) => setSpeedConstRel(Number(e.target.value))} />
-              <span className="control-val">{speedConstRel.toFixed(3)}</span>
+              <input type="range" min={0} max={0.2} step={0.005} value={pSpeedConstRel}
+                onChange={(e) => setPSpeedConstRel(Number(e.target.value))} />
+              <span className="control-val">{pSpeedConstRel.toFixed(3)}</span>
             </div>
 
             <label>Speed Scale</label>
             <div className="slider-row">
-              <input type="range" min={0.1} max={10} step={0.1} value={speedScale}
-                onChange={(e) => setSpeedScale(Number(e.target.value))} />
-              <span className="control-val">{speedScale.toFixed(1)}</span>
+              <input type="range" min={0.1} max={10} step={0.1} value={pSpeedScale}
+                onChange={(e) => setPSpeedScale(Number(e.target.value))} />
+              <span className="control-val">{pSpeedScale.toFixed(1)}</span>
             </div>
 
             <label>Tail Length</label>
             <div className="slider-row">
-              <input type="range" min={2} max={60} step={1} value={tailLength}
-                onChange={(e) => setTailLength(Number(e.target.value))} />
-              <span className="control-val">{tailLength}</span>
+              <input type="range" min={2} max={60} step={1} value={pTailLength}
+                onChange={(e) => setPTailLength(Number(e.target.value))} />
+              <span className="control-val">{pTailLength}</span>
             </div>
 
             <label>Tail Min Alpha</label>
             <div className="slider-row">
-              <input type="range" min={0} max={1} step={0.01} value={trailTailMin}
-                onChange={(e) => setTrailTailMin(Number(e.target.value))} />
-              <span className="control-val">{trailTailMin.toFixed(2)}</span>
+              <input type="range" min={0} max={1} step={0.01} value={pTrailTailMin}
+                onChange={(e) => setPTrailTailMin(Number(e.target.value))} />
+              <span className="control-val">{pTrailTailMin.toFixed(2)}</span>
             </div>
 
             <label>Tail Exp</label>
             <div className="slider-row">
-              <input type="range" min={0.5} max={6} step={0.1} value={trailTailExp}
-                onChange={(e) => setTrailTailExp(Number(e.target.value))} />
-              <span className="control-val">{trailTailExp.toFixed(1)}</span>
+              <input type="range" min={0.5} max={6} step={0.1} value={pTrailTailExp}
+                onChange={(e) => setPTrailTailExp(Number(e.target.value))} />
+              <span className="control-val">{pTrailTailExp.toFixed(1)}</span>
             </div>
 
             <label>Max Lifetime</label>
             <div className="slider-row">
-              <input type="range" min={1} max={300} step={1} value={maxLifetime}
-                onChange={(e) => setMaxLifetime(Number(e.target.value))} />
-              <span className="control-val">{maxLifetime}</span>
+              <input type="range" min={1} max={300} step={1} value={pMaxLifetime}
+                onChange={(e) => setPMaxLifetime(Number(e.target.value))} />
+              <span className="control-val">{pMaxLifetime}</span>
             </div>
 
             <div className="spacer" />
             <label>Selection</label>
             <div>
               <button onClick={clearSelection} style={{ height: 32, padding: '0 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff' }}>Clear (C)</button>
+            </div>
+            <div className="spacer" />
+            <div>
+              <button
+                onClick={() => {
+                  // Apply pending UI values to the visualization
+                  setShowGrid(pShowGrid)
+                  setShowHull(pShowHull)
+                  setParticleCount(pParticleCount)
+                  setConsistentSpeed(pConsistentSpeed)
+                  setSpeedConstRel(pSpeedConstRel)
+                  setSpeedScale(pSpeedScale)
+                  setTailLength(pTailLength)
+                  setTrailTailMin(pTrailTailMin)
+                  setTrailTailExp(pTrailTailExp)
+                  setMaxLifetime(pMaxLifetime)
+                  // Apply server-affecting controls and trigger recompute via effect
+                  setTopK(pTopK)
+                  setGridRes(pGridRes)
+                  setMaskBufferFactor(pMaskBufferFactor)
+                }}
+                disabled={busy}
+                style={{ height: 36, padding: '0 12px', borderRadius: 8, border: '1px solid #e5e7eb', background: busy ? '#f3f4f6' : '#111827', color: busy ? '#6b7280' : '#ffffff', fontWeight: 600 }}
+              >
+                {busy ? 'Updating…' : 'Update'}
+              </button>
             </div>
           </div>
           {error && <div className="hint" style={{ color: '#b91c1c', alignSelf: 'center' }}>{error}</div>}
