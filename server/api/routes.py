@@ -174,6 +174,13 @@ def compute():
     grid_res = int(body.get("gridRes") or getattr(fw_config, "DEFAULT_GRID_RES", 25))
     include_raw = bool(body.get("includeRawGradients", False))
     cfg_overrides = body.get("config") or {}
+    manual_families = None
+    try:
+        mf = cfg_overrides.get("familyAssignments") if isinstance(cfg_overrides, dict) else None
+        if isinstance(mf, list):
+            manual_families = [int(x) for x in mf]
+    except Exception:
+        manual_families = None
 
     if not dataset_id or dataset_id not in DATASETS:
         return jsonify({"error": "Unknown dataset_id"}), 404
@@ -241,16 +248,19 @@ def compute():
         top_k_indices = [fi]
         selection_obj = {"featureIndex": fi}
     else:
-        if top_k is None:
-            top_k = min(5, n_features)
-        try:
-            top_k = int(top_k)
-        except Exception:
-            return jsonify({"error": "topK must be an integer"}), 400
-        top_k = max(1, min(top_k, n_features))
-        tk_indices, _ = fw_data.pick_top_k_features(all_grad_vectors, k=top_k)
-        top_k_indices = _np.array(tk_indices).tolist()
-        selection_obj = {"topKIndices": top_k_indices}
+        # Default: use all features when topK not provided or set to 'all'
+        if top_k is None or (isinstance(top_k, str) and str(top_k).lower() == 'all'):
+            top_k_indices = list(range(n_features))
+            selection_obj = {"topKIndices": top_k_indices}
+        else:
+            try:
+                top_k = int(top_k)
+            except Exception:
+                return jsonify({"error": "topK must be an integer or 'all'"}), 400
+            top_k = max(1, min(top_k, n_features))
+            tk_indices, _ = fw_data.pick_top_k_features(all_grad_vectors, k=top_k)
+            top_k_indices = _np.array(tk_indices).tolist()
+            selection_obj = {"topKIndices": top_k_indices}
 
     # Apply per-request config overrides safely
     orig_MASK_BUFFER_FACTOR = getattr(fw_config, "MASK_BUFFER_FACTOR", 0.2)
@@ -299,9 +309,12 @@ def compute():
             from featurewind.analysis import feature_clustering
             from featurewind.visualization import color_system
             n_families = min(n_features, int(getattr(fw_config, 'MAX_FEATURE_FAMILIES', 4)))
-            family_assignments, _, _ = feature_clustering.cluster_features_by_direction(
-                grid_u_all_feats, grid_v_all_feats, n_families=n_families
-            )
+            if manual_families and len(manual_families) == n_features:
+                family_assignments = manual_families
+            else:
+                family_assignments, _, _ = feature_clustering.cluster_features_by_direction(
+                    grid_u_all_feats, grid_v_all_feats, n_families=n_families
+                )
             # Assign family colors (same color within a family)
             colors = color_system.assign_family_colors(family_assignments)
             # Distinct colors when few are selected — applied per FAMILY to keep same-family colors identical
@@ -376,3 +389,30 @@ def compute():
         response["gradVectors"] = tolist(all_grad_vectors)
 
     return jsonify(response)
+
+
+@api_bp.post("/colors")
+def recolor():
+    """Assign colors from provided family assignments without recomputing grids.
+
+    Body JSON:
+      { dataset_id: str, familyAssignments: number[] }
+    Returns:
+      { colors: string[], family_assignments: number[] }
+    """
+    body = request.get_json(silent=True) or {}
+    dataset_id = body.get("dataset_id")
+    fams = body.get("familyAssignments")
+    if not dataset_id or dataset_id not in DATASETS:
+        return jsonify({"error": "Unknown dataset_id"}), 404
+    entry = DATASETS[dataset_id]
+    labels = entry.get("labels") or []
+    if not isinstance(fams, list) or len(fams) != len(labels):
+        return jsonify({"error": "familyAssignments must be a list of length equal to number of features"}), 400
+    try:
+        fams_int = [int(x) for x in fams]
+        from featurewind.visualization import color_system
+        colors = color_system.assign_family_colors(fams_int)
+        return jsonify({"colors": colors, "family_assignments": fams_int})
+    except Exception as e:
+        return jsonify({"error": f"Failed to assign colors: {e}"}), 500

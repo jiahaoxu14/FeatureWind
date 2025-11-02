@@ -1,19 +1,36 @@
 import React, { useMemo } from 'react'
 
-export default function ColorLegend({ payload }) {
+import { useState, useEffect } from 'react'
+export default function ColorLegend({ payload, dataset, onApplyFamilies, visible }) {
   const { col_labels = [], colors = [], selection = {}, family_assignments = null } = payload || {}
 
-  const selected = useMemo(() => {
+  const visibleSet = useMemo(() => {
+    if (visible && typeof visible.has === 'function') return visible
+    // Fallback to selection if visible set not provided
     if (!selection) return new Set()
     if (Array.isArray(selection.topKIndices)) return new Set(selection.topKIndices)
     if (typeof selection.featureIndex === 'number') return new Set([selection.featureIndex])
     return new Set()
-  }, [selection])
+  }, [visible, selection])
 
-  if (Array.isArray(family_assignments) && family_assignments.length === col_labels.length) {
+  const [editMode, setEditMode] = useState(false)
+  const [families, setFamilies] = useState(family_assignments || [])
+  useEffect(() => { setFamilies(family_assignments || []) }, [family_assignments])
+
+  function updateFam(idx, val) {
+    const x = parseInt(val, 10)
+    if (!Number.isFinite(x)) return
+    setFamilies((prev) => {
+      const next = [...prev]
+      next[idx] = x
+      return next
+    })
+  }
+
+  if (Array.isArray(families) && families.length === col_labels.length) {
     // Group features by family id
     const famMap = new Map()
-    family_assignments.forEach((fam, idx) => {
+    families.forEach((fam, idx) => {
       if (!famMap.has(fam)) famMap.set(fam, [])
       famMap.get(fam).push(idx)
     })
@@ -31,14 +48,35 @@ export default function ColorLegend({ payload }) {
                 <span>Family {famId}</span>
               </div>
               {indices.map((idx) => (
-                <div key={idx} className={`legend-item${selected.has(idx) ? ' selected' : ''}`} style={{ paddingLeft: 22 }}>
+                <div key={idx} className={`legend-item${visibleSet.has(idx) ? ' visible' : ''}`} style={{ paddingLeft: 22 }}>
                   <span className="legend-swatch" style={{ background: colors[idx] || famColor }} />
-                  <span title={col_labels[idx]}>{col_labels[idx]}</span>
+                  <span title={col_labels[idx]} style={{ flex: 1 }}>{col_labels[idx]}</span>
+                  {editMode && (
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={families[idx] ?? 0}
+                      onChange={(e) => updateFam(idx, e.target.value)}
+                      style={{ width: 64, height: 28, border: '1px solid #e5e7eb', borderRadius: 6 }}
+                    />
+                  )}
                 </div>
               ))}
             </div>
           )
         })}
+        <div className="legend-item" style={{ justifyContent: 'space-between', marginTop: 8 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={editMode} onChange={(e) => setEditMode(e.target.checked)} />
+            Edit families
+          </label>
+          <button
+            disabled={!editMode || !dataset}
+            onClick={() => onApplyFamilies && onApplyFamilies(families)}
+            style={{ height: 28, padding: '0 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: editMode ? '#fff' : '#f3f4f6' }}
+          >Apply</button>
+        </div>
       </div>
     )
   }
@@ -46,7 +84,7 @@ export default function ColorLegend({ payload }) {
   return (
     <div className="legend-list">
       {col_labels.map((name, idx) => (
-        <div key={idx} className={`legend-item${selected.has(idx) ? ' selected' : ''}`}>
+        <div key={idx} className={`legend-item${visibleSet.has(idx) ? ' visible' : ''}`}>
           <span className="legend-swatch" style={{ background: colors[idx] || '#888' }} />
           <span title={name}>{name}</span>
         </div>

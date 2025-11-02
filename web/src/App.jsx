@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import './styles.css'
-import { uploadFile, compute } from './services/api'
+import { uploadFile, compute, recolor } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
 import WindVane from './components/WindVane.jsx'
 import ColorLegend from './components/ColorLegend.jsx'
@@ -8,7 +8,7 @@ import ColorLegend from './components/ColorLegend.jsx'
 export default function App() {
   const [file, setFile] = useState(null)
   const [dataset, setDataset] = useState(null)
-  const [topK, setTopK] = useState(5)
+  const [topK, setTopK] = useState(0)
   const [gridRes, setGridRes] = useState(25)
   const [payload, setPayload] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -39,6 +39,9 @@ export default function App() {
         return
       }
       const res = await uploadFile(f)
+      // Default Top-K to all features in the dataset
+      const m = Array.isArray(res.col_labels) ? res.col_labels.length : 0
+      if (m > 0) setTopK(m)
       setDataset(res)
     } catch (e) {
       setError(e.message)
@@ -111,6 +114,67 @@ export default function App() {
     return hoverPos || null
   })()
 
+  // Compute which features are visible in the current Wind Vane view
+  const visibleFeatures = useMemo(() => {
+    const result = new Set()
+    if (!payload) return result
+    const { bbox = [0,1,0,1], grid_res = 25, uAll = [], vAll = [], selection = {}, unmasked = null, dominant = null } = payload
+    const [xmin, xmax, ymin, ymax] = bbox
+    const H = grid_res, W = grid_res
+    // Determine selected features (indices rendered in vane)
+    let indices = []
+    if (selection && Array.isArray(selection.topKIndices)) indices = selection.topKIndices
+    else if (selection && typeof selection.featureIndex === 'number') indices = [selection.featureIndex]
+    if (!indices.length) return result
+    // Selection mode
+    const useSel = selectedCells && selectedCells.length > 0
+    const hasUnmasked = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
+    const hasDominant = Array.isArray(dominant) && dominant.length === H && dominant[0].length === W
+    const eps = 1e-9
+    if (useSel) {
+      // Filter to valid cells
+      const valid = []
+      if (hasUnmasked) {
+        for (const c of selectedCells) {
+          const ii = Math.max(0, Math.min(H - 1, c.i|0))
+          const jj = Math.max(0, Math.min(W - 1, c.j|0))
+          if (unmasked[ii][jj]) valid.push({ i: ii, j: jj })
+        }
+      } else {
+        for (const c of selectedCells) {
+          const ii = Math.max(0, Math.min(H - 1, c.i|0))
+          const jj = Math.max(0, Math.min(W - 1, c.j|0))
+          valid.push({ i: ii, j: jj })
+        }
+      }
+      if (!valid.length) return result
+      for (const idx of indices) {
+        let u = 0, v = 0
+        for (const c of valid) {
+          u += (uAll[idx]?.[c.i]?.[c.j] ?? 0)
+          v += (vAll[idx]?.[c.i]?.[c.j] ?? 0)
+        }
+        if ((u*u + v*v) > eps) result.add(idx)
+      }
+      return result
+    }
+    // Hover mode: snap to clicked/hovered cell center indices using floor mapping
+    const xCoord = vaneFocus?.x
+    const yCoord = vaneFocus?.y
+    if (typeof xCoord !== 'number' || typeof yCoord !== 'number') return result
+    const cj = Math.max(0, Math.min(W - 1, Math.floor(((xCoord - xmin) / (xmax - xmin)) * W)))
+    const ci = Math.max(0, Math.min(H - 1, Math.floor(((yCoord - ymin) / (ymax - ymin)) * H)))
+    // Masked?
+    if (hasUnmasked && !unmasked[ci][cj]) return result
+    if (hasDominant && dominant[ci][cj] === -1) return result
+    for (const idx of indices) {
+      const u = (uAll[idx]?.[ci]?.[cj] ?? 0)
+      const v = (vAll[idx]?.[ci]?.[cj] ?? 0)
+      if ((u*u + v*v) > eps) result.add(idx)
+    }
+    return result
+  }, [payload, selectedCells, vaneFocus])
+
   return (
     <div className="app">
       <div className="header">
@@ -136,23 +200,23 @@ export default function App() {
                   trailTailMin={trailTailMin}
                   trailTailExp={trailTailExp}
                   maxLifetime={maxLifetime}
-                  size={580}
+                  size={420}
                   selectedCells={selectedCells}
                 />
               </div>
               <div className="panel canvas-frame">
                 <p className="panel-title">Wind Vane {selectedCells.length > 0 ? `(selection: ${selectedCells.length} cells)` : (vaneFocus ? `(x=${vaneFocus.x.toFixed(3)}, y=${vaneFocus.y.toFixed(3)})` : '(center)')}</p>
-                <WindVane payload={payload} focus={vaneFocus} selectedCells={selectedCells} size={580} />
+                <WindVane payload={payload} focus={vaneFocus} selectedCells={selectedCells} size={420} />
               </div>
             </div>
           ) : (
             <div className="row">
-              <div className="panel placeholder" style={{ width: 580, height: 580 }}>Wind Map</div>
-              <div className="panel placeholder" style={{ width: 580, height: 580 }}>Wind Vane</div>
+              <div className="panel placeholder" style={{ width: 420, height: 420 }}>Wind Map</div>
+              <div className="panel placeholder" style={{ width: 420, height: 420 }}>Wind Vane</div>
             </div>
           )}
         </div>
-        <div className="row">
+        <div className="row rows-below">
           <div className="panel padded file-row" style={{ flex: 1 }}>
             <input
               className="file-input"
@@ -174,7 +238,12 @@ export default function App() {
           </div>
           <div className="panel padded controls-grid" style={{ flex: 2 }}>
             <label>Top-K</label>
-            <input type="number" min={1} value={topK} onChange={(e) => setTopK(e.target.value)} />
+            <input
+              type="number"
+              min={1}
+              value={topK}
+              onChange={(e) => setTopK(Math.max(1, Number(e.target.value)))}
+            />
             <label>Grid Res</label>
             <input type="number" min={8} max={200} value={gridRes} onChange={(e) => setGridRes(e.target.value)} />
             <label>Mask Buffer</label>
@@ -204,11 +273,28 @@ export default function App() {
               <button onClick={clearSelection} style={{ height: 32, padding: '0 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff' }}>Clear (C)</button>
             </div>
           </div>
-          <div className="panel padded" style={{ flex: 1 }}>
-            <p className="panel-title">Color Families</p>
-            {payload ? <ColorLegend payload={payload} /> : <div className="hint">Upload a dataset to see colors</div>}
-          </div>
           {error && <div className="hint" style={{ color: '#b91c1c', alignSelf: 'center' }}>{error}</div>}
+        </div>
+        <div className="panel padded color-panel">
+          <p className="panel-title">Color Families</p>
+          {payload ? (
+            <ColorLegend
+              payload={payload}
+              dataset={dataset}
+              visible={visibleFeatures}
+              onApplyFamilies={async (families) => {
+                try {
+                  if (!dataset) return
+                  const res = await recolor(dataset.datasetId, families)
+                  setPayload((prev) => ({ ...prev, colors: res.colors, family_assignments: res.family_assignments }))
+                } catch (e) {
+                  setError(e.message)
+                }
+              }}
+            />
+          ) : (
+            <div className="hint">Upload a dataset to see colors</div>
+          )}
         </div>
       </div>
     </div>
