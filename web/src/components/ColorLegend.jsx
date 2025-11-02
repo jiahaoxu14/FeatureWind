@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react'
 
 import { useState, useEffect } from 'react'
-export default function ColorLegend({ payload, dataset, onApplyFamilies, visible }) {
+export default function ColorLegend({ payload, dataset, onApplyFamilies, visible, selectedFeatures = [], onChangeSelectedFeatures }) {
   const { col_labels = [], colors = [], selection = {}, family_assignments = null } = payload || {}
 
   const visibleSet = useMemo(() => {
@@ -18,6 +18,14 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
   useEffect(() => { setFamilies(family_assignments || []) }, [family_assignments])
   const [dragFeature, setDragFeature] = useState(null)
   const [dragOverFam, setDragOverFam] = useState(null)
+
+  const selectedSet = useMemo(() => new Set(Array.isArray(selectedFeatures) ? selectedFeatures : []), [selectedFeatures])
+  function setSelected(next) {
+    if (typeof onChangeSelectedFeatures === 'function') {
+      const arr = Array.from(new Set(next)).sort((a, b) => a - b)
+      onChangeSelectedFeatures(arr)
+    }
+  }
 
   function handleDragStartFeature(idx, e) {
     setDragFeature(idx)
@@ -73,6 +81,8 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
           const indices = famMap.get(famId)
           const repIdx = indices && indices.length ? indices[0] : 0
           const famColor = colors[repIdx] || '#888'
+          const selInFam = indices.filter((i) => selectedSet.has(i))
+          const allSelected = selInFam.length === indices.length
           return (
             <div key={`fam-${famId}`} style={{ marginBottom: 8 }}
                  onDragOver={editMode ? (e) => handleDragOverFamily(famId, e) : undefined}
@@ -80,20 +90,36 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
                  onDrop={editMode ? (e) => handleDropToFamily(famId, e) : undefined}
                  className={dragOverFam === famId ? 'drop-target' : ''}
             >
-              <div className="legend-item family-header" style={{ fontWeight: 600 }}>
+              <div className="legend-item family-header" style={{ fontWeight: 600, gap: 8 }}>
                 <span className="legend-swatch" style={{ background: famColor }} />
                 <span>Family {famId}</span>
+                <span style={{ flex: 1 }} />
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button title="Add all in family" onClick={() => setSelected([...selectedSet, ...indices])} style={{ height: 22, padding: '0 6px', borderRadius: 4, border: '1px solid #e5e7eb', background: '#fff' }}>All+</button>
+                  <button title="Select only this family" onClick={() => setSelected(indices)} style={{ height: 22, padding: '0 6px', borderRadius: 4, border: '1px solid #e5e7eb', background: '#fff' }}>Only</button>
+                  <button title="Clear this family" onClick={() => setSelected([...Array.from(selectedSet)].filter(i => !indices.includes(i)))} style={{ height: 22, padding: '0 6px', borderRadius: 4, border: '1px solid #e5e7eb', background: '#fff' }}>Clear</button>
+                </div>
               </div>
               {indices.map((idx) => (
-                <div key={idx}
-                     className={`legend-item feature${visibleSet.has(idx) ? ' visible' : ''} ${editMode ? 'draggable' : ''}`}
-                     style={{ paddingLeft: 22 }}
-                     draggable={!!editMode}
-                     onDragStart={editMode ? (e) => handleDragStartFeature(idx, e) : undefined}
+                <label key={idx}
+                       className={`legend-item feature${visibleSet.has(idx) ? ' visible' : ''} ${editMode ? 'draggable' : ''}`}
+                       style={{ paddingLeft: 22, gap: 8 }}
+                       draggable={!!editMode}
+                       onDragStart={editMode ? (e) => handleDragStartFeature(idx, e) : undefined}
                 >
+                  <input
+                    type="checkbox"
+                    checked={selectedSet.has(idx)}
+                    onChange={(e) => {
+                      const next = new Set(selectedSet)
+                      if (e.target.checked) next.add(idx); else next.delete(idx)
+                      setSelected(Array.from(next))
+                    }}
+                    style={{ margin: 0 }}
+                  />
                   <span className="legend-swatch" style={{ background: colors[idx] || famColor }} />
                   <span title={col_labels[idx]} style={{ flex: 1 }}>{col_labels[idx]}</span>
-                </div>
+                </label>
               ))}
             </div>
           )
@@ -125,10 +151,20 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
   return (
     <div className="legend-list">
       {col_labels.map((name, idx) => (
-        <div key={idx} className={`legend-item${visibleSet.has(idx) ? ' visible' : ''}`}>
+        <label key={idx} className={`legend-item${visibleSet.has(idx) ? ' visible' : ''}`} style={{ gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={selectedSet.has(idx)}
+            onChange={(e) => {
+              const next = new Set(selectedSet)
+              if (e.target.checked) next.add(idx); else next.delete(idx)
+              setSelected(Array.from(next))
+            }}
+            style={{ margin: 0 }}
+          />
           <span className="legend-swatch" style={{ background: colors[idx] || '#888' }} />
           <span title={name}>{name}</span>
-        </div>
+        </label>
       ))}
     </div>
   )
