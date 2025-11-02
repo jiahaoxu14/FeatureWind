@@ -360,6 +360,19 @@ def compute():
         except Exception:
             return x
 
+    # Compute global max magnitude of the summed field across selected features (for vane dot alpha)
+    try:
+        import numpy as _np2
+        _sum_u = _np2.sum(grid_u_feats, axis=0) if isinstance(grid_u_feats, _np2.ndarray) else None
+        _sum_v = _np2.sum(grid_v_feats, axis=0) if isinstance(grid_v_feats, _np2.ndarray) else None
+        if _sum_u is not None and _sum_v is not None:
+            _sum_mag = _np2.sqrt(_sum_u**2 + _sum_v**2)
+            global_sum_magnitude_max = float(_np2.nanmax(_sum_mag))
+        else:
+            global_sum_magnitude_max = 0.0
+    except Exception:
+        global_sum_magnitude_max = 0.0
+
     response = {
         "datasetId": dataset_id,
         "positions": tolist(all_positions),
@@ -372,6 +385,7 @@ def compute():
         "colors": colors,
         # Return family assignments when available
         **({"family_assignments": tolist(family_assignments)} if 'family_assignments' in locals() else {}),
+        "global_sum_magnitude_max": global_sum_magnitude_max,
         "selection": selection_obj,
         "meta": {"dtypeHint": "float32", "order": "row-major"},
     }

@@ -194,7 +194,7 @@ export default function WindVane({ payload, focus, selectedCells = [], size = 22
         } catch (e) { hullSet = null }
       }
 
-      // Draw per-feature arrows (filtered by hull if enabled)
+      // Draw per-feature arrows (filtered by hull if enabled) with arrow heads
       featureVectors.forEach((fv, i) => {
         if (hullSet && !hullSet.has(i)) return
         const scale = fv.mag > 0 ? (ringR * 0.9 * (fv.mag / (maxMag || 1))) : 0
@@ -208,25 +208,68 @@ export default function WindVane({ payload, focus, selectedCells = [], size = 22
         ctx.moveTo(cx, cy)
         ctx.lineTo(x2, y2)
         ctx.stroke()
+        // Arrow head at endpoint (simple V-shape)
+        try {
+          const angle = Math.atan2(y2 - cy, x2 - cx)
+          const headLen = Math.max(6, ringR * 0.06) // pixels
+          const phi = Math.PI / 8 // 22.5 degrees
+          const xh1 = x2 - headLen * Math.cos(angle - phi)
+          const yh1 = y2 - headLen * Math.sin(angle - phi)
+          const xh2 = x2 - headLen * Math.cos(angle + phi)
+          const yh2 = y2 - headLen * Math.sin(angle + phi)
+          ctx.beginPath()
+          ctx.moveTo(x2, y2)
+          ctx.lineTo(xh1, yh1)
+          ctx.moveTo(x2, y2)
+          ctx.lineTo(xh2, yh2)
+          ctx.stroke()
+        } catch (e) { /* ignore arrow head errors */ }
       })
 
-      // Draw direction dot on ring for summed vector
+      // Draw direction dot on ring for summed vector with original color/alpha method
       const sumMag = Math.hypot(sumUx, sumVy)
-      if (sumMag > 0) {
-        const dx = (sumUx / sumMag) * ringR
-        const dy = (sumVy / sumMag) * ringR
+      if (sumMag > 1e-12) {
+        const dirX = sumUx / sumMag
+        const dirY = sumVy / sumMag
+        const dx = dirX * ringR
+        const dy = dirY * ringR
         const dotX = cx + dx
         const dotY = cy - dy
-        ctx.fillStyle = '#333'
+
+        // Choose color: feature with highest projection along flow direction
+        let bestIdx = null
+        let bestProj = -Infinity
+        featureVectors.forEach((fv, i) => {
+          const proj = fv.u * dirX + fv.v * dirY
+          if (proj > bestProj) { bestProj = proj; bestIdx = indices[i] }
+        })
+        let dotColor = '#333'
+        if (bestIdx !== null && bestIdx >= 0 && bestIdx < colors.length) {
+          dotColor = colors[bestIdx]
+        }
+
+        // Opacity: field-based relative to global maximum sum magnitude
+        let dotAlpha = 0.9
+        try {
+          const gmax = payload?.global_sum_magnitude_max || 0
+          const base = gmax > 1e-12 ? (sumMag / gmax) : 0
+          const ratio = Math.tanh(base)
+          dotAlpha = Math.max(0.15, Math.min(1.0, 0.15 + 0.85 * ratio))
+        } catch (e) { /* keep default */ }
+
+        ctx.fillStyle = dotColor
+        ctx.globalAlpha = dotAlpha
         ctx.beginPath()
         ctx.arc(dotX, dotY, Math.max(4, ringR * 0.06), 0, Math.PI * 2)
         ctx.fill()
         // optional guide
-        ctx.strokeStyle = 'rgba(0,0,0,0.15)'
+        ctx.globalAlpha = dotAlpha * 0.5
+        ctx.strokeStyle = dotColor
         ctx.beginPath()
         ctx.moveTo(cx, cy)
         ctx.lineTo(dotX, dotY)
         ctx.stroke()
+        ctx.globalAlpha = 1.0
       }
     }
 
