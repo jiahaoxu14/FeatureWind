@@ -5,7 +5,6 @@ import numpy as np
 from .tsne import tsne
 from .mds_torch import mds, distance_matrix_HD_tensor
 import torch
-import inspect
 
 class ProjectionRunner:
     def __init__(self, projection, params=None):
@@ -53,131 +52,32 @@ class ProjectionRunner:
         
         # Compute gradients and full Jacobian matrix
         self.outPoints = Y
+        grads = []
         n_points, n_features = data.shape
 
         print(f"Step 3/3: Computing gradients for {n_points} points...")
         # Initialize Jacobian matrix: J[2*i:2*i+2, :] = gradients for point i
         self.jacobian = torch.zeros(2 * n_points, n_features, dtype=torch.float32, device=device)
 
-        # Try a batched autograd path (PyTorch >= 1.13 supports is_grads_batched)
-        sig = inspect.signature(torch.autograd.grad)
-        use_batched = 'is_grads_batched' in sig.parameters
+        for i in range(len(Y)):
+            # Show progress every 10% or every 50 points, whichever is more frequent
+            progress_interval = min(50, max(1, n_points // 10))
+            if i % progress_interval == 0 or i == n_points - 1:
+                progress_pct = (i + 1) / n_points * 100
+                print(f"  Computing gradients: {i+1}/{n_points} points ({progress_pct:.1f}%)")
+            grad_x = torch.autograd.grad(Y[i, 0], data, retain_graph=True)[0][i]
+            grad_y = torch.autograd.grad(Y[i, 1], data, retain_graph=True)[0][i]
+            grads.append(torch.stack([grad_x, grad_y], dim=0))
+            
+            # Store in Jacobian matrix
+            self.jacobian[2*i, :] = grad_x
+            self.jacobian[2*i+1, :] = grad_y
 
-        if use_batched:
-            # Choose batch size based on N to cap grad_outputs memory.
-            # grad_outputs tensor has shape (2*b, N, 2) => elements ~= 4*b*N
-            # Aim to keep <= ~8e6 elements (~32MB in fp32) by default.
-            max_elems = 8_000_000
-            b_cap = max(1, max_elems // max(1, 4 * n_points))
-            batch_size = max(1, min(256, b_cap))
-            # Pre-allocate tensor to store gradients per point (n_points, 2, n_features)
-            grads_tensor = torch.zeros(n_points, 2, n_features, dtype=torch.float32, device=device)
-
-            print(f"  Using batched autograd with batch_size={batch_size}")
-            start = 0
-            while start < n_points:
-                end = min(start + batch_size, n_points)
-                b = end - start
-
-                # Build batched grad_outputs selecting each (i, dim) in the batch
-                # Shape: (2*b, n_points, 2)
-                G = torch.zeros(2 * b, n_points, 2, dtype=Y.dtype, device=device)
-                for bi, i in enumerate(range(start, end)):
-                    G[2 * bi, i, 0] = 1.0  # select Y[i, 0]
-                    G[2 * bi + 1, i, 1] = 1.0  # select Y[i, 1]
-
-                # Compute gradients for this batch in a single autograd call
-                retain = end < n_points
-                try:
-                    grad_all = torch.autograd.grad(
-                        outputs=Y,
-                        inputs=data,
-                        grad_outputs=G,
-                        retain_graph=retain,
-                        is_grads_batched=True,
-                        allow_unused=False,
-                    )[0]  # shape: (2*b, n_points, n_features)
-                except TypeError:
-                    # is_grads_batched not supported — fall back to per-point loop
-                    use_batched = False
-                    break
-                except RuntimeError as e:
-                    # Handle CUDA OOM by reducing batch size and retrying
-                    msg = str(e).lower()
-                    if ("out of memory" in msg or "cudnn_status_alloc_failed" in msg) and (batch_size > 1):
-                        new_bs = max(1, batch_size // 2)
-                        print(f"  CUDA OOM detected. Reducing batch_size {batch_size} -> {new_bs} and retrying…")
-                        batch_size = new_bs
-                        try:
-                            import gc
-                            gc.collect()
-                        except Exception:
-                            pass
-                        if torch.cuda.is_available():
-                            try:
-                                torch.cuda.empty_cache()
-                            except Exception:
-                                pass
-                        # Retry same 'start' with smaller batch
-                        continue
-                    else:
-                        # Unknown runtime error — fall back to per-point loop
-                        print(f"  Batched autograd failed with RuntimeError: {e}. Falling back to per-point.")
-                        use_batched = False
-                        break
-
-                # Extract only the needed rows (diagonal per selected i)
-                for bi, i in enumerate(range(start, end)):
-                    grad_x = grad_all[2 * bi, i, :]
-                    grad_y = grad_all[2 * bi + 1, i, :]
-                    grads_tensor[i, 0, :] = grad_x
-                    grads_tensor[i, 1, :] = grad_y
-
-                # Progress update
-                progress_pct = end / n_points * 100
-                print(f"  Computing gradients: {end}/{n_points} points ({progress_pct:.1f}%)")
-
-                # Advance window
-                start = end
-
-            if use_batched:
-                # Fill jacobian and numpy equivalents
-                self.jacobian[0::2, :] = grads_tensor[:, 0, :]
-                self.jacobian[1::2, :] = grads_tensor[:, 1, :]
-                self.grads = grads_tensor.detach().cpu().numpy()
-                self.jacobian_numpy = self.jacobian.detach().cpu().numpy()
-            else:
-                # Fall back to original per-point loop
-                print("  Batched autograd not available; falling back to per-point gradients.")
-                grads = []
-                for i in range(n_points):
-                    progress_interval = min(50, max(1, n_points // 10))
-                    if i % progress_interval == 0 or i == n_points - 1:
-                        progress_pct = (i + 1) / n_points * 100
-                        print(f"  Computing gradients: {i+1}/{n_points} points ({progress_pct:.1f}%)")
-                    grad_x = torch.autograd.grad(Y[i, 0], data, retain_graph=True)[0][i]
-                    grad_y = torch.autograd.grad(Y[i, 1], data, retain_graph=True)[0][i]
-                    grads.append(torch.stack([grad_x, grad_y], dim=0))
-                    self.jacobian[2 * i, :] = grad_x
-                    self.jacobian[2 * i + 1, :] = grad_y
-                self.grads = torch.stack(grads).detach().cpu().numpy()
-                self.jacobian_numpy = self.jacobian.detach().cpu().numpy()
-        else:
-            # Original per-point loop
-            print("  Using per-point autograd loop for gradients.")
-            grads = []
-            for i in range(n_points):
-                progress_interval = min(50, max(1, n_points // 10))
-                if i % progress_interval == 0 or i == n_points - 1:
-                    progress_pct = (i + 1) / n_points * 100
-                    print(f"  Computing gradients: {i+1}/{n_points} points ({progress_pct:.1f}%)")
-                grad_x = torch.autograd.grad(Y[i, 0], data, retain_graph=True)[0][i]
-                grad_y = torch.autograd.grad(Y[i, 1], data, retain_graph=True)[0][i]
-                grads.append(torch.stack([grad_x, grad_y], dim=0))
-                self.jacobian[2 * i, :] = grad_x
-                self.jacobian[2 * i + 1, :] = grad_y
-            self.grads = torch.stack(grads).detach().cpu().numpy()
-            self.jacobian_numpy = self.jacobian.detach().cpu().numpy()
+        # Convert gradients to NumPy array (backward compatibility)
+        self.grads = torch.stack(grads).detach().cpu().numpy()
+        
+        # Store Jacobian as NumPy array for easier integration
+        self.jacobian_numpy = self.jacobian.detach().cpu().numpy()
         print("✓ Tangent map generation completed successfully!")
 
     def get_jacobian_for_point(self, point_idx):
