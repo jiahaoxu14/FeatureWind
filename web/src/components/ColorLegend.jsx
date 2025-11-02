@@ -19,13 +19,37 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
   const [dragFeature, setDragFeature] = useState(null)
   const [dragOverFam, setDragOverFam] = useState(null)
 
-  const selectedSet = useMemo(() => new Set(Array.isArray(selectedFeatures) ? selectedFeatures : []), [selectedFeatures])
+  // Effective selection reflects current visualization: manual selection first,
+  // otherwise fall back to backend-provided selection (Top-K or single feature)
+  const effectiveSelectedArray = useMemo(() => {
+    if (Array.isArray(selectedFeatures) && selectedFeatures.length > 0) return selectedFeatures
+    if (selection && Array.isArray(selection.topKIndices)) return selection.topKIndices
+    if (selection && typeof selection.featureIndex === 'number') return [selection.featureIndex]
+    return []
+  }, [selectedFeatures, selection])
+  const selectedSet = useMemo(() => new Set(effectiveSelectedArray), [effectiveSelectedArray])
+
   function setSelected(next) {
     if (typeof onChangeSelectedFeatures === 'function') {
       const arr = Array.from(new Set(next)).sort((a, b) => a - b)
       onChangeSelectedFeatures(arr)
     }
   }
+
+  // Build a ranking of features to support a Top-K selection slider inside the legend
+  const ranking = useMemo(() => {
+    const n = Array.isArray(col_labels) ? col_labels.length : 0
+    const tk = (selection && Array.isArray(selection.topKIndices)) ? selection.topKIndices : null
+    if (!n) return []
+    if (Array.isArray(tk) && tk.length === n) return tk.slice()
+    if (Array.isArray(tk) && tk.length > 0) {
+      const set = new Set(tk)
+      const rest = []
+      for (let i = 0; i < n; i++) if (!set.has(i)) rest.push(i)
+      return tk.concat(rest)
+    }
+    return [...Array(n).keys()]
+  }, [selection, col_labels])
 
   function handleDragStartFeature(idx, e) {
     setDragFeature(idx)
@@ -77,6 +101,26 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
     const famIds = Array.from(famMap.keys()).sort((a, b) => a - b)
     return (
       <div className="legend-list">
+        {/* Top-K selection slider inside color family panel; updates legend checkboxes */}
+        <div className="legend-item" style={{ gap: 10 }}>
+          <label style={{ fontSize: 12, color: '#6b7280' }}>Top-K</label>
+          <div className="slider-row" style={{ flex: 1 }}>
+            <input
+              type="range"
+              min={0}
+              max={col_labels.length || 0}
+              step={1}
+              value={effectiveSelectedArray.length}
+              onChange={(e) => {
+                const k = Math.max(0, Math.min((col_labels.length || 0), Number(e.target.value)))
+                const next = ranking.slice(0, k)
+                setSelected(next)
+              }}
+            />
+            <span className="control-val">{effectiveSelectedArray.length}</span>
+          </div>
+        </div>
+        <div className="spacer" />
         {famIds.map((famId) => {
           const indices = famMap.get(famId)
           const repIdx = indices && indices.length ? indices[0] : 0
@@ -150,6 +194,26 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
   // Fallback: flat list
   return (
     <div className="legend-list">
+      {/* Top-K selection slider for fallback list as well */}
+      <div className="legend-item" style={{ gap: 10 }}>
+        <label style={{ fontSize: 12, color: '#6b7280' }}>Top-K</label>
+        <div className="slider-row" style={{ flex: 1 }}>
+          <input
+            type="range"
+            min={0}
+            max={col_labels.length || 0}
+            step={1}
+            value={effectiveSelectedArray.length}
+            onChange={(e) => {
+              const k = Math.max(0, Math.min((col_labels.length || 0), Number(e.target.value)))
+              const next = ranking.slice(0, k)
+              setSelected(next)
+            }}
+          />
+          <span className="control-val">{effectiveSelectedArray.length}</span>
+        </div>
+      </div>
+      <div className="spacer" />
       {col_labels.map((name, idx) => (
         <label key={idx} className={`legend-item${visibleSet.has(idx) ? ' visible' : ''}`} style={{ gap: 8 }}>
           <input

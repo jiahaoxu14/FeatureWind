@@ -284,20 +284,7 @@ export default function App() {
                 if (f) handleUpload(f)
               }}
             />
-            {(() => {
-              const maxFeatures = (dataset?.col_labels?.length) || (payload?.col_labels?.length) || 100
-              return (
-                <>
-                  <label>Top-K</label>
-                  <div className="slider-row">
-                    <input type="range" min={1} max={maxFeatures} step={1} value={pTopK}
-                      disabled={selectedFeatureIndices.length > 0}
-                      onChange={(e) => setPTopK(Math.max(1, Number(e.target.value)))} />
-                    <span className="control-val">{pTopK}</span>
-                  </div>
-                </>
-              )
-            })()}
+            {null}
 
             {null}
 

@@ -50,6 +50,8 @@ export default function CanvasWind({
   featureIndices = null,
 }) {
   const canvasRef = useRef(null)
+  const rafRef = useRef(0)
+  const runningRef = useRef(false)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
   const showGridRef = useRef(!!showGrid)
   const selectedRef = useRef(selectedCells)
@@ -242,6 +244,7 @@ export default function CanvasWind({
 
     let last = performance.now()
     function draw() {
+      if (!runningRef.current) return
       const now = performance.now()
       const dt = Math.min((now - last) / 1000, 0.05)
       last = now
@@ -511,9 +514,10 @@ export default function CanvasWind({
           ctx.stroke()
         }
       }
-      requestAnimationFrame(draw)
+      rafRef.current = requestAnimationFrame(draw)
     }
-    const raf = requestAnimationFrame(draw)
+    runningRef.current = true
+    rafRef.current = requestAnimationFrame(draw)
 
     // Hover handler to report world coords
     function handleMove(e) {
@@ -543,7 +547,8 @@ export default function CanvasWind({
     canvas.addEventListener('click', handleClick)
 
     return () => {
-      cancelAnimationFrame(raf)
+      runningRef.current = false
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
       canvas.removeEventListener('mousemove', handleMove)
       canvas.removeEventListener('click', handleClick)
     }
