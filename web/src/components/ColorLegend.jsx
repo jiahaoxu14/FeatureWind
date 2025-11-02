@@ -16,15 +16,47 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
   const [editMode, setEditMode] = useState(false)
   const [families, setFamilies] = useState(family_assignments || [])
   useEffect(() => { setFamilies(family_assignments || []) }, [family_assignments])
+  const [dragFeature, setDragFeature] = useState(null)
+  const [dragOverFam, setDragOverFam] = useState(null)
 
-  function updateFam(idx, val) {
-    const x = parseInt(val, 10)
-    if (!Number.isFinite(x)) return
+  function handleDragStartFeature(idx, e) {
+    setDragFeature(idx)
+    try { e.dataTransfer.setData('text/plain', String(idx)); e.dataTransfer.effectAllowed = 'move' } catch {}
+  }
+  function handleDragOverFamily(famId, e) { e.preventDefault(); setDragOverFam(famId); try { e.dataTransfer.dropEffect = 'move' } catch {} }
+  function handleDragLeaveFamily() { setDragOverFam(null) }
+  function handleDropToFamily(famId, e) {
+    e.preventDefault()
+    let idx = dragFeature
+    try {
+      const t = parseInt(e.dataTransfer.getData('text/plain'), 10)
+      if (Number.isFinite(t)) idx = t
+    } catch {}
+    if (idx === null || idx === undefined) return
     setFamilies((prev) => {
       const next = [...prev]
-      next[idx] = x
+      next[idx] = famId
       return next
     })
+    setDragOverFam(null)
+    setDragFeature(null)
+  }
+  function handleDropToNewFamily(e) {
+    e.preventDefault()
+    let idx = dragFeature
+    try {
+      const t = parseInt(e.dataTransfer.getData('text/plain'), 10)
+      if (Number.isFinite(t)) idx = t
+    } catch {}
+    if (idx === null || idx === undefined) return
+    const nextFam = families.length ? Math.max(...families.map((f) => parseInt(f, 10))) + 1 : 0
+    setFamilies((prev) => {
+      const next = [...prev]
+      next[idx] = nextFam
+      return next
+    })
+    setDragOverFam(null)
+    setDragFeature(null)
   }
 
   if (Array.isArray(families) && families.length === col_labels.length) {
@@ -42,30 +74,39 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
           const repIdx = indices && indices.length ? indices[0] : 0
           const famColor = colors[repIdx] || '#888'
           return (
-            <div key={`fam-${famId}`} style={{ marginBottom: 8 }}>
-              <div className="legend-item" style={{ fontWeight: 600 }}>
+            <div key={`fam-${famId}`} style={{ marginBottom: 8 }}
+                 onDragOver={editMode ? (e) => handleDragOverFamily(famId, e) : undefined}
+                 onDragLeave={editMode ? handleDragLeaveFamily : undefined}
+                 onDrop={editMode ? (e) => handleDropToFamily(famId, e) : undefined}
+                 className={dragOverFam === famId ? 'drop-target' : ''}
+            >
+              <div className="legend-item family-header" style={{ fontWeight: 600 }}>
                 <span className="legend-swatch" style={{ background: famColor }} />
                 <span>Family {famId}</span>
               </div>
               {indices.map((idx) => (
-                <div key={idx} className={`legend-item${visibleSet.has(idx) ? ' visible' : ''}`} style={{ paddingLeft: 22 }}>
+                <div key={idx}
+                     className={`legend-item feature${visibleSet.has(idx) ? ' visible' : ''} ${editMode ? 'draggable' : ''}`}
+                     style={{ paddingLeft: 22 }}
+                     draggable={!!editMode}
+                     onDragStart={editMode ? (e) => handleDragStartFeature(idx, e) : undefined}
+                >
                   <span className="legend-swatch" style={{ background: colors[idx] || famColor }} />
                   <span title={col_labels[idx]} style={{ flex: 1 }}>{col_labels[idx]}</span>
-                  {editMode && (
-                    <input
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={families[idx] ?? 0}
-                      onChange={(e) => updateFam(idx, e.target.value)}
-                      style={{ width: 64, height: 28, border: '1px solid #e5e7eb', borderRadius: 6 }}
-                    />
-                  )}
                 </div>
               ))}
             </div>
           )
         })}
+        {editMode && (
+          <div className={`new-family ${dragOverFam === '__new__' ? 'drop-target' : ''}`}
+               onDragOver={(e) => handleDragOverFamily('__new__', e)}
+               onDragLeave={handleDragLeaveFamily}
+               onDrop={handleDropToNewFamily}
+          >
+            + New Family (drop feature here)
+          </div>
+        )}
         <div className="legend-item" style={{ justifyContent: 'space-between', marginTop: 8 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <input type="checkbox" checked={editMode} onChange={(e) => setEditMode(e.target.checked)} />

@@ -21,6 +21,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
 .content { display: grid; grid-template-columns: 1fr 320px; grid-auto-rows: auto; gap: 24px; align-items: start; }
 .main { width: 100%; grid-column: 1; }
 .rows-below { grid-column: 1; }
+.upload-panel { grid-column: 2; grid-row: 1; }
 .color-panel { grid-column: 2; grid-row: 1 / span 2; height: 100%; display: flex; flex-direction: column; }
 
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
@@ -62,3 +63,11 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
 .legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
 .legend-item.visible { font-weight: 600; }
 .legend-swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); }
+
+/* Drag-and-drop affordances */
+.legend-item.family-header { cursor: default; }
+.legend-item.feature { cursor: default; }
+.legend-item.feature.draggable { cursor: grab; }
+.drop-target { background: #eef2ff; border-radius: 6px; }
+.new-family { display: flex; align-items: center; gap: 8px; padding: 6px; border: 1px dashed var(--border); border-radius: 6px; color: var(--muted); }
+.new-family.drop-target { background: #eef2ff; border-color: var(--accent); color: var(--text); }

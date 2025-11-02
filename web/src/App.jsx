@@ -245,7 +245,8 @@ export default function App() {
           )}
         </div>
         <div className="row rows-below">
-          <div className="panel padded file-row" style={{ flex: 1 }}>
+          <div className="panel padded controls-grid" style={{ flex: 2 }}>
+            <label>Choose File</label>
             <input
               className="file-input"
               type="file"
@@ -256,15 +257,6 @@ export default function App() {
                 if (f) handleUpload(f)
               }}
             />
-            {dataset && (
-              <div className="meta">
-                <div>Dataset</div> <div><code>{dataset.datasetId}</code></div>
-                <div>Type</div> <div>{dataset.type}</div>
-                <div>Features</div> <div>{dataset.col_labels?.length ?? 0}</div>
-              </div>
-            )}
-          </div>
-          <div className="panel padded controls-grid" style={{ flex: 2 }}>
             {(() => {
               const maxFeatures = (dataset?.col_labels?.length) || (payload?.col_labels?.length) || 100
               return (
