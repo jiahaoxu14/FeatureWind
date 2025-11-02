@@ -16,7 +16,7 @@ function bilinear(grid, gx, gy) {
   return top * (1 - b) + bot * b
 }
 
-export default function WindVane({ payload, focus, selectedCells = [], size = 220 }) {
+export default function WindVane({ payload, focus, selectedCells = [], size = 220, useConvexHull = true, showHull = false }) {
   const canvasRef = useRef(null)
 
   const { bbox = [0, 1, 0, 1], grid_res = 25, uAll = [], vAll = [], colors = [], selection = {}, unmasked = null, dominant = null } = payload || {}
@@ -135,18 +135,80 @@ export default function WindVane({ payload, focus, selectedCells = [], size = 22
     ctx.stroke()
 
     if (!isMasked) {
-      // Draw per-feature arrows (scaled to ring)
-      for (const fv of featureVectors) {
-        const scale = fv.mag > 0 ? (ringR * 0.9 * (fv.mag / maxMag)) : 0
-        const x2 = cx + (fv.u / (fv.mag || 1)) * scale
-        const y2 = cy - (fv.v / (fv.mag || 1)) * scale
+      // Compute endpoints in canvas coordinates for convex-hull filtering
+      const endpoints = featureVectors.map((fv) => {
+        const scale = fv.mag > 0 ? (ringR * 0.9 * (fv.mag / (maxMag || 1))) : 0
+        const ux = fv.mag > 0 ? (fv.u / fv.mag) : 0
+        const uy = fv.mag > 0 ? (fv.v / fv.mag) : 0
+        const x2 = cx + ux * scale
+        const y2 = cy - uy * scale
+        return { x2, y2 }
+      })
+
+      // Convex hull (Monotone chain) over endpoints (skip near-duplicate points)
+      function convexHullIdx(pts) {
+        if (!pts || pts.length < 3) return pts.map((_, i) => i)
+        // Build array of [x,y,idx]
+        const arr = pts.map((p, i) => [p.x2, p.y2, i])
+        // Sort by x then y
+        arr.sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]))
+        const cross = (o, a, b) => (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
+        const lower = []
+        for (const p of arr) {
+          while (lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) lower.pop()
+          lower.push(p)
+        }
+        const upper = []
+        for (let k = arr.length - 1; k >= 0; k--) {
+          const p = arr[k]
+          while (upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) upper.pop()
+          upper.push(p)
+        }
+        // Concatenate and drop last of each (duplicate endpoints)
+        const hull = lower.slice(0, -1).concat(upper.slice(0, -1))
+        // Return unique indices in order
+        const seen = new Set()
+        const idxs = []
+        for (const h of hull) { if (!seen.has(h[2])) { seen.add(h[2]); idxs.push(h[2]) } }
+        return idxs
+      }
+
+      let hullSet = null
+      if (useConvexHull && endpoints.length >= 3) {
+        try {
+          const hullIdx = convexHullIdx(endpoints)
+          hullSet = new Set(hullIdx)
+          if (showHull && hullIdx.length >= 3) {
+            ctx.strokeStyle = 'rgba(114,114,114,0.7)'
+            ctx.lineWidth = 1.0
+            ctx.beginPath()
+            for (let k = 0; k < hullIdx.length; k++) {
+              const p = endpoints[hullIdx[k]]
+              if (k === 0) ctx.moveTo(p.x2, p.y2); else ctx.lineTo(p.x2, p.y2)
+            }
+            // close
+            const p0 = endpoints[hullIdx[0]]
+            ctx.lineTo(p0.x2, p0.y2)
+            ctx.stroke()
+          }
+        } catch (e) { hullSet = null }
+      }
+
+      // Draw per-feature arrows (filtered by hull if enabled)
+      featureVectors.forEach((fv, i) => {
+        if (hullSet && !hullSet.has(i)) return
+        const scale = fv.mag > 0 ? (ringR * 0.9 * (fv.mag / (maxMag || 1))) : 0
+        const ux = fv.mag > 0 ? (fv.u / fv.mag) : 0
+        const uy = fv.mag > 0 ? (fv.v / fv.mag) : 0
+        const x2 = cx + ux * scale
+        const y2 = cy - uy * scale
         ctx.strokeStyle = fv.color
         ctx.lineWidth = 2
         ctx.beginPath()
         ctx.moveTo(cx, cy)
         ctx.lineTo(x2, y2)
         ctx.stroke()
-      }
+      })
 
       // Draw direction dot on ring for summed vector
       const sumMag = Math.hypot(sumUx, sumVy)

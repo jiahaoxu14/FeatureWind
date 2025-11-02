@@ -131,6 +131,17 @@ export default function App() {
     const hasUnmasked = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
     const hasDominant = Array.isArray(dominant) && dominant.length === H && dominant[0].length === W
     const eps = 1e-9
+    // Helper: convex hull (monotone chain) returns indices
+    function hullIdx(pts) {
+      if (!pts || pts.length < 3) return pts.map((_, i) => i)
+      const arr = pts.map((p, i) => [p[0], p[1], i]).sort((a,b)=> (a[0]===b[0]? a[1]-b[1] : a[0]-b[0]))
+      const cross = (o,a,b)=> (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
+      const lower=[]; for (const p of arr){ while(lower.length>=2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) lower.pop(); lower.push(p) }
+      const upper=[]; for (let k=arr.length-1;k>=0;k--){ const p=arr[k]; while(upper.length>=2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) upper.pop(); upper.push(p) }
+      const hull = lower.slice(0,-1).concat(upper.slice(0,-1))
+      const seen=new Set(), idxs=[]; for (const h of hull){ if(!seen.has(h[2])){ seen.add(h[2]); idxs.push(h[2]) } }
+      return idxs
+    }
     if (useSel) {
       // Filter to valid cells
       const valid = []
@@ -148,14 +159,22 @@ export default function App() {
         }
       }
       if (!valid.length) return result
+      // Build vectors for selected features
+      const vecs = []
+      const feats = []
       for (const idx of indices) {
         let u = 0, v = 0
-        for (const c of valid) {
-          u += (uAll[idx]?.[c.i]?.[c.j] ?? 0)
-          v += (vAll[idx]?.[c.i]?.[c.j] ?? 0)
-        }
-        if ((u*u + v*v) > eps) result.add(idx)
+        for (const c of valid) { u += (uAll[idx]?.[c.i]?.[c.j] ?? 0); v += (vAll[idx]?.[c.i]?.[c.j] ?? 0) }
+        const mag2 = u*u + v*v
+        if (mag2 > eps) { vecs.push([u, v]); feats.push(idx) }
       }
+      if (vecs.length === 0) return result
+      if (vecs.length < 3) { feats.forEach(i=>result.add(i)); return result }
+      // Normalize endpoints by max magnitude to mirror vane scaling
+      let maxMag = 0; for (const [u,v] of vecs){ const m=Math.hypot(u,v); if(m>maxMag) maxMag=m }
+      const pts = vecs.map(([u,v]) => [u/(maxMag||1), v/(maxMag||1)])
+      const hidx = hullIdx(pts)
+      for (const hi of hidx) result.add(feats[hi])
       return result
     }
     // Hover mode: snap to clicked/hovered cell center indices using floor mapping
@@ -167,11 +186,20 @@ export default function App() {
     // Masked?
     if (hasUnmasked && !unmasked[ci][cj]) return result
     if (hasDominant && dominant[ci][cj] === -1) return result
+    // Build vectors
+    const vecs = []
+    const feats = []
     for (const idx of indices) {
       const u = (uAll[idx]?.[ci]?.[cj] ?? 0)
       const v = (vAll[idx]?.[ci]?.[cj] ?? 0)
-      if ((u*u + v*v) > eps) result.add(idx)
+      if ((u*u + v*v) > eps) { vecs.push([u, v]); feats.push(idx) }
     }
+    if (vecs.length === 0) return result
+    if (vecs.length < 3) { feats.forEach(i=>result.add(i)); return result }
+    let maxMag = 0; for (const [u,v] of vecs){ const m=Math.hypot(u,v); if(m>maxMag) maxMag=m }
+    const pts = vecs.map(([u,v]) => [u/(maxMag||1), v/(maxMag||1)])
+    const hidx = hullIdx(pts)
+    for (const hi of hidx) result.add(feats[hi])
     return result
   }, [payload, selectedCells, vaneFocus])
 
