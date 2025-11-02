@@ -3,6 +3,7 @@ import './styles.css'
 import { uploadFile, compute } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
 import WindVane from './components/WindVane.jsx'
+import ColorLegend from './components/ColorLegend.jsx'
 
 export default function App() {
   const [file, setFile] = useState(null)
@@ -202,6 +203,10 @@ export default function App() {
             <div>
               <button onClick={clearSelection} style={{ height: 32, padding: '0 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff' }}>Clear (C)</button>
             </div>
+          </div>
+          <div className="panel padded" style={{ flex: 1 }}>
+            <p className="panel-title">Color Families</p>
+            {payload ? <ColorLegend payload={payload} /> : <div className="hint">Upload a dataset to see colors</div>}
           </div>
           {error && <div className="hint" style={{ color: '#b91c1c', alignSelf: 'center' }}>{error}</div>}
         </div>

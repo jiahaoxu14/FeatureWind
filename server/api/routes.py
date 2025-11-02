@@ -285,11 +285,58 @@ def compute():
         except Exception:
             pass
 
-    # Colors: simple per-feature palette
-    palette = list(getattr(fw_config, "GLASBEY_COLORS", []))
-    if not palette:
-        palette = ["#1f77b4"]
-    colors = [palette[i % len(palette)] for i in range(n_features)]
+    # Family colors to match original createwind.py behavior
+    family_assignments = None
+    try:
+        use_per_feature = bool(getattr(fw_config, 'USE_PER_FEATURE_COLORS', False))
+        if use_per_feature:
+            # Ignore families; assign distinct colors to each feature
+            palette = list(getattr(fw_config, 'GLASBEY_COLORS', [])) or ['#1f77b4']
+            colors = [palette[i % len(palette)] for i in range(n_features)]
+            # Treat each feature as its own family for legend consistency
+            family_assignments = list(range(n_features))
+        else:
+            from featurewind.analysis import feature_clustering
+            from featurewind.visualization import color_system
+            n_families = min(n_features, int(getattr(fw_config, 'MAX_FEATURE_FAMILIES', 4)))
+            family_assignments, _, _ = feature_clustering.cluster_features_by_direction(
+                grid_u_all_feats, grid_v_all_feats, n_families=n_families
+            )
+            # Assign family colors (same color within a family)
+            colors = color_system.assign_family_colors(family_assignments)
+            # Distinct colors when few are selected — applied per FAMILY to keep same-family colors identical
+            try:
+                n_selected = len(top_k_indices) if feature_index is None else 1
+                if (bool(getattr(fw_config, 'COLOR_BY_FEATURE_WHEN_FEW', True))
+                    and n_selected <= int(getattr(fw_config, 'FEATURE_COLOR_DISTINCT_THRESHOLD', 5))):
+                    palette = list(getattr(fw_config, 'GLASBEY_COLORS', [])) or ['#1f77b4']
+                    # Determine families present among the selected features
+                    sel_feats = (top_k_indices if feature_index is None else [feature_index])
+                    sel_families_ordered = []
+                    fam_to_color = {}
+                    for feat_idx in sel_feats:
+                        fam_id = int(family_assignments[feat_idx]) if family_assignments is not None else feat_idx
+                        if fam_id not in fam_to_color:
+                            # Assign next palette color to this family
+                            color = palette[len(fam_to_color) % len(palette)]
+                            fam_to_color[fam_id] = color
+                            sel_families_ordered.append(fam_id)
+                    # Apply family color to all features, preserving same color within each family
+                    for idx, fam_id in enumerate(family_assignments):
+                        if fam_id in fam_to_color:
+                            colors[idx] = fam_to_color[fam_id]
+            except Exception:
+                pass
+        # Single feature override color
+        try:
+            if feature_index is not None and 0 <= feature_index < len(colors):
+                colors[feature_index] = getattr(fw_config, 'SINGLE_FEATURE_COLOR', '#EE6677')
+        except Exception:
+            pass
+    except Exception:
+        # Fallback: simple distinct palette
+        palette = list(getattr(fw_config, "GLASBEY_COLORS", [])) or ["#1f77b4"]
+        colors = [palette[i % len(palette)] for i in range(n_features)]
 
     bbox = list(getattr(fw_config, "bounding_box", [0, 1, 0, 1]))
 
@@ -310,6 +357,8 @@ def compute():
         "vAll": tolist(grid_v_all_feats),
         "dominant": tolist(cell_dominant_features),
         "colors": colors,
+        # Return family assignments when available
+        **({"family_assignments": tolist(family_assignments)} if 'family_assignments' in locals() else {}),
         "selection": selection_obj,
         "meta": {"dtypeHint": "float32", "order": "row-major"},
     }

@@ -49,3 +49,9 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
 .vane-header { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
 
 .panel-title { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--text); }
+
+/* Legend */
+.legend-list { display: grid; grid-template-columns: 1fr; row-gap: 6px; max-height: 260px; overflow: auto; padding-right: 4px; }
+.legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
+.legend-item.selected { font-weight: 600; }
+.legend-swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); }
