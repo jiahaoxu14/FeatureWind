@@ -161,10 +161,16 @@ def tsne(X, no_dims=2, maxIter = 999, initial_dims=50, perplexity=30.0, save_par
         Q = num / torch.sum(num)
         Q = torch.max(Q, torch.tensor([1e-12], device=device, dtype=dtype))
 
-        # Compute gradient
+        # Compute gradient (vectorized over all points)
+        # Original per-point form:
+        #   dY[i, :] = sum_j ((P[j,i]-Q[j,i]) * num[j,i]) * (Y[i,:] - Y[j,:])
+        # Let B = (P - Q) .* num (elementwise). Then for all i:
+        #   dY = (sum_j B[i,j]) * Y - B @ Y
+        # This matches the original loop when B is symmetric (as here).
         PQ = P - Q
-        for i in range(n):
-            dY[i, :] = torch.sum((PQ[:, i] * num[:, i]).repeat(no_dims, 1).t() * (Y[i, :] - Y), 0)
+        B = PQ * num                      # NxN
+        sum_B = torch.sum(B, dim=1, keepdim=True)  # Nx1
+        dY = sum_B * Y - torch.matmul(B, Y)        # Nxno_dims
 
         # Perform the update
         if iter < 20:
