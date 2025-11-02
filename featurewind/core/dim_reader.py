@@ -64,7 +64,6 @@ class ProjectionRunner:
         use_batched = 'is_grads_batched' in sig.parameters
 
         if use_batched:
-            # Choose a batch size to control memory. 64–256 generally works well on A30.
             # Choose batch size based on N to cap grad_outputs memory.
             # grad_outputs tensor has shape (2*b, N, 2) => elements ~= 4*b*N
             # Aim to keep <= ~8e6 elements (~32MB in fp32) by default.
@@ -75,7 +74,8 @@ class ProjectionRunner:
             grads_tensor = torch.zeros(n_points, 2, n_features, dtype=torch.float32, device=device)
 
             print(f"  Using batched autograd with batch_size={batch_size}")
-            for start in range(0, n_points, batch_size):
+            start = 0
+            while start < n_points:
                 end = min(start + batch_size, n_points)
                 b = end - start
 
@@ -101,6 +101,30 @@ class ProjectionRunner:
                     # is_grads_batched not supported — fall back to per-point loop
                     use_batched = False
                     break
+                except RuntimeError as e:
+                    # Handle CUDA OOM by reducing batch size and retrying
+                    msg = str(e).lower()
+                    if ("out of memory" in msg or "cudnn_status_alloc_failed" in msg) and (batch_size > 1):
+                        new_bs = max(1, batch_size // 2)
+                        print(f"  CUDA OOM detected. Reducing batch_size {batch_size} -> {new_bs} and retrying…")
+                        batch_size = new_bs
+                        try:
+                            import gc
+                            gc.collect()
+                        except Exception:
+                            pass
+                        if torch.cuda.is_available():
+                            try:
+                                torch.cuda.empty_cache()
+                            except Exception:
+                                pass
+                        # Retry same 'start' with smaller batch
+                        continue
+                    else:
+                        # Unknown runtime error — fall back to per-point loop
+                        print(f"  Batched autograd failed with RuntimeError: {e}. Falling back to per-point.")
+                        use_batched = False
+                        break
 
                 # Extract only the needed rows (diagonal per selected i)
                 for bi, i in enumerate(range(start, end)):
@@ -112,6 +136,9 @@ class ProjectionRunner:
                 # Progress update
                 progress_pct = end / n_points * 100
                 print(f"  Computing gradients: {end}/{n_points} points ({progress_pct:.1f}%)")
+
+                # Advance window
+                start = end
 
             if use_batched:
                 # Fill jacobian and numpy equivalents

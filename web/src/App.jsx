@@ -206,7 +206,7 @@ export default function App() {
   return (
     <div className="app">
       <div className="header">
-        <h2 className="title">FeatureWind Web</h2>
+        <h2 className="title">Feature Wind Map</h2>
         <p className="subtitle">Interactive feature wind visualization</p>
       </div>
       <div className="content">
@@ -233,7 +233,7 @@ export default function App() {
                 />
               </div>
               <div className="panel canvas-frame">
-                <p className="panel-title">Wind Vane {selectedCells.length > 0 ? `(selection: ${selectedCells.length} cells)` : (vaneFocus ? `(x=${vaneFocus.x.toFixed(3)}, y=${vaneFocus.y.toFixed(3)})` : '(center)')}</p>
+                <p className="panel-title">Wind Vane{selectedCells.length > 0 ? ` (selection: ${selectedCells.length} cells)` : ''}</p>
                 <WindVane payload={payload} focus={vaneFocus} selectedCells={selectedCells} size={420} />
               </div>
             </div>
