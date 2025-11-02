@@ -228,7 +228,7 @@ export default function App() {
                   trailTailMin={trailTailMin}
                   trailTailExp={trailTailExp}
                   maxLifetime={maxLifetime}
-                  size={420}
+                  size={720}
                   selectedCells={selectedCells}
                 />
               </div>
@@ -239,7 +239,7 @@ export default function App() {
             </div>
           ) : (
             <div className="row">
-              <div className="panel placeholder" style={{ width: 420, height: 420 }}>Wind Map</div>
+              <div className="panel placeholder" style={{ width: 720, height: 720 }}>Wind Map</div>
               <div className="panel placeholder" style={{ width: 420, height: 420 }}>Wind Vane</div>
             </div>
           )}
@@ -265,36 +265,89 @@ export default function App() {
             )}
           </div>
           <div className="panel padded controls-grid" style={{ flex: 2 }}>
-            <label>Top-K</label>
-            <input
-              type="number"
-              min={1}
-              value={topK}
-              onChange={(e) => setTopK(Math.max(1, Number(e.target.value)))}
-            />
+            {(() => {
+              const maxFeatures = (dataset?.col_labels?.length) || (payload?.col_labels?.length) || 100
+              return (
+                <>
+                  <label>Top-K</label>
+                  <div className="slider-row">
+                    <input type="range" min={1} max={maxFeatures} step={1} value={topK}
+                      onChange={(e) => setTopK(Math.max(1, Number(e.target.value)))} />
+                    <span className="control-val">{topK}</span>
+                  </div>
+                </>
+              )
+            })()}
+
             <label>Grid Res</label>
-            <input type="number" min={8} max={200} value={gridRes} onChange={(e) => setGridRes(e.target.value)} />
+            <div className="slider-row">
+              <input type="range" min={8} max={200} step={1} value={gridRes}
+                onChange={(e) => setGridRes(Number(e.target.value))} />
+              <span className="control-val">{gridRes}</span>
+            </div>
+
             <label>Mask Buffer</label>
-            <input type="number" step="0.05" min={0} max={2} value={maskBufferFactor}
-                   onChange={(e) => setMaskBufferFactor(e.target.value)} />
+            <div className="slider-row">
+              <input type="range" min={0} max={2} step={0.05} value={maskBufferFactor}
+                onChange={(e) => setMaskBufferFactor(Number(e.target.value))} />
+              <span className="control-val">{maskBufferFactor.toFixed(2)}</span>
+            </div>
+
             <label>Show Grid</label>
             <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+
             <label>Particles</label>
-            <input type="number" min={50} max={5000} value={particleCount} onChange={(e) => setParticleCount(Number(e.target.value))} />
+            <div className="slider-row">
+              <input type="range" min={50} max={5000} step={50} value={particleCount}
+                onChange={(e) => setParticleCount(Number(e.target.value))} />
+              <span className="control-val">{particleCount}</span>
+            </div>
+
             <label>Consistent Speed</label>
             <input type="checkbox" checked={consistentSpeed} onChange={(e) => setConsistentSpeed(e.target.checked)} />
+
             <label>Speed (const rel)</label>
-            <input type="number" step="0.01" min={0.0} max={1.0} value={speedConstRel} onChange={(e) => setSpeedConstRel(Number(e.target.value))} />
+            <div className="slider-row">
+              <input type="range" min={0} max={0.2} step={0.005} value={speedConstRel}
+                onChange={(e) => setSpeedConstRel(Number(e.target.value))} />
+              <span className="control-val">{speedConstRel.toFixed(3)}</span>
+            </div>
+
             <label>Speed Scale</label>
-            <input type="number" step="0.1" min={0.1} max={10} value={speedScale} onChange={(e) => setSpeedScale(Number(e.target.value))} />
+            <div className="slider-row">
+              <input type="range" min={0.1} max={10} step={0.1} value={speedScale}
+                onChange={(e) => setSpeedScale(Number(e.target.value))} />
+              <span className="control-val">{speedScale.toFixed(1)}</span>
+            </div>
+
             <label>Tail Length</label>
-            <input type="number" min={2} max={60} value={tailLength} onChange={(e) => setTailLength(Number(e.target.value))} />
+            <div className="slider-row">
+              <input type="range" min={2} max={60} step={1} value={tailLength}
+                onChange={(e) => setTailLength(Number(e.target.value))} />
+              <span className="control-val">{tailLength}</span>
+            </div>
+
             <label>Tail Min Alpha</label>
-            <input type="number" step="0.05" min={0} max={1} value={trailTailMin} onChange={(e) => setTrailTailMin(Number(e.target.value))} />
+            <div className="slider-row">
+              <input type="range" min={0} max={1} step={0.01} value={trailTailMin}
+                onChange={(e) => setTrailTailMin(Number(e.target.value))} />
+              <span className="control-val">{trailTailMin.toFixed(2)}</span>
+            </div>
+
             <label>Tail Exp</label>
-            <input type="number" step="0.1" min={0.5} max={6} value={trailTailExp} onChange={(e) => setTrailTailExp(Number(e.target.value))} />
+            <div className="slider-row">
+              <input type="range" min={0.5} max={6} step={0.1} value={trailTailExp}
+                onChange={(e) => setTrailTailExp(Number(e.target.value))} />
+              <span className="control-val">{trailTailExp.toFixed(1)}</span>
+            </div>
+
             <label>Max Lifetime</label>
-            <input type="number" min={1} max={300} value={maxLifetime} onChange={(e) => setMaxLifetime(Number(e.target.value))} />
+            <div className="slider-row">
+              <input type="range" min={1} max={300} step={1} value={maxLifetime}
+                onChange={(e) => setMaxLifetime(Number(e.target.value))} />
+              <span className="control-val">{maxLifetime}</span>
+            </div>
+
             <div className="spacer" />
             <label>Selection</label>
             <div>

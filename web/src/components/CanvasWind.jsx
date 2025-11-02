@@ -316,7 +316,9 @@ export default function CanvasWind({
       }
       for (const p of particles) {
         for (let t = TAIL_LENGTH - 1; t >= 0; t--) {
-          const aTail = TRAIL_TAIL_MIN + (1 - TRAIL_TAIL_MIN) * Math.pow((t + 1) / TAIL_LENGTH, TRAIL_TAIL_EXP)
+          // Fade from tail (low alpha) to head (high alpha)
+          const relHead = (TAIL_LENGTH - t) / TAIL_LENGTH
+          const aTail = TRAIL_TAIL_MIN + (1 - TRAIL_TAIL_MIN) * Math.pow(relHead, TRAIL_TAIL_EXP)
           const x1 = p.hist[t + 1].x
           const y1 = p.hist[t + 1].y
           const x0 = p.hist[t].x
@@ -393,7 +395,21 @@ export default function CanvasWind({
       canvas.removeEventListener('mousemove', handleMove)
       canvas.removeEventListener('click', handleClick)
     }
-  }, [bbox, grid_res, uSum, vSum, positions, particleCount])
+  }, [
+    bbox,
+    grid_res,
+    uSum,
+    vSum,
+    positions,
+    particleCount,
+    tailLength,
+    trailTailMin,
+    trailTailExp,
+    maxLifetime,
+    consistentSpeed,
+    speedConstRel,
+    speedScale,
+  ])
 
   return (
     <canvas
