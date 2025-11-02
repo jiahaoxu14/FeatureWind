@@ -47,6 +47,7 @@ export default function CanvasWind({
   maxLifetime = 200,
   size = 600,
   selectedCells = [],
+  featureIndices = null,
 }) {
   const canvasRef = useRef(null)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
@@ -69,11 +70,12 @@ export default function CanvasWind({
   } = payload || {}
 
   const indices = useMemo(() => {
+    if (Array.isArray(featureIndices) && featureIndices.length > 0) return featureIndices
     if (!selection) return []
     if (selection.topKIndices) return selection.topKIndices
     if (selection.featureIndex !== undefined) return [selection.featureIndex]
     return []
-  }, [selection])
+  }, [selection, featureIndices])
 
   const uSum = useMemo(() => sumSelectedGrid(uAll, indices), [uAll, indices])
   const vSum = useMemo(() => sumSelectedGrid(vAll, indices), [vAll, indices])
@@ -303,7 +305,7 @@ export default function CanvasWind({
         ctx.fill()
       }
 
-      // Draw trails as fading line segments (colored by dominant feature)
+      // Draw trails as fading line segments (colored by feature family)
       ctx.lineWidth = 1.2
       ctx.lineCap = 'round'
       const p99 = magInfo?.p99 || 1.0
@@ -314,6 +316,21 @@ export default function CanvasWind({
         if (!m) return [20, 20, 20]
         return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
       }
+      // If exactly one feature is manually selected, force its color globally
+      const singleColorOverride = (Array.isArray(featureIndices) && featureIndices.length === 1)
+        ? (function () {
+            const idx = featureIndices[0]
+            function hexToRgb(hex) {
+              if (!hex || typeof hex !== 'string') return [20, 20, 20]
+              const m = hex.match(/^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i)
+              if (!m) return [20, 20, 20]
+              return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+            }
+            const c = (colors && idx >= 0 && idx < colors.length) ? colors[idx] : '#141414'
+            return hexToRgb(c)
+          })()
+        : null
+
       for (const p of particles) {
         for (let t = TAIL_LENGTH - 1; t >= 0; t--) {
           // Fade from tail (low alpha) to head (high alpha)
@@ -330,14 +347,30 @@ export default function CanvasWind({
           const m = Math.hypot(u0, v0)
           const aField = Math.max(0, Math.min(1, m / p99))
 
-          // Sample dominant feature index (nearest cell) and color
+          // Determine segment color by family
           let rgb = [20, 20, 20]
-          if (dominant && colors && colors.length) {
+          if (singleColorOverride) {
+            rgb = singleColorOverride
+          } else {
             const mi = Math.max(0, Math.min(H - 1, Math.round(gy0)))
             const mj = Math.max(0, Math.min(W - 1, Math.round(gx0)))
-            const fid = dominant[mi]?.[mj]
-            if (typeof fid === 'number' && fid >= 0 && fid < colors.length) {
-              rgb = hexToRgb(colors[fid])
+            if (Array.isArray(featureIndices) && featureIndices.length > 1) {
+              // Dominant among the selected features only
+              let bestIdx = -1
+              let bestMag2 = -1
+              for (const fi of featureIndices) {
+                const u = (uAll[fi]?.[mi]?.[mj] ?? 0)
+                const v = (vAll[fi]?.[mi]?.[mj] ?? 0)
+                const mag2 = u*u + v*v
+                if (mag2 > bestMag2) { bestMag2 = mag2; bestIdx = fi }
+              }
+              if (bestIdx >= 0) rgb = hexToRgb(colors[bestIdx] || '#141414')
+            } else if (dominant && colors && colors.length) {
+              // Fallback to backend-provided dominant feature
+              const fid = dominant[mi]?.[mj]
+              if (typeof fid === 'number' && fid >= 0 && fid < colors.length) {
+                rgb = hexToRgb(colors[fid])
+              }
             }
           }
 
@@ -401,6 +434,9 @@ export default function CanvasWind({
     uSum,
     vSum,
     positions,
+    colors,
+    dominant,
+    featureIndices,
     particleCount,
     tailLength,
     trailTailMin,

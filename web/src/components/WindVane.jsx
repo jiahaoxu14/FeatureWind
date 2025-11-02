@@ -16,7 +16,7 @@ function bilinear(grid, gx, gy) {
   return top * (1 - b) + bot * b
 }
 
-export default function WindVane({ payload, focus, selectedCells = [], size = 220, useConvexHull = true, showHull = false }) {
+export default function WindVane({ payload, focus, selectedCells = [], size = 220, useConvexHull = true, showHull = false, featureIndices = null }) {
   const canvasRef = useRef(null)
 
   const { bbox = [0, 1, 0, 1], grid_res = 25, uAll = [], vAll = [], colors = [], selection = {}, unmasked = null, dominant = null } = payload || {}
@@ -24,11 +24,12 @@ export default function WindVane({ payload, focus, selectedCells = [], size = 22
   const H = grid_res, W = grid_res
 
   const indices = useMemo(() => {
+    if (Array.isArray(featureIndices) && featureIndices.length > 0) return featureIndices
     if (!selection) return []
     if (selection.topKIndices) return selection.topKIndices
     if (selection.featureIndex !== undefined) return [selection.featureIndex]
     return []
-  }, [selection])
+  }, [selection, featureIndices])
 
   // Resolve focus (x,y) → (gx,gy)
   const [gx, gy] = useMemo(() => {
@@ -278,7 +279,7 @@ export default function WindVane({ payload, focus, selectedCells = [], size = 22
     ctx.beginPath()
     ctx.arc(cx, cy, 3, 0, Math.PI * 2)
     ctx.fill()
-  }, [uAll, vAll, colors, indices, gx, gy, unmasked, dominant, selectedCells])
+  }, [uAll, vAll, colors, indices, gx, gy, unmasked, dominant, selectedCells, useConvexHull, showHull])
 
   return (
     <canvas ref={canvasRef} width={size} height={size} style={{ width: `${size}px`, height: `${size}px`, border: '1px solid #eee' }} />

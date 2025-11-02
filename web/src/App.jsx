@@ -26,6 +26,17 @@ export default function App() {
   const [trailTailExp, setTrailTailExp] = useState(2.0)
   const [maxLifetime, setMaxLifetime] = useState(200)
   const [maskBufferFactor, setMaskBufferFactor] = useState(0.2)
+  const [showHull, setShowHull] = useState(false)
+  // Manual feature selection (overrides Top-K for visualization when non-empty)
+  const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
+  const [featureFilter, setFeatureFilter] = useState('')
+
+  // Clamp manual feature selection when payload changes (e.g., new dataset)
+  useEffect(() => {
+    const n = (payload?.col_labels?.length) || 0
+    if (!n) { setSelectedFeatureIndices([]); return }
+    setSelectedFeatureIndices((prev) => prev.filter((i) => i >= 0 && i < n))
+  }, [payload?.col_labels])
 
   async function handleUpload(selected) {
     const f = selected || file
@@ -123,7 +134,8 @@ export default function App() {
     const H = grid_res, W = grid_res
     // Determine selected features (indices rendered in vane)
     let indices = []
-    if (selection && Array.isArray(selection.topKIndices)) indices = selection.topKIndices
+    if (Array.isArray(selectedFeatureIndices) && selectedFeatureIndices.length > 0) indices = selectedFeatureIndices
+    else if (selection && Array.isArray(selection.topKIndices)) indices = selection.topKIndices
     else if (selection && typeof selection.featureIndex === 'number') indices = [selection.featureIndex]
     if (!indices.length) return result
     // Selection mode
@@ -201,7 +213,7 @@ export default function App() {
     const hidx = hullIdx(pts)
     for (const hi of hidx) result.add(feats[hi])
     return result
-  }, [payload, selectedCells, vaneFocus])
+  }, [payload, selectedCells, vaneFocus, selectedFeatureIndices])
 
   return (
     <div className="app">
@@ -230,11 +242,12 @@ export default function App() {
                   maxLifetime={maxLifetime}
                   size={720}
                   selectedCells={selectedCells}
+                  featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null}
                 />
               </div>
               <div className="panel canvas-frame">
                 <p className="panel-title">Wind Vane{selectedCells.length > 0 ? ` (selection: ${selectedCells.length} cells)` : ''}</p>
-                <WindVane payload={payload} focus={vaneFocus} selectedCells={selectedCells} size={420} />
+                <WindVane payload={payload} focus={vaneFocus} selectedCells={selectedCells} size={420} showHull={showHull} featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null} />
               </div>
             </div>
           ) : (
@@ -264,12 +277,63 @@ export default function App() {
                   <label>Top-K</label>
                   <div className="slider-row">
                     <input type="range" min={1} max={maxFeatures} step={1} value={topK}
+                      disabled={selectedFeatureIndices.length > 0}
                       onChange={(e) => setTopK(Math.max(1, Number(e.target.value)))} />
                     <span className="control-val">{topK}</span>
                   </div>
                 </>
               )
             })()}
+
+            {payload && (
+              <>
+                <label>Feature Selection {selectedFeatureIndices.length > 0 ? `(${selectedFeatureIndices.length} selected)` : '(all)'}</label>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                  <input
+                    type="text"
+                    placeholder="Filter features..."
+                    value={featureFilter}
+                    onChange={(e) => setFeatureFilter(e.target.value)}
+                    style={{ flex: 1, height: 28, padding: '0 8px', borderRadius: 6, border: '1px solid #e5e7eb' }}
+                  />
+                  <button
+                    onClick={() => {
+                      const n = (payload?.col_labels?.length) || 0
+                      setSelectedFeatureIndices(Array.from({ length: n }, (_, i) => i))
+                    }}
+                    style={{ height: 28, padding: '0 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff' }}
+                  >All</button>
+                  <button
+                    onClick={() => setSelectedFeatureIndices([])}
+                    style={{ height: 28, padding: '0 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff' }}
+                  >None</button>
+                </div>
+                <div style={{ maxHeight: 180, overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: 6, padding: 8 }}>
+                  {(payload.col_labels || []).map((name, idx) => {
+                    const f = (featureFilter || '').toLowerCase()
+                    if (f && !String(name).toLowerCase().includes(f)) return null
+                    const checked = selectedFeatureIndices.includes(idx)
+                    return (
+                      <label key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            setSelectedFeatureIndices((prev) => {
+                              const set = new Set(prev)
+                              if (e.target.checked) set.add(idx); else set.delete(idx)
+                              return Array.from(set).sort((a,b)=>a-b)
+                            })
+                          }}
+                        />
+                        <span title={name} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+                <div className="hint" style={{ marginTop: 6, color: '#6b7280' }}>Manual selection overrides Top‑K for visualization.</div>
+              </>
+            )}
 
             <label>Grid Res</label>
             <div className="slider-row">
@@ -287,6 +351,9 @@ export default function App() {
 
             <label>Show Grid</label>
             <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+
+            <label>Show Convex Hull</label>
+            <input type="checkbox" checked={showHull} onChange={(e) => setShowHull(e.target.checked)} />
 
             <label>Particles</label>
             <div className="slider-row">
