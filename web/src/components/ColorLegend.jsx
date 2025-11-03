@@ -120,7 +120,7 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
             <span className="control-val">{effectiveSelectedArray.length}</span>
           </div>
         </div>
-        <div className="spacer" />
+        {null}
         {famIds.map((famId) => {
           const indices = famMap.get(famId)
           const repIdx = indices && indices.length ? indices[0] : 0
@@ -213,7 +213,7 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
           <span className="control-val">{effectiveSelectedArray.length}</span>
         </div>
       </div>
-      <div className="spacer" />
+      {null}
       {col_labels.map((name, idx) => (
         <label key={idx} className={`legend-item${visibleSet.has(idx) ? ' visible' : ''}`} style={{ gap: 8 }}>
           <input

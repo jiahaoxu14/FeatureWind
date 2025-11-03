@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo } from 'react'
+import React, { useEffect, useRef, useMemo, useState } from 'react'
 
 function bilinear(grid, gx, gy) {
   const H = grid.length, W = grid[0].length
@@ -16,10 +16,30 @@ function bilinear(grid, gx, gy) {
   return top * (1 - b) + bot * b
 }
 
-export default function WindVane({ payload, focus, selectedCells = [], size = 220, useConvexHull = true, showHull = false, featureIndices = null }) {
+export default function WindVane({ payload, focus, selectedCells = [], size = null, useConvexHull = true, showHull = false, showLabels = false, featureIndices = null }) {
+  const containerRef = useRef(null)
   const canvasRef = useRef(null)
+  const [canvasSize, setCanvasSize] = useState(typeof size === 'number' && size > 0 ? size : 220)
 
-  const { bbox = [0, 1, 0, 1], grid_res = 25, uAll = [], vAll = [], colors = [], selection = {}, unmasked = null, dominant = null } = payload || {}
+  // Responsive sizing: if size prop not provided, fill container width
+  useEffect(() => {
+    if (typeof size === 'number' && size > 0) {
+      setCanvasSize(size)
+      return
+    }
+    function measure() {
+      const el = containerRef.current
+      if (!el) return
+      const w = Math.max(0, el.clientWidth)
+      const s = Math.max(120, Math.floor(w))
+      setCanvasSize(s)
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [size])
+
+  const { bbox = [0, 1, 0, 1], grid_res = 25, uAll = [], vAll = [], colors = [], selection = {}, unmasked = null, dominant = null, col_labels = [] } = payload || {}
   const [xmin, xmax, ymin, ymax] = bbox
   const H = grid_res, W = grid_res
 
@@ -225,6 +245,25 @@ export default function WindVane({ payload, focus, selectedCells = [], size = 22
           ctx.lineTo(xh2, yh2)
           ctx.stroke()
         } catch (e) { /* ignore arrow head errors */ }
+
+        // Optional: feature label at the end of the vector
+        if (showLabels) {
+          try {
+            const featIdx = indices[i]
+            const label = (Array.isArray(col_labels) && featIdx >= 0 && featIdx < col_labels.length) ? String(col_labels[featIdx]) : String(featIdx)
+            const off = Math.max(8, ringR * 0.06)
+            const lx = x2 + ux * off
+            const ly = y2 - uy * off
+            ctx.font = `${Math.max(10, Math.floor(ringR * 0.10))}px sans-serif`
+            ctx.textAlign = 'left'
+            ctx.textBaseline = 'middle'
+            ctx.lineWidth = 3
+            ctx.strokeStyle = '#ffffff'
+            ctx.strokeText(label, lx, ly)
+            ctx.fillStyle = fv.color || '#111'
+            ctx.fillText(label, lx, ly)
+          } catch (e) { /* ignore */ }
+        }
       })
 
       // Draw direction dot on ring for summed vector with original color/alpha method
@@ -279,9 +318,16 @@ export default function WindVane({ payload, focus, selectedCells = [], size = 22
     ctx.beginPath()
     ctx.arc(cx, cy, 3, 0, Math.PI * 2)
     ctx.fill()
-  }, [uAll, vAll, colors, indices, gx, gy, unmasked, dominant, selectedCells, useConvexHull, showHull])
+  }, [uAll, vAll, colors, indices, gx, gy, unmasked, dominant, selectedCells, useConvexHull, showHull, canvasSize, showLabels, col_labels])
 
   return (
-    <canvas ref={canvasRef} width={size} height={size} style={{ width: `${size}px`, height: `${size}px`, border: '1px solid #eee' }} />
+    <div ref={containerRef} style={{ width: '100%' }}>
+      <canvas
+        ref={canvasRef}
+        width={canvasSize}
+        height={canvasSize}
+        style={{ width: '100%', height: 'auto', border: '1px solid #eee', display: 'block' }}
+      />
+    </div>
   )
 }

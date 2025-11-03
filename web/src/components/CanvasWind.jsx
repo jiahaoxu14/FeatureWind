@@ -46,6 +46,8 @@ export default function CanvasWind({
   trailTailExp = 2.0,
   maxLifetime = 200,
   size = 600,
+  width = null,
+  height = null,
   selectedCells = [],
   featureIndices = null,
 }) {
@@ -572,12 +574,14 @@ export default function CanvasWind({
     speedScale,
   ])
 
+  const canvasWidth = (typeof width === 'number' && width > 0) ? width : size
+  const canvasHeight = (typeof height === 'number' && height > 0) ? height : size
   return (
     <canvas
       ref={canvasRef}
-      width={size}
-      height={size}
-      style={{ width: `${size}px`, height: `${size}px`, border: '1px solid #ddd' }}
+      width={canvasWidth}
+      height={canvasHeight}
+      style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px`, border: '1px solid #ddd' }}
     />
   )
 }

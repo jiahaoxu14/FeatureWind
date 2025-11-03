@@ -27,6 +27,7 @@ export default function App() {
   const [maxLifetime, setMaxLifetime] = useState(200)
   const [maskBufferFactor, setMaskBufferFactor] = useState(0.2)
   const [showHull, setShowHull] = useState(false)
+  const [showVectorLabels, setShowVectorLabels] = useState(false)
   // Manual feature selection (overrides Top-K for visualization when non-empty)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
 
@@ -36,6 +37,7 @@ export default function App() {
   const [pMaskBufferFactor, setPMaskBufferFactor] = useState(maskBufferFactor)
   const [pShowGrid, setPShowGrid] = useState(showGrid)
   const [pShowHull, setPShowHull] = useState(showHull)
+  const [pShowVectorLabels, setPShowVectorLabels] = useState(showVectorLabels)
   const [pParticleCount, setPParticleCount] = useState(particleCount)
   const [pConsistentSpeed, setPConsistentSpeed] = useState(consistentSpeed)
   const [pSpeedConstRel, setPSpeedConstRel] = useState(speedConstRel)
@@ -236,43 +238,70 @@ export default function App() {
         <p className="subtitle">Interactive feature wind visualization</p>
       </div>
       <div className="content">
-        <div className="main">
-          {payload ? (
-            <div className="row">
-              <div className="panel canvas-frame">
-                <p className="panel-title">Wind Map</p>
-                <CanvasWind
-                  payload={payload}
-                  onHover={setHoverPos}
-                  onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
-                  showGrid={showGrid}
-                  particleCount={particleCount}
-                  consistentSpeed={consistentSpeed}
-                  speedConstRel={speedConstRel}
-                  speedScale={speedScale}
-                  tailLength={tailLength}
-                  trailTailMin={trailTailMin}
-                  trailTailExp={trailTailExp}
-                  maxLifetime={maxLifetime}
-                  size={720}
-                  selectedCells={selectedCells}
-                  featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null}
-                />
-              </div>
-              <div className="panel canvas-frame">
-                <p className="panel-title">Wind Vane{selectedCells.length > 0 ? ` (selection: ${selectedCells.length} cells)` : ''}</p>
-                <WindVane payload={payload} focus={vaneFocus} selectedCells={selectedCells} size={420} showHull={showHull} featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null} />
-              </div>
-            </div>
-          ) : (
-            <div className="row">
-              <div className="panel placeholder" style={{ width: 720, height: 720 }}>Wind Map</div>
-              <div className="panel placeholder" style={{ width: 420, height: 420 }}>Wind Vane</div>
-            </div>
-          )}
-        </div>
-        <div className="row rows-below">
-          <div className="panel padded controls-grid" style={{ flex: 2 }}>
+        <div className="three-up">
+          {/* Wind Map */}
+          <div className="panel canvas-frame">
+            <p className="panel-title">Wind Map</p>
+            {payload ? (
+              <CanvasWind
+                payload={payload}
+                onHover={setHoverPos}
+                onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
+                showGrid={showGrid}
+                particleCount={particleCount}
+                consistentSpeed={consistentSpeed}
+                speedConstRel={speedConstRel}
+                speedScale={speedScale}
+                tailLength={tailLength}
+                trailTailMin={trailTailMin}
+                trailTailExp={trailTailExp}
+                maxLifetime={maxLifetime}
+                size={700}
+                selectedCells={selectedCells}
+                featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null}
+              />
+            ) : (
+              <div className="panel placeholder" style={{ width: 700, height: 700 }}>Wind Map</div>
+            )}
+          </div>
+
+          {/* Wind Vane */}
+          <div className="panel canvas-frame">
+            <p className="panel-title">Wind Vane{selectedCells.length > 0 ? ` (selection: ${selectedCells.length} cells)` : ''}</p>
+            {payload ? (
+                <WindVane payload={payload} focus={vaneFocus} selectedCells={selectedCells} showHull={showHull} showLabels={showVectorLabels} featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null} />
+            ) : (
+              <div className="panel placeholder" style={{ width: 520, height: 520 }}>Wind Vane</div>
+            )}
+          </div>
+
+          {/* Color Families */}
+          <div className="panel padded color-panel">
+            <p className="panel-title">Color Families</p>
+            {payload ? (
+              <ColorLegend
+                payload={payload}
+                dataset={dataset}
+                visible={visibleFeatures}
+                selectedFeatures={selectedFeatureIndices}
+                onChangeSelectedFeatures={setSelectedFeatureIndices}
+                onApplyFamilies={async (families) => {
+                  try {
+                    if (!dataset) return
+                    const res = await recolor(dataset.datasetId, families)
+                    setPayload((prev) => ({ ...prev, colors: res.colors, family_assignments: res.family_assignments }))
+                  } catch (e) {
+                    setError(e.message)
+                  }
+                }}
+              />
+            ) : (
+              <div className="hint">Upload a dataset to see colors</div>
+            )}
+          </div>
+
+          {/* Controls */}
+          <div className="panel padded controls-grid full-span">
             <label>Choose File</label>
             <input
               className="file-input"
@@ -307,6 +336,9 @@ export default function App() {
 
             <label>Show Convex Hull</label>
             <input type="checkbox" checked={pShowHull} onChange={(e) => setPShowHull(e.target.checked)} />
+
+            <label>Show Vector Labels</label>
+            <input type="checkbox" checked={pShowVectorLabels} onChange={(e) => setPShowVectorLabels(e.target.checked)} />
 
             <label>Particles</label>
             <div className="slider-row">
@@ -384,6 +416,7 @@ export default function App() {
                   setTopK(pTopK)
                   setGridRes(pGridRes)
                   setMaskBufferFactor(pMaskBufferFactor)
+                  setShowVectorLabels(pShowVectorLabels)
                 }}
                 disabled={busy}
                 style={{ height: 36, padding: '0 12px', borderRadius: 8, border: '1px solid #e5e7eb', background: busy ? '#f3f4f6' : '#111827', color: busy ? '#6b7280' : '#ffffff', fontWeight: 600 }}
@@ -391,31 +424,8 @@ export default function App() {
                 {busy ? 'Updating…' : 'Update'}
               </button>
             </div>
+            {error && <div className="hint" style={{ color: '#b91c1c' }}>{error}</div>}
           </div>
-          {error && <div className="hint" style={{ color: '#b91c1c', alignSelf: 'center' }}>{error}</div>}
-        </div>
-        <div className="panel padded color-panel">
-          <p className="panel-title">Color Families</p>
-          {payload ? (
-            <ColorLegend
-              payload={payload}
-              dataset={dataset}
-              visible={visibleFeatures}
-              selectedFeatures={selectedFeatureIndices}
-              onChangeSelectedFeatures={setSelectedFeatureIndices}
-              onApplyFamilies={async (families) => {
-                try {
-                  if (!dataset) return
-                  const res = await recolor(dataset.datasetId, families)
-                  setPayload((prev) => ({ ...prev, colors: res.colors, family_assignments: res.family_assignments }))
-                } catch (e) {
-                  setError(e.message)
-                }
-              }}
-            />
-          ) : (
-            <div className="hint">Upload a dataset to see colors</div>
-          )}
         </div>
       </div>
     </div>
