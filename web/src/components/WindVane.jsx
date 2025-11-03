@@ -202,7 +202,7 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
           hullSet = new Set(hullIdx)
           if (showHull && hullIdx.length >= 3) {
             ctx.strokeStyle = 'rgba(114,114,114,0.7)'
-            ctx.lineWidth = 1.0
+            ctx.lineWidth = 2.0
             ctx.beginPath()
             for (let k = 0; k < hullIdx.length; k++) {
               const p = endpoints[hullIdx[k]]

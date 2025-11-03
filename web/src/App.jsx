@@ -19,8 +19,6 @@ export default function App() {
   // Interactive config (frontend + backend overrides)
   const [showGrid, setShowGrid] = useState(true)
   const [particleCount, setParticleCount] = useState(1000)
-  const [consistentSpeed, setConsistentSpeed] = useState(true)
-  const [speedConstRel, setSpeedConstRel] = useState(0.06)
   const [speedScale, setSpeedScale] = useState(1.0)
   const [tailLength, setTailLength] = useState(10)
   const [trailTailMin, setTrailTailMin] = useState(0.10)
@@ -29,6 +27,7 @@ export default function App() {
   const [maskBufferFactor, setMaskBufferFactor] = useState(0.2)
   const [showHull, setShowHull] = useState(false)
   const [showVectorLabels, setShowVectorLabels] = useState(false)
+  const [showAllVectors, setShowAllVectors] = useState(false)
   // Manual feature selection (overrides Top-K for visualization when non-empty)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
 
@@ -39,9 +38,8 @@ export default function App() {
   const [pShowGrid, setPShowGrid] = useState(showGrid)
   const [pShowHull, setPShowHull] = useState(showHull)
   const [pShowVectorLabels, setPShowVectorLabels] = useState(showVectorLabels)
+  const [pShowAllVectors, setPShowAllVectors] = useState(showAllVectors)
   const [pParticleCount, setPParticleCount] = useState(particleCount)
-  const [pConsistentSpeed, setPConsistentSpeed] = useState(consistentSpeed)
-  const [pSpeedConstRel, setPSpeedConstRel] = useState(speedConstRel)
   const [pSpeedScale, setPSpeedScale] = useState(speedScale)
   const [pTailLength, setPTailLength] = useState(tailLength)
   const [pTrailTailMin, setPTrailTailMin] = useState(trailTailMin)
@@ -261,17 +259,22 @@ export default function App() {
           <div className="panel canvas-frame">
             <p className="panel-title">Wind Map</p>
             {payload ? (
-              <CanvasWind
-                payload={payload}
-                onHover={setHoverPos}
-                onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
-                showGrid={showGrid}
-                particleCount={particleCount}
-                consistentSpeed={consistentSpeed}
-                speedConstRel={speedConstRel}
-                speedScale={speedScale}
-                tailLength={tailLength}
-                trailTailMin={trailTailMin}
+                <CanvasWind
+                  payload={payload}
+                  onHover={setHoverPos}
+                  onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
+                  onBrushCell={({ i, j }) => {
+                    setSelectedCells((prev) => {
+                      const exists = prev.some((c) => c.i === i && c.j === j)
+                      if (exists) return prev
+                      return [...prev, { i, j }]
+                    })
+                  }}
+                  showGrid={showGrid}
+                  particleCount={particleCount}
+                  speedScale={speedScale}
+                  tailLength={tailLength}
+                  trailTailMin={trailTailMin}
                 trailTailExp={trailTailExp}
                 maxLifetime={maxLifetime}
                 size={600}
@@ -287,7 +290,15 @@ export default function App() {
           <div className="panel canvas-frame">
             <p className="panel-title">Wind Vane{selectedCells.length > 0 ? ` (selection: ${selectedCells.length} cells)` : ''}</p>
             {payload ? (
-                <WindVane payload={payload} focus={vaneFocus} selectedCells={selectedCells} showHull={showHull} showLabels={showVectorLabels} featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null} />
+                <WindVane
+                  payload={payload}
+                  focus={vaneFocus}
+                  selectedCells={selectedCells}
+                  useConvexHull={!showAllVectors}
+                  showHull={showHull}
+                  showLabels={showVectorLabels}
+                  featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null}
+                />
             ) : (
               <div className="panel placeholder" style={{ width: 600, height: 600 }}>Wind Vane</div>
             )}
@@ -347,6 +358,9 @@ export default function App() {
             <label>Show Vector Labels</label>
             <input type="checkbox" checked={pShowVectorLabels} onChange={(e) => setPShowVectorLabels(e.target.checked)} />
 
+            <label>Show All Vectors</label>
+            <input type="checkbox" checked={pShowAllVectors} onChange={(e) => setPShowAllVectors(e.target.checked)} />
+
             <label>Particles</label>
             <div className="slider-row">
               <input type="range" min={50} max={5000} step={50} value={pParticleCount}
@@ -354,15 +368,7 @@ export default function App() {
               <span className="control-val">{pParticleCount}</span>
             </div>
 
-            <label>Consistent Speed</label>
-            <input type="checkbox" checked={pConsistentSpeed} onChange={(e) => setPConsistentSpeed(e.target.checked)} />
-
-            <label>Speed (const rel)</label>
-            <div className="slider-row">
-              <input type="range" min={0} max={0.2} step={0.005} value={pSpeedConstRel}
-                onChange={(e) => setPSpeedConstRel(Number(e.target.value))} />
-              <span className="control-val">{pSpeedConstRel.toFixed(3)}</span>
-            </div>
+            {null}
 
             <label>Speed Scale</label>
             <div className="slider-row">
@@ -412,8 +418,6 @@ export default function App() {
                   setShowGrid(pShowGrid)
                   setShowHull(pShowHull)
                   setParticleCount(pParticleCount)
-                  setConsistentSpeed(pConsistentSpeed)
-                  setSpeedConstRel(pSpeedConstRel)
                   setSpeedScale(pSpeedScale)
                   setTailLength(pTailLength)
                   setTrailTailMin(pTrailTailMin)
@@ -424,6 +428,7 @@ export default function App() {
                   setGridRes(pGridRes)
                   setMaskBufferFactor(pMaskBufferFactor)
                   setShowVectorLabels(pShowVectorLabels)
+                  setShowAllVectors(pShowAllVectors)
                 }}
                 disabled={busy}
                 style={{ height: 36, padding: '0 12px', borderRadius: 8, border: '1px solid #e5e7eb', background: busy ? '#f3f4f6' : '#111827', color: busy ? '#6b7280' : '#ffffff', fontWeight: 600 }}

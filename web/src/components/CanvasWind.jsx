@@ -37,9 +37,8 @@ export default function CanvasWind({
   particleCount = 1000,
   onHover,
   onSelectCell,
+  onBrushCell,
   showGrid = true,
-  consistentSpeed = true,
-  speedConstRel = 0.06,
   speedScale = 1.0,
   tailLength = 10,
   trailTailMin = 0.10,
@@ -54,12 +53,16 @@ export default function CanvasWind({
   const canvasRef = useRef(null)
   const rafRef = useRef(0)
   const runningRef = useRef(false)
+  const brushingRef = useRef(false)
+  const lastBrushRef = useRef({ i: -1, j: -1 })
+  const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
   const showGridRef = useRef(!!showGrid)
   const selectedRef = useRef(selectedCells)
   // keep selection fresh for the draw loop without resetting particles
   useEffect(() => { selectedRef.current = selectedCells || [] }, [selectedCells])
   useEffect(() => { showGridRef.current = !!showGrid }, [showGrid])
+  useEffect(() => { brushCbRef.current = onBrushCell }, [onBrushCell])
 
   const {
     bbox = [0, 1, 0, 1],
@@ -120,9 +123,7 @@ export default function CanvasWind({
     const TRAIL_TAIL_MIN = Math.max(0, Math.min(1, trailTailMin))
     const TRAIL_TAIL_EXP = Math.max(0.5, trailTailExp)
     const MAX_LIFETIME = Math.max(1, Math.floor(maxLifetime))
-    const CONSISTENT_SPEED = !!consistentSpeed
-    const SPEED_CONST_REL = speedConstRel // fraction of plot width per second
-    const SPEED_SCALE = speedScale // used when CONSISTENT_SPEED=false
+    const SPEED_SCALE = speedScale
 
     // Optional mask helpers
     let hasMask = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
@@ -201,21 +202,9 @@ export default function CanvasWind({
         let u = bilinearSample(uSum, gx, gy)
         let v = bilinearSample(vSum, gx, gy)
 
-        // Consistent speed option (like Python's CONSISTENT_PARTICLE_SPEED)
-        if (CONSISTENT_SPEED) {
-          const mag = Math.hypot(u, v)
-          if (mag > 1e-9) {
-            const width = (xmax - xmin)
-            const s = SPEED_CONST_REL * width
-            u = (u / mag) * s
-            v = (v / mag) * s
-          } else {
-            u = 0; v = 0
-          }
-        } else {
-          u *= SPEED_SCALE
-          v *= SPEED_SCALE
-        }
+        // Scale speed directly by user-controlled factor
+        u *= SPEED_SCALE
+        v *= SPEED_SCALE
 
         // Integrate position
         p.x += u * dt
@@ -530,6 +519,16 @@ export default function CanvasWind({
       const x = xmin + (cx / Wpx) * (xmax - xmin)
       const y = ymin + ((Hpx - cy) / Hpx) * (ymax - ymin)
       onHover({ x, y })
+      // Brush selection while dragging
+      if (brushingRef.current && typeof brushCbRef.current === 'function') {
+        const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
+        const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
+        const last = lastBrushRef.current
+        if (i !== last.i || j !== last.j) {
+          lastBrushRef.current = { i, j }
+          try { brushCbRef.current({ i, j }) } catch {}
+        }
+      }
     }
     canvas.addEventListener('mousemove', handleMove)
 
@@ -548,11 +547,37 @@ export default function CanvasWind({
     }
     canvas.addEventListener('click', handleClick)
 
+    // Brush handlers
+    function handleDown(e) {
+      const rect = canvas.getBoundingClientRect()
+      const cx = e.clientX - rect.left
+      const cy = e.clientY - rect.top
+      const x = xmin + (cx / Wpx) * (xmax - xmin)
+      const y = ymin + ((Hpx - cy) / Hpx) * (ymax - ymin)
+      const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
+      const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
+      lastBrushRef.current = { i, j }
+      brushingRef.current = true
+      if (typeof brushCbRef.current === 'function') {
+        try { brushCbRef.current({ i, j }) } catch {}
+      }
+    }
+    function handleUp() {
+      brushingRef.current = false
+      lastBrushRef.current = { i: -1, j: -1 }
+    }
+    canvas.addEventListener('mousedown', handleDown)
+    window.addEventListener('mouseup', handleUp)
+    canvas.addEventListener('mouseleave', handleUp)
+
     return () => {
       runningRef.current = false
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       canvas.removeEventListener('mousemove', handleMove)
       canvas.removeEventListener('click', handleClick)
+      canvas.removeEventListener('mousedown', handleDown)
+      window.removeEventListener('mouseup', handleUp)
+      canvas.removeEventListener('mouseleave', handleUp)
     }
   }, [
     bbox,
@@ -569,8 +594,6 @@ export default function CanvasWind({
     trailTailMin,
     trailTailExp,
     maxLifetime,
-    consistentSpeed,
-    speedConstRel,
     speedScale,
   ])
 
