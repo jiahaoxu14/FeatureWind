@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import './styles.css'
 import { uploadFile, compute, recolor } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
@@ -6,6 +6,7 @@ import WindVane from './components/WindVane.jsx'
 import ColorLegend from './components/ColorLegend.jsx'
 
 export default function App() {
+  const fileInputRef = useRef(null)
   const [file, setFile] = useState(null)
   const [dataset, setDataset] = useState(null)
   const [topK, setTopK] = useState(0)
@@ -235,7 +236,24 @@ export default function App() {
     <div className="app">
       <div className="header">
         <h2 className="title">Feature Wind Map</h2>
-        <p className="subtitle">Interactive feature wind visualization</p>
+        <div className="file-upload">
+          <button
+            className="btn"
+            onClick={() => fileInputRef.current && fileInputRef.current.click()}
+            title="Choose a .tmap or JSON file"
+          >Choose File</button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".tmap,.json"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0] || null
+              setFile(f)
+              if (f) handleUpload(f)
+            }}
+          />
+        </div>
       </div>
       <div className="content">
         <div className="three-up">
@@ -256,12 +274,12 @@ export default function App() {
                 trailTailMin={trailTailMin}
                 trailTailExp={trailTailExp}
                 maxLifetime={maxLifetime}
-                size={700}
+                size={600}
                 selectedCells={selectedCells}
                 featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null}
               />
             ) : (
-              <div className="panel placeholder" style={{ width: 700, height: 700 }}>Wind Map</div>
+              <div className="panel placeholder" style={{ width: 600, height: 600 }}>Wind Map</div>
             )}
           </div>
 
@@ -271,7 +289,7 @@ export default function App() {
             {payload ? (
                 <WindVane payload={payload} focus={vaneFocus} selectedCells={selectedCells} showHull={showHull} showLabels={showVectorLabels} featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null} />
             ) : (
-              <div className="panel placeholder" style={{ width: 520, height: 520 }}>Wind Vane</div>
+              <div className="panel placeholder" style={{ width: 600, height: 600 }}>Wind Vane</div>
             )}
           </div>
 
@@ -302,17 +320,6 @@ export default function App() {
 
           {/* Controls */}
           <div className="panel padded controls-grid full-span">
-            <label>Choose File</label>
-            <input
-              className="file-input"
-              type="file"
-              accept=".tmap,.json"
-              onChange={(e) => {
-                const f = e.target.files?.[0] || null
-                setFile(f)
-                if (f) handleUpload(f)
-              }}
-            />
             {null}
 
             {null}
