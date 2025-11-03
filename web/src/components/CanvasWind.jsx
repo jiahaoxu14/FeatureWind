@@ -49,6 +49,7 @@ export default function CanvasWind({
   height = null,
   selectedCells = [],
   featureIndices = null,
+  pointColorFeatureIndex = null,
 }) {
   const canvasRef = useRef(null)
   const rafRef = useRef(0)
@@ -75,6 +76,7 @@ export default function CanvasWind({
     dominant = null,
     unmasked = null,
     colors = [],
+    feature_values = null,
   } = payload || {}
 
   const indices = useMemo(() => {
@@ -87,6 +89,23 @@ export default function CanvasWind({
 
   const uSum = useMemo(() => sumSelectedGrid(uAll, indices), [uAll, indices])
   const vSum = useMemo(() => sumSelectedGrid(vAll, indices), [vAll, indices])
+
+  // Precompute min/max for selected feature column to color points
+  const pointColorStats = useMemo(() => {
+    const idx = (typeof pointColorFeatureIndex === 'number') ? pointColorFeatureIndex : null
+    if (!Array.isArray(feature_values) || idx === null) return null
+    let min = Infinity, max = -Infinity
+    for (let r = 0; r < feature_values.length; r++) {
+      const row = feature_values[r]
+      if (!row || idx < 0 || idx >= row.length) continue
+      const v = Number(row[idx])
+      if (!Number.isFinite(v)) continue
+      if (v < min) min = v
+      if (v > max) max = v
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return null
+    return { idx, min, max }
+  }, [feature_values, pointColorFeatureIndex])
 
   // Precompute magnitude grid and a robust scale (p95) for alpha mapping
   const magInfo = useMemo(() => {
@@ -408,12 +427,39 @@ export default function CanvasWind({
           const [sx, sy] = worldToScreen(x, y)
           const li = map.get(String(point_labels[idx])) || 0
           const shape = SHAPES[li % SHAPES.length]
+          if (pointColorStats && Array.isArray(feature_values)) {
+            const col = pointColorStats.idx
+            const row = feature_values[idx]
+            const v = (row && col >= 0 && col < row.length) ? Number(row[col]) : NaN
+            let t = 0.5
+            if (Number.isFinite(v) && pointColorStats.max > pointColorStats.min) {
+              t = Math.max(0, Math.min(1, (v - pointColorStats.min) / (pointColorStats.max - pointColorStats.min)))
+            }
+            const g = Math.round(255 * (1 - t))
+            ctx.fillStyle = `rgb(${g},${g},${g})`
+          } else {
+            ctx.fillStyle = '#d9d9d9'
+          }
           drawMarker(sx, sy, shape, shapeSize)
         }
       } else {
         // Fallback: simple circles (larger, gray) with border
-        for (const [x, y] of positions) {
+        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
+          const [x, y] = positions[pIdx]
           const [sx, sy] = worldToScreen(x, y)
+          if (pointColorStats && Array.isArray(feature_values)) {
+            const col = pointColorStats.idx
+            const row = feature_values[pIdx]
+            const v = (row && col >= 0 && col < row.length) ? Number(row[col]) : NaN
+            let t = 0.5
+            if (Number.isFinite(v) && pointColorStats.max > pointColorStats.min) {
+              t = Math.max(0, Math.min(1, (v - pointColorStats.min) / (pointColorStats.max - pointColorStats.min)))
+            }
+            const g = Math.round(255 * (1 - t))
+            ctx.fillStyle = `rgb(${g},${g},${g})`
+          } else {
+            ctx.fillStyle = '#d9d9d9'
+          }
           ctx.beginPath(); ctx.arc(sx, sy, shapeSize, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
         }
       }
@@ -589,6 +635,7 @@ export default function CanvasWind({
     colors,
     dominant,
     featureIndices,
+    pointColorStats,
     particleCount,
     tailLength,
     trailTailMin,

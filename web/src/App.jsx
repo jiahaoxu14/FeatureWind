@@ -28,6 +28,7 @@ export default function App() {
   const [showHull, setShowHull] = useState(false)
   const [showVectorLabels, setShowVectorLabels] = useState(false)
   const [showAllVectors, setShowAllVectors] = useState(false)
+  const [pointColorFeature, setPointColorFeature] = useState('') // '' or feature index string
   // Manual feature selection (overrides Top-K for visualization when non-empty)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
 
@@ -259,25 +260,26 @@ export default function App() {
           <div className="panel canvas-frame">
             <p className="panel-title">Wind Map</p>
             {payload ? (
-                <CanvasWind
-                  payload={payload}
-                  onHover={setHoverPos}
-                  onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
-                  onBrushCell={({ i, j }) => {
-                    setSelectedCells((prev) => {
-                      const exists = prev.some((c) => c.i === i && c.j === j)
-                      if (exists) return prev
-                      return [...prev, { i, j }]
-                    })
-                  }}
-                  showGrid={showGrid}
-                  particleCount={particleCount}
-                  speedScale={speedScale}
-                  tailLength={tailLength}
-                  trailTailMin={trailTailMin}
+              <CanvasWind
+                payload={payload}
+                onHover={setHoverPos}
+                onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
+                onBrushCell={({ i, j }) => {
+                  setSelectedCells((prev) => {
+                    const exists = prev.some((c) => c.i === i && c.j === j)
+                    if (exists) return prev
+                    return [...prev, { i, j }]
+                  })
+                }}
+                showGrid={showGrid}
+                particleCount={particleCount}
+                speedScale={speedScale}
+                tailLength={tailLength}
+                trailTailMin={trailTailMin}
                 trailTailExp={trailTailExp}
                 maxLifetime={maxLifetime}
                 size={600}
+                pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
                 selectedCells={selectedCells}
                 featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null}
               />
@@ -360,6 +362,18 @@ export default function App() {
 
             <label>Show All Vectors</label>
             <input type="checkbox" checked={pShowAllVectors} onChange={(e) => setPShowAllVectors(e.target.checked)} />
+
+            <label>Point Color By</label>
+            <select
+              value={pointColorFeature}
+              onChange={(e) => setPointColorFeature(e.target.value)}
+              disabled={!payload || !Array.isArray(payload.feature_values)}
+            >
+              <option value="">None</option>
+              {Array.isArray(payload?.col_labels) && payload?.col_labels.map((name, idx) => (
+                <option key={idx} value={String(idx)}>{name}</option>
+              ))}
+            </select>
 
             <label>Particles</label>
             <div className="slider-row">

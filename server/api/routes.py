@@ -190,6 +190,7 @@ def compute():
     path = entry["path"]
 
     # Load and construct base arrays
+    feature_values = None
     if dtype == "tmap":
         valid_points, all_grad_vectors, all_positions, col_labels = fw_data.preprocess_tangent_map(path)
         # Extract per-point labels from tmap entries for frontend marker shapes
@@ -197,6 +198,17 @@ def compute():
             point_labels = [p.tmap_label for p in valid_points]
         except Exception:
             point_labels = None
+        # Extract per-point raw feature values when available
+        try:
+            _vals = []
+            for p in valid_points:
+                row = getattr(p, 'domain', None)
+                if row is None:
+                    _vals = None; break
+                _vals.append([float(x) for x in row])
+            feature_values = _vals
+        except Exception:
+            feature_values = None
     elif dtype == "csv":
         # Read CSV with potential headers, normalize columns, then compute projection & grads
         points, col_labels = _read_csv_points_with_headers(path)
@@ -237,6 +249,11 @@ def compute():
         # Synthesize labels if missing
         if not col_labels:
             col_labels = [f"Feature {i}" for i in range(all_grad_vectors.shape[1])]
+        # Provide normalized feature values for point coloring
+        try:
+            feature_values = points
+        except Exception:
+            feature_values = None
     else:
         return jsonify({"error": f"Unsupported dataset type: {dtype}"}), 400
 
@@ -403,6 +420,10 @@ def compute():
         "selection": selection_obj,
         "meta": {"dtypeHint": "float32", "order": "row-major"},
     }
+
+    # Include per-point feature values when available for point coloring in frontend
+    if feature_values is not None:
+        response["feature_values"] = tolist(feature_values)
 
     # Provide unmasked grid so the frontend can respect masking
     try:
