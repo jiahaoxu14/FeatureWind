@@ -20,6 +20,7 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
   const containerRef = useRef(null)
   const canvasRef = useRef(null)
   const [canvasSize, setCanvasSize] = useState(typeof size === 'number' && size > 0 ? size : 220)
+  const [hoverPt, setHoverPt] = useState(null)
 
   // Responsive sizing: if size prop not provided, fill container width
   useEffect(() => {
@@ -156,14 +157,14 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
     ctx.stroke()
 
     if (!isMasked) {
-      // Compute endpoints in canvas coordinates for convex-hull filtering
-      const endpoints = featureVectors.map((fv) => {
+      // Compute endpoints in canvas coordinates for convex-hull filtering and hover labeling
+      const endpoints = featureVectors.map((fv, i) => {
         const scale = fv.mag > 0 ? (ringR * 0.9 * (fv.mag / (maxMag || 1))) : 0
         const ux = fv.mag > 0 ? (fv.u / fv.mag) : 0
         const uy = fv.mag > 0 ? (fv.v / fv.mag) : 0
         const x2 = cx + ux * scale
         const y2 = cy - uy * scale
-        return { x2, y2 }
+        return { x2, y2, ux, uy, idx: indices[i], color: fv.color }
       })
 
       // Convex hull (Monotone chain) over endpoints (skip near-duplicate points)
@@ -251,20 +252,62 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
           try {
             const featIdx = indices[i]
             const label = (Array.isArray(col_labels) && featIdx >= 0 && featIdx < col_labels.length) ? String(col_labels[featIdx]) : String(featIdx)
-            const off = Math.max(8, ringR * 0.06)
-            const lx = x2 + ux * off
-            const ly = y2 - uy * off
+            // Offset label forward along the arrow and slightly perpendicular to avoid overlap
+            const forward = Math.max(14, ringR * 0.10)
+            const normalOff = Math.max(6, ringR * 0.04)
+            // On-screen radial dir is (ux, -uy); a left normal is (uy, ux)
+            const lx = x2 + ux * forward + (uy) * normalOff
+            const ly = y2 - uy * forward + (ux) * normalOff
+            ctx.font = `${Math.max(10, Math.floor(ringR * 0.10))}px sans-serif`
+            ctx.textAlign = 'left'
+            ctx.textBaseline = 'middle'
+            // White halo for readability
+            ctx.lineWidth = 3
+            ctx.strokeStyle = '#ffffff'
+            ctx.strokeText(label, lx, ly)
+            // Colored text matching the vector color
+            ctx.fillStyle = fv.color || '#111'
+            ctx.fillText(label, lx, ly)
+          } catch (e) { /* ignore */ }
+        }
+      })
+
+      // Hover label (single): show nearest endpoint within threshold
+      if (hoverPt && endpoints && endpoints.length) {
+        let best = -1
+        let bestD2 = Infinity
+        for (let i = 0; i < endpoints.length; i++) {
+          if (hullSet && !hullSet.has(i)) continue
+          const ep = endpoints[i]
+          const dx = ep.x2 - hoverPt.x
+          const dy = ep.y2 - hoverPt.y
+          const d2 = dx*dx + dy*dy
+          if (d2 < bestD2) { bestD2 = d2; best = i }
+        }
+        if (best >= 0) {
+          const T = Math.max(10, ringR * 0.08)
+          if (Math.sqrt(bestD2) <= T) {
+            const ep = endpoints[best]
+            const featIdx = ep.idx
+            const label = (Array.isArray(col_labels) && featIdx >= 0 && featIdx < col_labels.length) ? String(col_labels[featIdx]) : String(featIdx)
+            // Offset past the head and a bit perpendicular to avoid overlap
+            const forward = Math.max(14, ringR * 0.10)
+            const normalOff = Math.max(6, ringR * 0.04)
+            const nux = ep.ux || 0
+            const nuy = ep.uy || 0
+            const lx = ep.x2 + nux * forward + (nuy) * normalOff
+            const ly = ep.y2 - nuy * forward + (nux) * normalOff
             ctx.font = `${Math.max(10, Math.floor(ringR * 0.10))}px sans-serif`
             ctx.textAlign = 'left'
             ctx.textBaseline = 'middle'
             ctx.lineWidth = 3
             ctx.strokeStyle = '#ffffff'
             ctx.strokeText(label, lx, ly)
-            ctx.fillStyle = fv.color || '#111'
+            ctx.fillStyle = ep.color || '#111'
             ctx.fillText(label, lx, ly)
-          } catch (e) { /* ignore */ }
+          }
         }
-      })
+      }
 
       // Draw direction dot on ring for summed vector with original color/alpha method
       const sumMag = Math.hypot(sumUx, sumVy)
@@ -318,7 +361,24 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
     ctx.beginPath()
     ctx.arc(cx, cy, 3, 0, Math.PI * 2)
     ctx.fill()
-  }, [uAll, vAll, colors, indices, gx, gy, unmasked, dominant, selectedCells, useConvexHull, showHull, canvasSize, showLabels, col_labels])
+  }, [uAll, vAll, colors, indices, gx, gy, unmasked, dominant, selectedCells, useConvexHull, showHull, canvasSize, showLabels, col_labels, hoverPt])
+
+  // Mouse handlers for hover labeling
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    function handleMove(e) {
+      const rect = canvas.getBoundingClientRect()
+      setHoverPt({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+    }
+    function handleLeave() { setHoverPt(null) }
+    canvas.addEventListener('mousemove', handleMove)
+    canvas.addEventListener('mouseleave', handleLeave)
+    return () => {
+      canvas.removeEventListener('mousemove', handleMove)
+      canvas.removeEventListener('mouseleave', handleLeave)
+    }
+  }, [])
 
   return (
     <div ref={containerRef} style={{ width: '100%' }}>
