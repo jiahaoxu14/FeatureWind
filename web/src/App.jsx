@@ -28,6 +28,7 @@ export default function App() {
   const [showHull, setShowHull] = useState(false)
   const [showVectorLabels, setShowVectorLabels] = useState(false)
   const [showAllVectors, setShowAllVectors] = useState(false)
+  const [hideParticles, setHideParticles] = useState(false)
   const [pointColorFeature, setPointColorFeature] = useState('') // '' or feature index string
   // Manual feature selection (overrides Top-K for visualization when non-empty)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
@@ -40,6 +41,7 @@ export default function App() {
   const [pShowHull, setPShowHull] = useState(showHull)
   const [pShowVectorLabels, setPShowVectorLabels] = useState(showVectorLabels)
   const [pShowAllVectors, setPShowAllVectors] = useState(showAllVectors)
+  const [pHideParticles, setPHideParticles] = useState(hideParticles)
   const [pParticleCount, setPParticleCount] = useState(particleCount)
   const [pSpeedScale, setPSpeedScale] = useState(speedScale)
   const [pTailLength, setPTailLength] = useState(tailLength)
@@ -279,6 +281,7 @@ export default function App() {
                 trailTailExp={trailTailExp}
                 maxLifetime={maxLifetime}
                 size={600}
+                showParticles={!hideParticles}
                 pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
                 selectedCells={selectedCells}
                 featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null}
@@ -363,6 +366,9 @@ export default function App() {
             <label>Show All Vectors</label>
             <input type="checkbox" checked={pShowAllVectors} onChange={(e) => setPShowAllVectors(e.target.checked)} />
 
+            <label>Hide Particles</label>
+            <input type="checkbox" checked={pHideParticles} onChange={(e) => setPHideParticles(e.target.checked)} />
+
             <label>Point Color By</label>
             <select
               value={pointColorFeature}
@@ -443,6 +449,7 @@ export default function App() {
                   setMaskBufferFactor(pMaskBufferFactor)
                   setShowVectorLabels(pShowVectorLabels)
                   setShowAllVectors(pShowAllVectors)
+                  setHideParticles(pHideParticles)
                 }}
                 disabled={busy}
                 style={{ height: 36, padding: '0 12px', borderRadius: 8, border: '1px solid #e5e7eb', background: busy ? '#f3f4f6' : '#111827', color: busy ? '#6b7280' : '#ffffff', fontWeight: 600 }}

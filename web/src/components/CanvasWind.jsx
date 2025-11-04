@@ -39,6 +39,7 @@ export default function CanvasWind({
   onSelectCell,
   onBrushCell,
   showGrid = true,
+  showParticles = true,
   speedScale = 1.0,
   tailLength = 10,
   trailTailMin = 0.10,
@@ -56,6 +57,7 @@ export default function CanvasWind({
   const runningRef = useRef(false)
   const brushingRef = useRef(false)
   const lastBrushRef = useRef({ i: -1, j: -1 })
+  const showParticlesRef = useRef(!!showParticles)
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
   const showGridRef = useRef(!!showGrid)
@@ -64,6 +66,7 @@ export default function CanvasWind({
   useEffect(() => { selectedRef.current = selectedCells || [] }, [selectedCells])
   useEffect(() => { showGridRef.current = !!showGrid }, [showGrid])
   useEffect(() => { brushCbRef.current = onBrushCell }, [onBrushCell])
+  useEffect(() => { showParticlesRef.current = !!showParticles }, [showParticles])
 
   const {
     bbox = [0, 1, 0, 1],
@@ -258,7 +261,9 @@ export default function CanvasWind({
       const now = performance.now()
       const dt = Math.min((now - last) / 1000, 0.05)
       last = now
-      step(dt)
+      if (showParticlesRef.current) {
+        step(dt)
+      }
       ctx.clearRect(0, 0, Wpx, Hpx)
 
       // Draw grid lines (cell boundaries)
@@ -490,8 +495,9 @@ export default function CanvasWind({
           })()
         : null
 
-      for (const p of particles) {
-        for (let t = TAIL_LENGTH - 1; t >= 0; t--) {
+      if (showParticlesRef.current) {
+        for (const p of particles) {
+          for (let t = TAIL_LENGTH - 1; t >= 0; t--) {
           // Fade from tail (low alpha) to head (high alpha)
           const relHead = (TAIL_LENGTH - t) / TAIL_LENGTH
           const aTail = TRAIL_TAIL_MIN + (1 - TRAIL_TAIL_MIN) * Math.pow(relHead, TRAIL_TAIL_EXP)
@@ -549,6 +555,7 @@ export default function CanvasWind({
           ctx.moveTo(sx1, sy1)
           ctx.lineTo(sx0, sy0)
           ctx.stroke()
+          }
         }
       }
       rafRef.current = requestAnimationFrame(draw)
