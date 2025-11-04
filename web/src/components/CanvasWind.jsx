@@ -317,7 +317,7 @@ export default function CanvasWind({
 
       // Optional: draw base points with shapes per label (like Python)
       // Shape cycle mirrors matplotlib-style markers used in the original
-      const SHAPES = ['o','s','^','D','v','<','>','p','*','h','H','+','x']
+      const SHAPES = ['o','x','s','^','D','p','*','h','H','+']
       // Bigger, light-gray markers for better visibility
       const shapeSize = 3.2
       ctx.fillStyle = '#d9d9d9'

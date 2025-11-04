@@ -47,7 +47,7 @@ MASK_THRESHOLD = 1e-6
 MAX_SAFE_VELOCITY = 10.0  # Maximum velocity magnitude per frame to prevent runaway particles
 
 # UI and visualization parameters
-MARKER_STYLES = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h', 'H', '+', 'x']
+MARKER_STYLES = ['o', 's', '^', 'D', 'x', 'p', '*', 'h', 'H', '+']
 DPI = 300  # For saved figures
 
 TEMPERATURE_SOFTMAX = 2.0  # Temperature for soft dominance computation
