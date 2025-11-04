@@ -31,6 +31,9 @@ export default function App() {
   const [hideParticles, setHideParticles] = useState(false)
   const [pointColorFeature, setPointColorFeature] = useState('') // '' or feature index string
   const [showPointGradients, setShowPointGradients] = useState(false)
+  const [showCellGradients, setShowCellGradients] = useState(false)
+  const [showCellAggGradients, setShowCellAggGradients] = useState(false)
+  const [showParticleInits, setShowParticleInits] = useState(false)
   // Manual feature selection (overrides Top-K when enabled)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
   const [useManualFeatures, setUseManualFeatures] = useState(false)
@@ -273,6 +276,9 @@ export default function App() {
                 showParticles={!hideParticles}
                 pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
                 showPointGradients={showPointGradients}
+                showCellGradients={showCellGradients}
+                showCellAggregatedGradients={showCellAggGradients}
+                showParticleInits={showParticleInits}
                 gradientFeatureIndices={useManualFeatures ? selectedFeatureIndices : []}
                 selectedCells={selectedCells}
                 featureIndices={useManualFeatures ? selectedFeatureIndices : null}
@@ -374,6 +380,15 @@ export default function App() {
 
             <label>Show Point Gradients</label>
             <input type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} />
+
+            <label>Show Cell Gradients</label>
+            <input type="checkbox" checked={showCellGradients} onChange={(e) => setShowCellGradients(e.target.checked)} />
+
+            <label>Show Aggregated Cell Gradients</label>
+            <input type="checkbox" checked={showCellAggGradients} onChange={(e) => setShowCellAggGradients(e.target.checked)} />
+
+            <label>Show Particle Inits</label>
+            <input type="checkbox" checked={showParticleInits} onChange={(e) => setShowParticleInits(e.target.checked)} />
 
             <label>Particles</label>
             <div className="slider-row">

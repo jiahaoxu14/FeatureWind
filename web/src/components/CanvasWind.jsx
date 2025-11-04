@@ -41,6 +41,9 @@ export default function CanvasWind({
   showGrid = true,
   showParticles = true,
   showPointGradients = false,
+  showCellGradients = false,
+  showCellAggregatedGradients = false,
+  showParticleInits = false,
   gradientFeatureIndices = null,
   speedScale = 1.0,
   tailLength = 10,
@@ -61,6 +64,9 @@ export default function CanvasWind({
   const lastBrushRef = useRef({ i: -1, j: -1 })
   const showParticlesRef = useRef(!!showParticles)
   const showPointGradientsRef = useRef(!!showPointGradients)
+  const showCellGradientsRef = useRef(!!showCellGradients)
+  const showCellAggregatedGradientsRef = useRef(!!showCellAggregatedGradients)
+  const showParticleInitsRef = useRef(!!showParticleInits)
   const gradientFeatureIndicesRef = useRef(Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [])
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
@@ -72,6 +78,9 @@ export default function CanvasWind({
   useEffect(() => { brushCbRef.current = onBrushCell }, [onBrushCell])
   useEffect(() => { showParticlesRef.current = !!showParticles }, [showParticles])
   useEffect(() => { showPointGradientsRef.current = !!showPointGradients }, [showPointGradients])
+  useEffect(() => { showCellGradientsRef.current = !!showCellGradients }, [showCellGradients])
+  useEffect(() => { showCellAggregatedGradientsRef.current = !!showCellAggregatedGradients }, [showCellAggregatedGradients])
+  useEffect(() => { showParticleInitsRef.current = !!showParticleInits }, [showParticleInits])
   useEffect(() => { gradientFeatureIndicesRef.current = Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [] }, [gradientFeatureIndices])
 
   const {
@@ -219,7 +228,7 @@ export default function CanvasWind({
     const particles = Array.from({ length: particleCount }, () => {
       const { x, y } = randomSpawn()
       const hist = Array.from({ length: TAIL_LENGTH + 1 }, () => ({ x, y }))
-      return { x, y, age: 0, hist }
+      return { x, y, age: 0, hist, initX: x, initY: y }
     })
 
     function worldToGrid(x, y) {
@@ -287,6 +296,8 @@ export default function CanvasWind({
           p.x = nx
           p.y = ny
           p.age = 0
+          p.initX = nx
+          p.initY = ny
           for (let t = 0; t <= TAIL_LENGTH; t++) { p.hist[t].x = nx; p.hist[t].y = ny }
         }
       }
@@ -302,6 +313,41 @@ export default function CanvasWind({
         step(dt)
       }
       ctx.clearRect(0, 0, Wpx, Hpx)
+
+      // If aggregated cell gradients are shown, also color each cell by its dominant feature
+      // Also apply when showing particle init overlays
+      if ((showCellAggregatedGradientsRef.current || showParticleInitsRef.current) && colors && colors.length) {
+        const cellWpx = Wpx / W
+        const cellHpx = Hpx / H
+        for (let i = 0; i < H; i++) {
+          for (let j = 0; j < W; j++) {
+            if (hasMask && !unmasked[i][j]) continue
+            let fid = -1
+            if (Array.isArray(featureIndices) && featureIndices.length > 1) {
+              // Dominant among the selected features only
+              let bestIdx = -1
+              let bestMag2 = -1
+              for (const fi of featureIndices) {
+                const u = (uAll[fi]?.[i]?.[j] ?? 0)
+                const v = (vAll[fi]?.[i]?.[j] ?? 0)
+                const mag2 = u*u + v*v
+                if (mag2 > bestMag2) { bestMag2 = mag2; bestIdx = fi }
+              }
+              fid = bestIdx
+            } else if (Array.isArray(featureIndices) && featureIndices.length === 1) {
+              fid = featureIndices[0]
+            } else if (dominant && dominant[i] && typeof dominant[i][j] === 'number') {
+              fid = dominant[i][j]
+            }
+            if (typeof fid !== 'number' || fid < 0 || fid >= colors.length) continue
+            const rgb = hexToRgb(colors[fid])
+            const sx0 = j * cellWpx
+            const sy1 = Hpx - (i + 1) * cellHpx
+            ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.28)`
+            ctx.fillRect(sx0, sy1, cellWpx, cellHpx)
+          }
+        }
+      }
 
       // Draw grid lines (cell boundaries)
       if (showGridRef.current) {
@@ -353,14 +399,16 @@ export default function CanvasWind({
       }
 
       // Optional: draw base points with shapes per label (like Python)
-      // Shape cycle mirrors matplotlib-style markers used in the original
-      const SHAPES = ['o','s','^', 'x', 'D','v','<','>','p','*','h','H','+']
-      // Bigger, light-gray markers for better visibility
-      const shapeSize = 3.2
-      ctx.fillStyle = '#d9d9d9'
-      // Dark gray/near-black borders for all points
-      ctx.strokeStyle = '#222222'
-      ctx.lineWidth = 0.8
+      // Skip drawing data points when showing particle init overlays
+      if (!showParticleInitsRef.current) {
+        // Shape cycle mirrors matplotlib-style markers used in the original
+        const SHAPES = ['o','s','^', 'x', 'D','v','<','>','p','*','h','H','+']
+        // Bigger, light-gray markers for better visibility
+        const shapeSize = 3.2
+        ctx.fillStyle = '#d9d9d9'
+        // Dark gray/near-black borders for all points
+        ctx.strokeStyle = '#222222'
+        ctx.lineWidth = 0.8
 
       function drawRegularPolygon(cx, cy, radius, sides, rotation = 0) {
         if (sides < 3) return
@@ -459,7 +507,7 @@ export default function CanvasWind({
         }
       }
 
-      if (Array.isArray(point_labels) && point_labels.length === positions.length) {
+      if (!showParticleInitsRef.current && Array.isArray(point_labels) && point_labels.length === positions.length) {
         // Build stable mapping value→index using sorted unique labels
         const unique = Array.from(new Set(point_labels.map((l) => String(l))))
         unique.sort()
@@ -484,7 +532,7 @@ export default function CanvasWind({
           }
           drawMarker(sx, sy, shape, shapeSize)
         }
-      } else {
+      } else if (!showParticleInitsRef.current) {
         // Fallback: simple circles (larger, gray) with border
         for (let pIdx = 0; pIdx < positions.length; pIdx++) {
           const [x, y] = positions[pIdx]
@@ -504,6 +552,7 @@ export default function CanvasWind({
           }
           ctx.beginPath(); ctx.arc(sx, sy, shapeSize, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
         }
+      }
       }
 
       // Optional: per-feature gradients attached to each point
@@ -565,6 +614,105 @@ export default function CanvasWind({
               ctx.stroke()
               ctx.globalAlpha = 1.0
             }
+          }
+        }
+      }
+
+      // Optional: per-feature gradients at each grid cell center
+      if (showCellGradientsRef.current) {
+        const provided = gradientFeatureIndicesRef.current
+        const featList = (Array.isArray(provided) && provided.length > 0) ? provided : indices
+        if (Array.isArray(featList) && featList.length > 0) {
+          const p99Sum = magInfo?.p99 || 1.0
+          const sxScale = Wpx / (xmax - xmin)
+          const syScale = Hpx / (ymax - ymin)
+          const headLen = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
+          const phi = Math.PI / 7
+          const dx = (xmax - xmin) / W
+          const dy = (ymax - ymin) / H
+          const baseLen = Math.max(6, Math.min(24, Math.min(Wpx, Hpx) * 0.035))
+          ctx.lineWidth = 0.9
+          for (let i = 0; i < H; i++) {
+            for (let j = 0; j < W; j++) {
+              if (hasMask && !unmasked[i][j]) continue
+              const wx = xmin + (j + 0.5) * dx
+              const wy = ymin + (i + 0.5) * dy
+              const [sx, sy] = worldToScreen(wx, wy)
+              for (const fi of featList) {
+                const u = (uAll[fi]?.[i]?.[j] ?? 0)
+                const v = (vAll[fi]?.[i]?.[j] ?? 0)
+                const m = Math.hypot(u, v)
+                if (m <= 1e-12) continue
+                const denom = (p99ByFeature && fi >= 0 && fi < p99ByFeature.length && p99ByFeature[fi] > 0)
+                  ? p99ByFeature[fi]
+                  : p99Sum
+                const aField = Math.max(0, Math.min(1, m / denom))
+                const ddx = u * sxScale
+                const ddy = -v * syScale
+                const dnorm = Math.hypot(ddx, ddy)
+                if (!Number.isFinite(dnorm) || dnorm <= 0) continue
+                const dirx = ddx / dnorm
+                const diry = ddy / dnorm
+                const len = aField * baseLen
+                const ex = sx + dirx * len
+                const ey = sy + diry * len
+                const col = (colors && fi >= 0 && fi < colors.length) ? colors[fi] : '#222222'
+                ctx.strokeStyle = col
+                ctx.globalAlpha = 0.9
+                ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke()
+                const ang = Math.atan2(ey - sy, ex - sx)
+                const hx1 = ex - headLen * Math.cos(ang - phi)
+                const hy1 = ey - headLen * Math.sin(ang - phi)
+                const hx2 = ex - headLen * Math.cos(ang + phi)
+                const hy2 = ey - headLen * Math.sin(ang + phi)
+                ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(hx1, hy1); ctx.moveTo(ex, ey); ctx.lineTo(hx2, hy2); ctx.stroke()
+                ctx.globalAlpha = 1.0
+              }
+            }
+          }
+        }
+      }
+
+      // Optional: aggregated (summed) gradients at each grid cell center, colored black
+      if (showCellAggregatedGradientsRef.current) {
+        const p99 = magInfo?.p99 || 1.0
+        const sxScale = Wpx / (xmax - xmin)
+        const syScale = Hpx / (ymax - ymin)
+        const headLen = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
+        const phi = Math.PI / 7
+        const dx = (xmax - xmin) / W
+        const dy = (ymax - ymin) / H
+        const baseLen = Math.max(8, Math.min(28, Math.min(Wpx, Hpx) * 0.045))
+        ctx.lineWidth = 1.2
+        ctx.strokeStyle = '#000000'
+        for (let i = 0; i < H; i++) {
+          for (let j = 0; j < W; j++) {
+            if (hasMask && !unmasked[i][j]) continue
+            const ux = (uSum?.[i]?.[j] ?? 0)
+            const vy = (vSum?.[i]?.[j] ?? 0)
+            const m = Math.hypot(ux, vy)
+            if (m <= 1e-12) continue
+            const aField = Math.max(0, Math.min(1, m / p99))
+            const wx = xmin + (j + 0.5) * dx
+            const wy = ymin + (i + 0.5) * dy
+            const [sx, sy] = worldToScreen(wx, wy)
+            const ddx = ux * sxScale
+            const ddy = -vy * syScale
+            const dnorm = Math.hypot(ddx, ddy)
+            if (!Number.isFinite(dnorm) || dnorm <= 0) continue
+            const dirx = ddx / dnorm
+            const diry = ddy / dnorm
+            const len = aField * baseLen
+            const ex = sx + dirx * len
+            const ey = sy + diry * len
+            ctx.globalAlpha = 1.0
+            ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke()
+            const ang = Math.atan2(ey - sy, ex - sx)
+            const hx1 = ex - headLen * Math.cos(ang - phi)
+            const hy1 = ey - headLen * Math.sin(ang - phi)
+            const hx2 = ex - headLen * Math.cos(ang + phi)
+            const hy2 = ey - headLen * Math.sin(ang + phi)
+            ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(hx1, hy1); ctx.moveTo(ex, ey); ctx.lineTo(hx2, hy2); ctx.stroke()
           }
         }
       }
@@ -656,6 +804,73 @@ export default function CanvasWind({
           ctx.lineTo(sx0, sy0)
           ctx.stroke()
           }
+        }
+      }
+
+      // Draw particle initialization places and their driving vectors (from summed field)
+      if (showParticleInitsRef.current) {
+        const p99 = magInfo?.p99 || 1.0
+        const sxScale = Wpx / (xmax - xmin)
+        const syScale = Hpx / (ymax - ymin)
+        const headLen = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
+        const phi = Math.PI / 7
+        const baseLen = Math.max(8, Math.min(28, Math.min(Wpx, Hpx) * 0.045))
+        ctx.lineWidth = 1.0
+        for (const p of particles) {
+          const x0 = p.initX
+          const y0 = p.initY
+          const [gx0, gy0] = worldToGrid(x0, y0)
+          // Respect mask (skip masked cells)
+          if (hasMask) {
+            const mi = Math.max(0, Math.min(H - 1, Math.round(gy0)))
+            const mj = Math.max(0, Math.min(W - 1, Math.round(gx0)))
+            if (!unmasked[mi][mj]) continue
+          }
+          const u0 = bilinearSample(uSum, gx0, gy0)
+          const v0 = bilinearSample(vSum, gx0, gy0)
+          const m = Math.hypot(u0, v0)
+          const aField = Math.max(0, Math.min(1, m / p99))
+          const [sx0, sy0] = worldToScreen(x0, y0)
+          // Choose color by dominant feature at init cell (respect current selection if provided)
+          let colorHex = '#000'
+          const mi = Math.max(0, Math.min(H - 1, Math.round(gy0)))
+          const mj = Math.max(0, Math.min(W - 1, Math.round(gx0)))
+          if (Array.isArray(featureIndices) && featureIndices.length > 1) {
+            let bestIdx = -1, bestMag2 = -1
+            for (const fi of featureIndices) {
+              const uu = (uAll[fi]?.[mi]?.[mj] ?? 0), vv = (vAll[fi]?.[mi]?.[mj] ?? 0)
+              const mag2 = uu*uu + vv*vv
+              if (mag2 > bestMag2) { bestMag2 = mag2; bestIdx = fi }
+            }
+            if (bestIdx >= 0 && colors && bestIdx < colors.length) colorHex = colors[bestIdx]
+          } else if (Array.isArray(featureIndices) && featureIndices.length === 1) {
+            const idx = featureIndices[0]
+            if (colors && idx >= 0 && idx < colors.length) colorHex = colors[idx]
+          } else if (dominant && colors && colors.length) {
+            const fid = dominant[mi]?.[mj]
+            if (typeof fid === 'number' && fid >= 0 && fid < colors.length) colorHex = colors[fid]
+          }
+          ctx.fillStyle = colorHex
+          ctx.strokeStyle = colorHex
+          // Dot at init
+          ctx.beginPath(); ctx.arc(sx0, sy0, 2.2, 0, Math.PI * 2); ctx.fill()
+          // Arrow from init along driving vector (account for aspect and y-flip)
+          const ddx = u0 * sxScale
+          const ddy = -v0 * syScale
+          const dnorm = Math.hypot(ddx, ddy)
+          if (!Number.isFinite(dnorm) || dnorm <= 0) continue
+          const dirx = ddx / dnorm
+          const diry = ddy / dnorm
+          const len = aField * baseLen
+          const ex = sx0 + dirx * len
+          const ey = sy0 + diry * len
+          ctx.beginPath(); ctx.moveTo(sx0, sy0); ctx.lineTo(ex, ey); ctx.stroke()
+          const ang = Math.atan2(ey - sy0, ex - sx0)
+          const hx1 = ex - headLen * Math.cos(ang - Math.PI / 7)
+          const hy1 = ey - headLen * Math.sin(ang - Math.PI / 7)
+          const hx2 = ex - headLen * Math.cos(ang + Math.PI / 7)
+          const hy2 = ey - headLen * Math.sin(ang + Math.PI / 7)
+          ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(hx1, hy1); ctx.moveTo(ex, ey); ctx.lineTo(hx2, hy2); ctx.stroke()
         }
       }
       rafRef.current = requestAnimationFrame(draw)
@@ -750,6 +965,9 @@ export default function CanvasWind({
     trailTailExp,
     maxLifetime,
     speedScale,
+    showCellAggregatedGradients,
+    showCellGradients,
+    showPointGradients,
   ])
 
   const canvasWidth = (typeof width === 'number' && width > 0) ? width : size
