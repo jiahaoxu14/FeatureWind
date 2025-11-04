@@ -32,12 +32,12 @@ class ProjectionRunner:
 
         # Usage for DimReader:
         if self.projection == tsne or (isinstance(self.projection, str) and self.projection.lower() == 'tsne'):
-            print("Step 1/3: Computing base t-SNE projection (500 iterations)...")
+            print("Step 1/3: Computing base t-SNE projection (1000 iterations)...")
             with torch.no_grad():
-                Y_base, params = tsne(data, 2, 500, 10, 15.0, save_params = True)
+                Y_base, params = tsne(data, 2, 1000, 10, 15.0, save_params = True)
             print("Step 2/3: Computing projection with gradients (1 iteration)...")
             Y, params = tsne(data, no_dims=2, maxIter = 1, initial_dims=10, perplexity=15.0, save_params = False,
-                                initY = params[0], initBeta = params[2], betaTries = 20, initIY =params[1])
+                                initY = params[0], initBeta = params[2], betaTries = 50, initIY =params[1])
         elif self.projection == mds or (isinstance(self.projection, str) and self.projection.lower() == 'mds'):
             print("Step 1/3: Computing base MDS projection (999 iterations)...")
             with torch.no_grad():
