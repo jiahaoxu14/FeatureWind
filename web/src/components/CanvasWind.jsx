@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useMemo } from 'react'
 
 function sumSelectedGrid(grids, indices) {
   if (!grids || grids.length === 0) return null
-  const m = indices && indices.length ? indices : [...Array(grids.length).keys()]
+  const m = Array.isArray(indices) ? indices : [...Array(grids.length).keys()]
   const H = grids[0].length
   const W = grids[0][0].length
   const out = Array.from({ length: H }, () => new Float32Array(W))
@@ -40,6 +40,8 @@ export default function CanvasWind({
   onBrushCell,
   showGrid = true,
   showParticles = true,
+  showPointGradients = false,
+  gradientFeatureIndices = null,
   speedScale = 1.0,
   tailLength = 10,
   trailTailMin = 0.10,
@@ -58,6 +60,8 @@ export default function CanvasWind({
   const brushingRef = useRef(false)
   const lastBrushRef = useRef({ i: -1, j: -1 })
   const showParticlesRef = useRef(!!showParticles)
+  const showPointGradientsRef = useRef(!!showPointGradients)
+  const gradientFeatureIndicesRef = useRef(Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [])
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
   const showGridRef = useRef(!!showGrid)
@@ -67,6 +71,8 @@ export default function CanvasWind({
   useEffect(() => { showGridRef.current = !!showGrid }, [showGrid])
   useEffect(() => { brushCbRef.current = onBrushCell }, [onBrushCell])
   useEffect(() => { showParticlesRef.current = !!showParticles }, [showParticles])
+  useEffect(() => { showPointGradientsRef.current = !!showPointGradients }, [showPointGradients])
+  useEffect(() => { gradientFeatureIndicesRef.current = Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [] }, [gradientFeatureIndices])
 
   const {
     bbox = [0, 1, 0, 1],
@@ -83,7 +89,7 @@ export default function CanvasWind({
   } = payload || {}
 
   const indices = useMemo(() => {
-    if (Array.isArray(featureIndices) && featureIndices.length > 0) return featureIndices
+    if (Array.isArray(featureIndices)) return featureIndices // honor manual array even if empty
     if (!selection) return []
     if (selection.topKIndices) return selection.topKIndices
     if (selection.featureIndex !== undefined) return [selection.featureIndex]
@@ -130,6 +136,37 @@ export default function CanvasWind({
     const p99 = arr.length ? arr[Math.floor(arr.length * 0.99)] : 1.0
     return { H, W, mags, p99: p99 || 1.0 }
   }, [uSum, vSum])
+
+  // Per-feature robust scale (p99) across the entire grid, independent of selection
+  const p99ByFeature = useMemo(() => {
+    if (!Array.isArray(uAll) || !Array.isArray(vAll) || uAll.length === 0) return null
+    const n = Math.min(uAll.length, vAll.length)
+    const H = uAll[0]?.length || 0
+    const W = (H && uAll[0][0]) ? uAll[0][0].length : 0
+    if (!H || !W) return null
+    const out = new Float32Array(n)
+    for (let fi = 0; fi < n; fi++) {
+      const ui = uAll[fi]
+      const vi = vAll[fi]
+      if (!ui || !vi) { out[fi] = 1.0; continue }
+      const mags = new Float32Array(H * W)
+      let k = 0
+      for (let i = 0; i < H; i++) {
+        const urow = ui[i]
+        const vrow = vi[i]
+        for (let j = 0; j < W; j++, k++) {
+          const u = (urow?.[j] ?? 0)
+          const v = (vrow?.[j] ?? 0)
+          mags[k] = Math.hypot(u, v)
+        }
+      }
+      const arr = Array.from(mags)
+      arr.sort((a, b) => a - b)
+      const p99 = arr.length ? arr[Math.floor(arr.length * 0.99)] : 1.0
+      out[fi] = p99 || 1.0
+    }
+    return out
+  }, [uAll, vAll])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -469,6 +506,69 @@ export default function CanvasWind({
         }
       }
 
+      // Optional: per-feature gradients attached to each point
+      if (showPointGradientsRef.current && positions) {
+        // Use manually checked features when provided; otherwise fall back to current selection indices
+        const provided = gradientFeatureIndicesRef.current
+        const featList = (Array.isArray(provided) && provided.length > 0) ? provided : indices
+        if (Array.isArray(featList) && featList.length > 0) {
+          const p99Sum = magInfo?.p99 || 1.0
+          const sxScale = Wpx / (xmax - xmin)
+          const syScale = Hpx / (ymax - ymin)
+          const headLen = Math.max(6, Math.min(12, Math.floor(Math.min(Wpx, Hpx) * 0.015)))
+          const phi = Math.PI / 7 // ~25.7 degrees
+          ctx.lineWidth = 1.0
+          for (let pIdx = 0; pIdx < positions.length; pIdx++) {
+            const [wx, wy] = positions[pIdx]
+            const [sx, sy] = worldToScreen(wx, wy)
+            const [gx, gy] = worldToGrid(wx, wy)
+            for (const fi of featList) {
+              const u = bilinearSample(uAll[fi], gx, gy)
+              const v = bilinearSample(vAll[fi], gx, gy)
+              const m = Math.hypot(u, v)
+              if (m <= 1e-12) continue
+              const denom = (p99ByFeature && fi >= 0 && fi < p99ByFeature.length && p99ByFeature[fi] > 0)
+                ? p99ByFeature[fi]
+                : p99Sum
+              const aField = Math.max(0, Math.min(1, m / denom))
+              // Map world vector to screen direction (account for y flip and axis scales)
+              const ddx = u * sxScale
+              const ddy = -v * syScale
+              const dnorm = Math.hypot(ddx, ddy)
+              if (!Number.isFinite(dnorm) || dnorm <= 0) continue
+              const dirx = ddx / dnorm
+              const diry = ddy / dnorm
+              const baseLen = Math.max(10, Math.min(40, Math.min(Wpx, Hpx) * 0.05))
+              const len = Math.max(0, Math.min(1, aField)) * baseLen
+              const ex = sx + dirx * len
+              const ey = sy + diry * len
+              // Stroke color with field-strength alpha
+              const col = (colors && fi >= 0 && fi < colors.length) ? colors[fi] : '#222222'
+              ctx.strokeStyle = col
+              ctx.globalAlpha = 0.9
+              // Main shaft
+              ctx.beginPath()
+              ctx.moveTo(sx, sy)
+              ctx.lineTo(ex, ey)
+              ctx.stroke()
+              // Arrow head
+              const ang = Math.atan2(ey - sy, ex - sx)
+              const hx1 = ex - headLen * Math.cos(ang - phi)
+              const hy1 = ey - headLen * Math.sin(ang - phi)
+              const hx2 = ex - headLen * Math.cos(ang + phi)
+              const hy2 = ey - headLen * Math.sin(ang + phi)
+              ctx.beginPath()
+              ctx.moveTo(ex, ey)
+              ctx.lineTo(hx1, hy1)
+              ctx.moveTo(ex, ey)
+              ctx.lineTo(hx2, hy2)
+              ctx.stroke()
+              ctx.globalAlpha = 1.0
+            }
+          }
+        }
+      }
+
       // Draw trails as fading line segments (colored by feature family)
       ctx.lineWidth = 1.2
       ctx.lineCap = 'round'
@@ -637,6 +737,7 @@ export default function CanvasWind({
     grid_res,
     uSum,
     vSum,
+    p99ByFeature,
     positions,
     point_labels,
     colors,

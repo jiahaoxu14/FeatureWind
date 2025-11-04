@@ -45,7 +45,7 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
   const H = grid_res, W = grid_res
 
   const indices = useMemo(() => {
-    if (Array.isArray(featureIndices) && featureIndices.length > 0) return featureIndices
+    if (Array.isArray(featureIndices)) return featureIndices // honor manual array even if empty
     if (!selection) return []
     if (selection.topKIndices) return selection.topKIndices
     if (selection.featureIndex !== undefined) return [selection.featureIndex]

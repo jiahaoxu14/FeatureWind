@@ -22,7 +22,9 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
   // Effective selection reflects current visualization: manual selection first,
   // otherwise fall back to backend-provided selection (Top-K or single feature)
   const effectiveSelectedArray = useMemo(() => {
-    if (Array.isArray(selectedFeatures) && selectedFeatures.length > 0) return selectedFeatures
+    // If parent provides an array (even empty), treat it as authoritative manual selection
+    if (Array.isArray(selectedFeatures)) return selectedFeatures
+    // Otherwise fall back to backend-provided selection (Top-K or single feature)
     if (selection && Array.isArray(selection.topKIndices)) return selection.topKIndices
     if (selection && typeof selection.featureIndex === 'number') return [selection.featureIndex]
     return []

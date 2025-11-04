@@ -30,8 +30,10 @@ export default function App() {
   const [showAllVectors, setShowAllVectors] = useState(false)
   const [hideParticles, setHideParticles] = useState(false)
   const [pointColorFeature, setPointColorFeature] = useState('') // '' or feature index string
-  // Manual feature selection (overrides Top-K for visualization when non-empty)
+  const [showPointGradients, setShowPointGradients] = useState(false)
+  // Manual feature selection (overrides Top-K when enabled)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
+  const [useManualFeatures, setUseManualFeatures] = useState(false)
 
   // Controls update live; no separate "Apply/Update" states
 
@@ -40,6 +42,7 @@ export default function App() {
     const n = (payload?.col_labels?.length) || 0
     if (!n) { setSelectedFeatureIndices([]); return }
     setSelectedFeatureIndices((prev) => prev.filter((i) => i >= 0 && i < n))
+    setUseManualFeatures(false)
   }, [payload?.col_labels])
 
   async function handleUpload(selected) {
@@ -138,7 +141,7 @@ export default function App() {
     const H = grid_res, W = grid_res
     // Determine selected features (indices rendered in vane)
     let indices = []
-    if (Array.isArray(selectedFeatureIndices) && selectedFeatureIndices.length > 0) indices = selectedFeatureIndices
+    if (useManualFeatures) indices = selectedFeatureIndices
     else if (selection && Array.isArray(selection.topKIndices)) indices = selection.topKIndices
     else if (selection && typeof selection.featureIndex === 'number') indices = [selection.featureIndex]
     if (!indices.length) return result
@@ -217,7 +220,7 @@ export default function App() {
     const hidx = hullIdx(pts)
     for (const hi of hidx) result.add(feats[hi])
     return result
-  }, [payload, selectedCells, vaneFocus, selectedFeatureIndices])
+  }, [payload, selectedCells, vaneFocus, selectedFeatureIndices, useManualFeatures])
 
   return (
     <div className="app">
@@ -269,8 +272,10 @@ export default function App() {
                 size={600}
                 showParticles={!hideParticles}
                 pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
+                showPointGradients={showPointGradients}
+                gradientFeatureIndices={useManualFeatures ? selectedFeatureIndices : []}
                 selectedCells={selectedCells}
-                featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null}
+                featureIndices={useManualFeatures ? selectedFeatureIndices : null}
               />
             ) : (
               <div className="panel placeholder" style={{ width: 600, height: 600 }}>Wind Map</div>
@@ -288,7 +293,7 @@ export default function App() {
                   useConvexHull={!showAllVectors}
                   showHull={showHull}
                   showLabels={showVectorLabels}
-                  featureIndices={selectedFeatureIndices && selectedFeatureIndices.length ? selectedFeatureIndices : null}
+                  featureIndices={useManualFeatures ? selectedFeatureIndices : null}
                 />
             ) : (
               <div className="panel placeholder" style={{ width: 600, height: 600 }}>Wind Vane</div>
@@ -303,8 +308,8 @@ export default function App() {
                 payload={payload}
                 dataset={dataset}
                 visible={visibleFeatures}
-                selectedFeatures={selectedFeatureIndices}
-                onChangeSelectedFeatures={setSelectedFeatureIndices}
+                selectedFeatures={useManualFeatures ? selectedFeatureIndices : null}
+                onChangeSelectedFeatures={(arr) => { setSelectedFeatureIndices(arr); setUseManualFeatures(true) }}
                 onApplyFamilies={async (families) => {
                   try {
                     if (!dataset) return
@@ -366,6 +371,9 @@ export default function App() {
                 <option key={idx} value={String(idx)}>{name}</option>
               ))}
             </select>
+
+            <label>Show Point Gradients</label>
+            <input type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} />
 
             <label>Particles</label>
             <div className="slider-row">
