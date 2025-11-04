@@ -16,7 +16,7 @@ function bilinear(grid, gx, gy) {
   return top * (1 - b) + bot * b
 }
 
-export default function WindVane({ payload, focus, selectedCells = [], size = null, useConvexHull = true, showHull = false, showLabels = false, featureIndices = null }) {
+export default function WindVane({ payload, focus, selectedCells = [], size = null, useConvexHull = true, showHull = false, showLabels = false, featureIndices = null, onCanvasElement = null }) {
   const containerRef = useRef(null)
   const canvasRef = useRef(null)
   const [canvasSize, setCanvasSize] = useState(typeof size === 'number' && size > 0 ? size : 220)
@@ -362,6 +362,12 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
     ctx.arc(cx, cy, 3, 0, Math.PI * 2)
     ctx.fill()
   }, [uAll, vAll, colors, indices, gx, gy, unmasked, dominant, selectedCells, useConvexHull, showHull, canvasSize, showLabels, col_labels, hoverPt])
+
+  // Expose canvas element to parent for saving snapshots
+  useEffect(() => {
+    if (typeof onCanvasElement === 'function') onCanvasElement(canvasRef.current)
+    return () => { if (typeof onCanvasElement === 'function') onCanvasElement(null) }
+  }, [onCanvasElement])
 
   // Mouse handlers for hover labeling
   useEffect(() => {

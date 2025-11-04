@@ -38,6 +38,23 @@ export default function App() {
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
   const [useManualFeatures, setUseManualFeatures] = useState(false)
 
+  // Refs to canvases for exporting PNGs
+  const windMapCanvasRef = useRef(null)
+  const windVaneCanvasRef = useRef(null)
+
+  function saveCanvasAsPng(canvas, filename) {
+    try {
+      if (!canvas) return
+      const url = canvas.toDataURL('image/png')
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+    } catch (e) { /* ignore */ }
+  }
+
   // Controls update live; no separate "Apply/Update" states
 
   // Clamp manual feature selection when payload changes (e.g., new dataset)
@@ -252,7 +269,16 @@ export default function App() {
         <div className="three-up">
           {/* Wind Map */}
           <div className="panel canvas-frame">
-            <p className="panel-title">Wind Map</p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <p className="panel-title" style={{ margin: 0 }}>Wind Map</p>
+              {payload && (
+                <button
+                  className="btn"
+                  title="Save Wind Map as PNG"
+                  onClick={() => saveCanvasAsPng(windMapCanvasRef.current, 'wind_map.png')}
+                >Save PNG</button>
+              )}
+            </div>
             {payload ? (
               <CanvasWind
                 payload={payload}
@@ -282,6 +308,7 @@ export default function App() {
                 gradientFeatureIndices={useManualFeatures ? selectedFeatureIndices : []}
                 selectedCells={selectedCells}
                 featureIndices={useManualFeatures ? selectedFeatureIndices : null}
+                onCanvasElement={(el) => { windMapCanvasRef.current = el }}
               />
             ) : (
               <div className="panel placeholder" style={{ width: 600, height: 600 }}>Wind Map</div>
@@ -290,7 +317,16 @@ export default function App() {
 
           {/* Wind Vane */}
           <div className="panel canvas-frame">
-            <p className="panel-title">Wind Vane{selectedCells.length > 0 ? ` (selection: ${selectedCells.length} cells)` : ''}</p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <p className="panel-title" style={{ margin: 0 }}>Wind Vane{selectedCells.length > 0 ? ` (selection: ${selectedCells.length} cells)` : ''}</p>
+              {payload && (
+                <button
+                  className="btn"
+                  title="Save Wind Vane as PNG"
+                  onClick={() => saveCanvasAsPng(windVaneCanvasRef.current, 'wind_vane.png')}
+                >Save PNG</button>
+              )}
+            </div>
             {payload ? (
                 <WindVane
                   payload={payload}
@@ -300,6 +336,7 @@ export default function App() {
                   showHull={showHull}
                   showLabels={showVectorLabels}
                   featureIndices={useManualFeatures ? selectedFeatureIndices : null}
+                  onCanvasElement={(el) => { windVaneCanvasRef.current = el }}
                 />
             ) : (
               <div className="panel placeholder" style={{ width: 600, height: 600 }}>Wind Vane</div>

@@ -38,6 +38,7 @@ export default function CanvasWind({
   onHover,
   onSelectCell,
   onBrushCell,
+  onCanvasElement = null,
   showGrid = true,
   showParticles = true,
   showPointGradients = false,
@@ -81,6 +82,12 @@ export default function CanvasWind({
   useEffect(() => { showCellGradientsRef.current = !!showCellGradients }, [showCellGradients])
   useEffect(() => { showCellAggregatedGradientsRef.current = !!showCellAggregatedGradients }, [showCellAggregatedGradients])
   useEffect(() => { showParticleInitsRef.current = !!showParticleInits }, [showParticleInits])
+
+  // Expose canvas element to parent for saving snapshots
+  useEffect(() => {
+    if (typeof onCanvasElement === 'function') onCanvasElement(canvasRef.current)
+    return () => { if (typeof onCanvasElement === 'function') onCanvasElement(null) }
+  }, [onCanvasElement])
   useEffect(() => { gradientFeatureIndicesRef.current = Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [] }, [gradientFeatureIndices])
 
   const {
