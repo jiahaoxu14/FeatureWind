@@ -546,7 +546,7 @@ export default function CanvasWind({
             if (!unmasked[mi][mj]) continue
           }
 
-          const alpha = 0.9 * aTail * aField
+          const alpha = 1.0 * aTail * aField
           if (alpha <= 0.01) continue
           const [sx0, sy0] = worldToScreen(x0, y0)
           const [sx1, sy1] = worldToScreen(x1, y1)
