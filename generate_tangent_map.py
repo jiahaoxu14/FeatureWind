@@ -92,7 +92,7 @@ def extract_features_and_labels(csv_file):
     return feature_df, labels, label_column, feature_columns
 
 
-def run_tangent_map_generation(feature_df, projection):
+def run_tangent_map_generation(feature_df, projection, perplexity: float | None = None):
     """
     Run tangent map generation on the feature DataFrame.
     
@@ -113,9 +113,10 @@ def run_tangent_map_generation(feature_df, projection):
         print(f"Running tangent map generation with {projection}...")
         
         # Use python -m approach from the project root to handle relative imports
-        result = subprocess.run([
-            sys.executable, "-m", "featurewind.core.tangent_map", temp_csv_path, projection
-        ], cwd=Path(__file__).parent, capture_output=False, text=True)
+        cmd = [sys.executable, "-m", "featurewind.core.tangent_map", temp_csv_path, projection]
+        if perplexity is not None:
+            cmd.append(str(perplexity))
+        result = subprocess.run(cmd, cwd=Path(__file__).parent, capture_output=False, text=True)
         
         if result.returncode != 0:
             print("Error running tangent map generation:")
@@ -216,6 +217,8 @@ def main():
     parser.add_argument('csv_file', help='Input CSV file')
     parser.add_argument('projection', choices=['tsne', 'mds'], help='Projection method')
     parser.add_argument('output_name', nargs='?', help='Output filename (without extension)')
+    parser.add_argument('--perplexity', type=float, default=None,
+                        help='t-SNE perplexity (passes through to tangent_map). Applies when projection=tsne.')
     
     args = parser.parse_args()
     
@@ -224,7 +227,7 @@ def main():
         feature_df, labels, label_column, feature_columns = extract_features_and_labels(args.csv_file)
         
         # Generate tangent map on features only
-        tmap_file = run_tangent_map_generation(feature_df, args.projection)
+        tmap_file = run_tangent_map_generation(feature_df, args.projection, perplexity=args.perplexity)
         
         # Add labels back and save final result
         output_file = add_labels_to_tangent_map(tmap_file, labels, feature_columns, args.output_name, args.csv_file)

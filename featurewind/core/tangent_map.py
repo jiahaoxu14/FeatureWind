@@ -137,7 +137,7 @@ if __name__ == "__main__":
         if (len(sys.argv)>3):
             params = []
             for i in range(3, len(sys.argv)):
-                params = [sys.argv[i]]
+                params.append(sys.argv[i])
         else:
             params = []
 

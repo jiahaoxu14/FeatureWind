@@ -32,11 +32,33 @@ class ProjectionRunner:
 
         # Usage for DimReader:
         if self.projection == tsne or (isinstance(self.projection, str) and self.projection.lower() == 'tsne'):
+            # Optional perplexity override via self.params (supports 'perplexity=NN', 'perp=NN', or a lone number)
+            perp_override = None
+            try:
+                if self.params:
+                    for p in self.params:
+                        s = str(p).strip()
+                        if '=' in s:
+                            k, v = s.split('=', 1)
+                            if k.strip().lower() in ('perplexity', 'perp'):
+                                perp_override = float(v)
+                        else:
+                            # no key, treat as numeric perplexity if possible
+                            try:
+                                perp_override = float(s)
+                            except Exception:
+                                pass
+            except Exception:
+                perp_override = perp_override
+
+            perp_base = perp_override if (isinstance(perp_override, (int, float)) and perp_override > 0) else 40.0
+            perp_grad = perp_override if (isinstance(perp_override, (int, float)) and perp_override > 0) else 40.0
+
             print("Step 1/3: Computing base t-SNE projection (1000 iterations)...")
             with torch.no_grad():
-                Y_base, params = tsne(data, 2, 1000, 10, 40.0, save_params = True)
+                Y_base, params = tsne(data, 2, 1000, 10, perp_base, save_params = True)
             print("Step 2/3: Computing projection with gradients (1 iteration)...")
-            Y, params = tsne(data, no_dims=2, maxIter = 1, initial_dims=10, perplexity=40.0, save_params = False,
+            Y, params = tsne(data, no_dims=2, maxIter = 1, initial_dims=10, perplexity=perp_grad, save_params = False,
                                 initY = params[0], initBeta = params[2], betaTries = 50, initIY =params[1])
         elif self.projection == mds or (isinstance(self.projection, str) and self.projection.lower() == 'mds'):
             print("Step 1/3: Computing base MDS projection (999 iterations)...")
