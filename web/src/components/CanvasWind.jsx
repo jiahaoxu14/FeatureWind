@@ -39,6 +39,7 @@ export default function CanvasWind({
   onSelectCell,
   onBrushCell,
   onCanvasElement = null,
+  allowGridSelection = false,
   showGrid = true,
   showParticles = true,
   showPointGradients = false,
@@ -48,6 +49,7 @@ export default function CanvasWind({
   uniformPointShape = false,
   showParticleArrowheads = false,
   trailLineWidth = 2.0,
+  restrictSpawnToSelection = false,
   gradientFeatureIndices = null,
   speedScale = 1.0,
   tailLength = 10,
@@ -73,6 +75,8 @@ export default function CanvasWind({
   const showParticleInitsRef = useRef(!!showParticleInits)
   const uniformPointShapeRef = useRef(!!uniformPointShape)
   const showParticleArrowheadsRef = useRef(!!showParticleArrowheads)
+  const allowGridSelectionRef = useRef(!!allowGridSelection)
+  const restrictSpawnToSelectionRef = useRef(!!restrictSpawnToSelection)
   const gradientFeatureIndicesRef = useRef(Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [])
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
@@ -89,6 +93,8 @@ export default function CanvasWind({
   useEffect(() => { showParticleInitsRef.current = !!showParticleInits }, [showParticleInits])
   useEffect(() => { uniformPointShapeRef.current = !!uniformPointShape }, [uniformPointShape])
   useEffect(() => { showParticleArrowheadsRef.current = !!showParticleArrowheads }, [showParticleArrowheads])
+  useEffect(() => { allowGridSelectionRef.current = !!allowGridSelection }, [allowGridSelection])
+  useEffect(() => { restrictSpawnToSelectionRef.current = !!restrictSpawnToSelection }, [restrictSpawnToSelection])
 
   // Expose canvas element to parent for saving snapshots
   useEffect(() => {
@@ -222,6 +228,23 @@ export default function CanvasWind({
     }
 
     function randomSpawn() {
+      // If restriction is enabled and we have selected cells, spawn within them (respecting mask)
+      if (restrictSpawnToSelectionRef.current && Array.isArray(selectedRef.current) && selectedRef.current.length > 0) {
+        const valid = []
+        for (const c of selectedRef.current) {
+          const i = Math.max(0, Math.min(H - 1, (c.i|0)))
+          const j = Math.max(0, Math.min(W - 1, (c.j|0)))
+          if (!hasMask || (unmasked[i][j])) valid.push([i, j])
+        }
+        if (valid.length > 0) {
+          const [i, j] = valid[Math.floor(Math.random() * valid.length)]
+          const dx = (xmax - xmin) / W
+          const dy = (ymax - ymin) / H
+          const x = xmin + j * dx + Math.random() * dx
+          const y = ymin + i * dy + Math.random() * dy
+          return { x, y }
+        }
+      }
       if (hasMask && unmaskedList.length) {
         const idx = Math.floor(Math.random() * unmaskedList.length)
         const [i, j] = unmaskedList[idx]
@@ -950,7 +973,7 @@ export default function CanvasWind({
 
     // Click handler to select grid cell
     function handleClick(e) {
-      if (!onSelectCell) return
+      if (!onSelectCell || !allowGridSelectionRef.current) return
       const rect = canvas.getBoundingClientRect()
       const cx = e.clientX - rect.left
       const cy = e.clientY - rect.top
@@ -965,6 +988,7 @@ export default function CanvasWind({
 
     // Brush handlers
     function handleDown(e) {
+      if (!allowGridSelectionRef.current) return
       const rect = canvas.getBoundingClientRect()
       const cx = e.clientX - rect.left
       const cy = e.clientY - rect.top

@@ -37,6 +37,7 @@ export default function App() {
   const [showParticleInits, setShowParticleInits] = useState(false)
   const [uniformPointShape, setUniformPointShape] = useState(false)
   const [showParticleArrowheads, setShowParticleArrowheads] = useState(false)
+  const [restrictSpawnToSelection, setRestrictSpawnToSelection] = useState(false)
   // Manual feature selection (overrides Top-K when enabled)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
   const [useManualFeatures, setUseManualFeatures] = useState(false)
@@ -313,6 +314,8 @@ export default function App() {
                 featureIndices={useManualFeatures ? selectedFeatureIndices : null}
                 uniformPointShape={uniformPointShape}
                 showParticleArrowheads={showParticleArrowheads}
+                allowGridSelection={restrictSpawnToSelection}
+                restrictSpawnToSelection={restrictSpawnToSelection}
                 trailLineWidth={trailLineWidth}
                 onCanvasElement={(el) => { windMapCanvasRef.current = el }}
               />
@@ -438,6 +441,9 @@ export default function App() {
 
             <label>Show Particle Inits</label>
             <input type="checkbox" checked={showParticleInits} onChange={(e) => setShowParticleInits(e.target.checked)} />
+
+            <label>Restrict Spawns to Selection</label>
+            <input type="checkbox" checked={restrictSpawnToSelection} onChange={(e) => setRestrictSpawnToSelection(e.target.checked)} />
 
             <label>Particles</label>
             <div className="slider-row">
