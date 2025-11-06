@@ -45,6 +45,9 @@ export default function CanvasWind({
   showCellGradients = false,
   showCellAggregatedGradients = false,
   showParticleInits = false,
+  uniformPointShape = false,
+  showParticleArrowheads = false,
+  trailLineWidth = 2.0,
   gradientFeatureIndices = null,
   speedScale = 1.0,
   tailLength = 10,
@@ -68,6 +71,8 @@ export default function CanvasWind({
   const showCellGradientsRef = useRef(!!showCellGradients)
   const showCellAggregatedGradientsRef = useRef(!!showCellAggregatedGradients)
   const showParticleInitsRef = useRef(!!showParticleInits)
+  const uniformPointShapeRef = useRef(!!uniformPointShape)
+  const showParticleArrowheadsRef = useRef(!!showParticleArrowheads)
   const gradientFeatureIndicesRef = useRef(Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [])
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
@@ -82,6 +87,8 @@ export default function CanvasWind({
   useEffect(() => { showCellGradientsRef.current = !!showCellGradients }, [showCellGradients])
   useEffect(() => { showCellAggregatedGradientsRef.current = !!showCellAggregatedGradients }, [showCellAggregatedGradients])
   useEffect(() => { showParticleInitsRef.current = !!showParticleInits }, [showParticleInits])
+  useEffect(() => { uniformPointShapeRef.current = !!uniformPointShape }, [uniformPointShape])
+  useEffect(() => { showParticleArrowheadsRef.current = !!showParticleArrowheads }, [showParticleArrowheads])
 
   // Expose canvas element to parent for saving snapshots
   useEffect(() => {
@@ -523,7 +530,7 @@ export default function CanvasWind({
           const [x, y] = positions[idx]
           const [sx, sy] = worldToScreen(x, y)
           const li = map.get(String(point_labels[idx])) || 0
-          const shape = SHAPES[li % SHAPES.length]
+          const shape = uniformPointShapeRef.current ? 'o' : SHAPES[li % SHAPES.length]
           if (pointColorStats && Array.isArray(feature_values)) {
             const col = pointColorStats.idx
             const row = feature_values[idx]
@@ -725,7 +732,7 @@ export default function CanvasWind({
       }
 
       // Draw trails as fading line segments (colored by feature family)
-      ctx.lineWidth = 1.2
+      ctx.lineWidth = Math.max(0.5, Number(trailLineWidth) || 1.2)
       ctx.lineCap = 'round'
       const p99 = magInfo?.p99 || 1.0
 
@@ -752,6 +759,9 @@ export default function CanvasWind({
 
       if (showParticlesRef.current) {
         for (const p of particles) {
+          // reset cached head style each frame
+          p._headAlpha = undefined
+          p._headRgb = undefined
           for (let t = TAIL_LENGTH - 1; t >= 0; t--) {
           // Fade from tail (low alpha) to head (high alpha)
           const relHead = (TAIL_LENGTH - t) / TAIL_LENGTH
@@ -802,6 +812,8 @@ export default function CanvasWind({
           }
 
           const alpha = 1.0 * aTail * aField
+          // Cache head segment opacity and color for arrowhead rendering
+          if (t === 0) { p._headAlpha = alpha; p._headRgb = rgb }
           if (alpha <= 0.01) continue
           const [sx0, sy0] = worldToScreen(x0, y0)
           const [sx1, sy1] = worldToScreen(x1, y1)
@@ -810,6 +822,35 @@ export default function CanvasWind({
           ctx.moveTo(sx1, sy1)
           ctx.lineTo(sx0, sy0)
           ctx.stroke()
+          }
+        }
+        // Optional: arrowhead at each particle head
+        if (showParticleArrowheadsRef.current) {
+          // Slightly larger arrowheads for better visibility
+          const headLen = Math.max(8, Math.min(16, Math.floor(Math.min(Wpx, Hpx) * 0.02)))
+          const phi = Math.PI / 7
+          for (const p of particles) {
+            // Use cached head alpha/color to exactly match the head segment's opacity and color
+            const alpha = (typeof p._headAlpha === 'number') ? p._headAlpha : 0
+            const rgb = Array.isArray(p._headRgb) ? p._headRgb : [20, 20, 20]
+            if (!(alpha > 0.01)) continue
+            const x0 = p.hist[0].x, y0 = p.hist[0].y
+            const x1 = p.hist[1].x, y1 = p.hist[1].y
+            // Screen coords + direction from last step
+            const [sx0, sy0] = worldToScreen(x0, y0)
+            const [sx1, sy1] = worldToScreen(x1, y1)
+            const ang = Math.atan2(sy0 - sy1, sx0 - sx1)
+            ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha.toFixed(3)})`
+            const hx1 = sx0 - headLen * Math.cos(ang - phi)
+            const hy1 = sy0 - headLen * Math.sin(ang - phi)
+            const hx2 = sx0 - headLen * Math.cos(ang + phi)
+            const hy2 = sy0 - headLen * Math.sin(ang + phi)
+            ctx.beginPath()
+            ctx.moveTo(sx0, sy0)
+            ctx.lineTo(hx1, hy1)
+            ctx.moveTo(sx0, sy0)
+            ctx.lineTo(hx2, hy2)
+            ctx.stroke()
           }
         }
       }
@@ -972,6 +1013,7 @@ export default function CanvasWind({
     trailTailExp,
     maxLifetime,
     speedScale,
+    trailLineWidth,
     showCellAggregatedGradients,
     showCellGradients,
     showPointGradients,

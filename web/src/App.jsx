@@ -23,6 +23,7 @@ export default function App() {
   const [tailLength, setTailLength] = useState(10)
   const [trailTailMin, setTrailTailMin] = useState(0.10)
   const [trailTailExp, setTrailTailExp] = useState(2.0)
+  const [trailLineWidth, setTrailLineWidth] = useState(2.0)
   const [maxLifetime, setMaxLifetime] = useState(200)
   const [maskBufferFactor, setMaskBufferFactor] = useState(0.2)
   const [showHull, setShowHull] = useState(false)
@@ -34,6 +35,8 @@ export default function App() {
   const [showCellGradients, setShowCellGradients] = useState(false)
   const [showCellAggGradients, setShowCellAggGradients] = useState(false)
   const [showParticleInits, setShowParticleInits] = useState(false)
+  const [uniformPointShape, setUniformPointShape] = useState(false)
+  const [showParticleArrowheads, setShowParticleArrowheads] = useState(false)
   // Manual feature selection (overrides Top-K when enabled)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
   const [useManualFeatures, setUseManualFeatures] = useState(false)
@@ -308,6 +311,9 @@ export default function App() {
                 gradientFeatureIndices={useManualFeatures ? selectedFeatureIndices : []}
                 selectedCells={selectedCells}
                 featureIndices={useManualFeatures ? selectedFeatureIndices : null}
+                uniformPointShape={uniformPointShape}
+                showParticleArrowheads={showParticleArrowheads}
+                trailLineWidth={trailLineWidth}
                 onCanvasElement={(el) => { windMapCanvasRef.current = el }}
               />
             ) : (
@@ -415,6 +421,12 @@ export default function App() {
               ))}
             </select>
 
+            <label>Use Circle Markers</label>
+            <input type="checkbox" checked={uniformPointShape} onChange={(e) => setUniformPointShape(e.target.checked)} />
+
+            <label>Particle Arrowheads</label>
+            <input type="checkbox" checked={showParticleArrowheads} onChange={(e) => setShowParticleArrowheads(e.target.checked)} />
+
             <label>Show Point Gradients</label>
             <input type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} />
 
@@ -448,6 +460,13 @@ export default function App() {
               <input type="range" min={2} max={60} step={1} value={tailLength}
                 onChange={(e) => setTailLength(Number(e.target.value))} />
               <span className="control-val">{tailLength}</span>
+            </div>
+
+            <label>Trail Width</label>
+            <div className="slider-row">
+              <input type="range" min={0.5} max={4} step={0.1} value={trailLineWidth}
+                onChange={(e) => setTrailLineWidth(Number(e.target.value))} />
+              <span className="control-val">{trailLineWidth.toFixed(1)} px</span>
             </div>
 
             <label>Tail Min Alpha</label>

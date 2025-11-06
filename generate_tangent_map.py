@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -92,7 +93,7 @@ def extract_features_and_labels(csv_file):
     return feature_df, labels, label_column, feature_columns
 
 
-def run_tangent_map_generation(feature_df, projection, perplexity: float | None = None):
+def run_tangent_map_generation(feature_df, projection, perplexity: Optional[float] = None):
     """
     Run tangent map generation on the feature DataFrame.
     
