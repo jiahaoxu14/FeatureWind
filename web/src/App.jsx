@@ -4,6 +4,7 @@ import { uploadFile, compute, recolor } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
 import WindVane from './components/WindVane.jsx'
 import ColorLegend from './components/ColorLegend.jsx'
+import PointSeries from './components/PointSeries.jsx'
 
 export default function App() {
   const fileInputRef = useRef(null)
@@ -40,6 +41,10 @@ export default function App() {
   const [restrictSpawnToSelection, setRestrictSpawnToSelection] = useState(false)
   const [autoRespawnEnabled, setAutoRespawnEnabled] = useState(false)
   const [assessAllCells, setAssessAllCells] = useState(false)
+  const [brushRadius, setBrushRadius] = useState(1)
+  const [selectPointsMode, setSelectPointsMode] = useState(false)
+  const [selectedPointIndices, setSelectedPointIndices] = useState([])
+  const [seriesFeatureIndex, setSeriesFeatureIndex] = useState(0)
   // Manual feature selection (overrides Top-K when enabled)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
   const [useManualFeatures, setUseManualFeatures] = useState(false)
@@ -325,12 +330,26 @@ export default function App() {
                 payload={payload}
                 onHover={setHoverPos}
                 onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
-                onBrushCell={({ i, j }) => {
-                  setSelectedCells((prev) => {
-                    const exists = prev.some((c) => c.i === i && c.j === j)
-                    if (exists) return prev
-                    return [...prev, { i, j }]
-                  })
+                onBrushCell={(payload) => {
+                  if (payload && Array.isArray(payload.cells)) {
+                    const cells = payload.cells
+                    setSelectedCells((prev) => {
+                      const key = (c) => `${c.i}:${c.j}`
+                      const setPrev = new Set(prev.map(key))
+                      const out = prev.slice()
+                      for (const c of cells) { const k = key(c); if (!setPrev.has(k)) { setPrev.add(k); out.push({ i: c.i, j: c.j }) } }
+                      return out
+                    })
+                    return
+                  }
+                  const { i, j } = payload || {}
+                  if (typeof i === 'number' && typeof j === 'number') {
+                    setSelectedCells((prev) => {
+                      const exists = prev.some((c) => c.i === i && c.j === j)
+                      if (exists) return prev
+                      return [...prev, { i, j }]
+                    })
+                  }
                 }}
                 showGrid={showGrid}
                 particleCount={particleCount}
@@ -354,6 +373,26 @@ export default function App() {
                 allowGridSelection={restrictSpawnToSelection}
                 restrictSpawnToSelection={restrictSpawnToSelection}
                 autoRespawnRate={autoRespawnEnabled ? 0.3 : 0.0}
+                selectPointsMode={selectPointsMode}
+                selectedPointIndices={selectedPointIndices}
+                onSelectPoint={({ idx, append }) => {
+                  setSelectedPointIndices((prev) => {
+                    if (append) {
+                      const exists = prev.includes(idx)
+                      return exists ? prev : [...prev, idx]
+                    }
+                    return [idx]
+                  })
+                }}
+                onBrushPoints={({ indices }) => {
+                  if (!Array.isArray(indices) || !indices.length) return
+                  setSelectedPointIndices((prev) => {
+                    const setPrev = new Set(prev)
+                    const out = prev.slice()
+                    for (const i of indices) { if (!setPrev.has(i)) { setPrev.add(i); out.push(i) } }
+                    return out
+                  })
+                }}
                 trailLineWidth={trailLineWidth}
                 onCanvasElement={(el) => { windMapCanvasRef.current = el }}
               />
@@ -400,6 +439,28 @@ export default function App() {
                 visible={visibleFeatures}
                 selectedFeatures={useManualFeatures ? selectedFeatureIndices : null}
                 onChangeSelectedFeatures={(arr) => { setSelectedFeatureIndices(arr); setUseManualFeatures(true) }}
+                onSwapFamilyColors={(famA, famB) => {
+                  // Swap colors between two family IDs across all features (front-end only)
+                  setPayload((prev) => {
+                    try {
+                      if (!prev) return prev
+                      const fams = prev.family_assignments || []
+                      const cols = (prev.colors || []).slice()
+                      if (!Array.isArray(fams) || !Array.isArray(cols)) return prev
+                      // Representative colors (first feature in each family)
+                      const idxA = fams.findIndex((f) => String(f) === String(famA))
+                      const idxB = fams.findIndex((f) => String(f) === String(famB))
+                      const colA = idxA >= 0 ? cols[idxA] : '#888'
+                      const colB = idxB >= 0 ? cols[idxB] : '#888'
+                      const out = cols.slice()
+                      for (let i = 0; i < fams.length; i++) {
+                        if (String(fams[i]) === String(famA)) out[i] = colB
+                        else if (String(fams[i]) === String(famB)) out[i] = colA
+                      }
+                      return { ...prev, colors: out }
+                    } catch { return prev }
+                  })
+                }}
                 onApplyFamilies={async (families) => {
                   try {
                     if (!dataset) return
@@ -412,6 +473,29 @@ export default function App() {
               />
             ) : (
               <div className="hint">Upload a dataset to see colors</div>
+            )}
+          </div>
+
+          {/* Point Series */}
+          <div className="panel padded">
+            <p className="panel-title">Point Series</p>
+            <div className="row" style={{ alignItems: 'center', marginBottom: 8, gap: 10 }}>
+              <label style={{ color: 'var(--muted)', fontSize: 13 }}>Select Points Mode</label>
+              <input type="checkbox" checked={selectPointsMode} onChange={(e) => setSelectPointsMode(e.target.checked)} />
+              <button className="btn" onClick={() => setSelectedPointIndices([])}>Clear Points</button>
+            </div>
+            {payload ? (
+              <PointSeries
+                indices={selectedPointIndices}
+                featureValues={payload.feature_values || []}
+                featureIndex={seriesFeatureIndex}
+                onChangeFeatureIndex={setSeriesFeatureIndex}
+                colLabels={payload.col_labels || []}
+                width={600}
+                height={220}
+              />
+            ) : (
+              <div className="hint">Upload a dataset to view series</div>
             )}
           </div>
 

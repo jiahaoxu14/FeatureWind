@@ -40,6 +40,11 @@ export default function CanvasWind({
   onBrushCell,
   onCanvasElement = null,
   allowGridSelection = false,
+  selectPointsMode = false,
+  pointBrushRadiusPx = 14,
+  onSelectPoint = null,
+  onBrushPoints = null,
+  selectedPointIndices = [],
   showGrid = true,
   showParticles = true,
   showPointGradients = false,
@@ -51,6 +56,7 @@ export default function CanvasWind({
   trailLineWidth = 2.0,
   autoRespawnRate = 0.0,
   restrictSpawnToSelection = false,
+  brushRadius = 1,
   gradientFeatureIndices = null,
   speedScale = 1.0,
   tailLength = 10,
@@ -79,6 +85,10 @@ export default function CanvasWind({
   const allowGridSelectionRef = useRef(!!allowGridSelection)
   const restrictSpawnToSelectionRef = useRef(!!restrictSpawnToSelection)
   const autoRespawnRateRef = useRef(Number(autoRespawnRate) || 0)
+  const brushRadiusRef = useRef(Math.max(1, Math.floor(brushRadius || 1)))
+  const selectPointsModeRef = useRef(!!selectPointsMode)
+  const pointBrushRadiusPxRef = useRef(Math.max(4, Math.floor(pointBrushRadiusPx || 14)))
+  const selectedPointIndicesRef = useRef(Array.isArray(selectedPointIndices) ? selectedPointIndices : [])
   const gradientFeatureIndicesRef = useRef(Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [])
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
@@ -98,6 +108,10 @@ export default function CanvasWind({
   useEffect(() => { allowGridSelectionRef.current = !!allowGridSelection }, [allowGridSelection])
   useEffect(() => { restrictSpawnToSelectionRef.current = !!restrictSpawnToSelection }, [restrictSpawnToSelection])
   useEffect(() => { autoRespawnRateRef.current = Number(autoRespawnRate) || 0 }, [autoRespawnRate])
+  useEffect(() => { brushRadiusRef.current = Math.max(1, Math.floor(brushRadius || 1)) }, [brushRadius])
+  useEffect(() => { selectPointsModeRef.current = !!selectPointsMode }, [selectPointsMode])
+  useEffect(() => { pointBrushRadiusPxRef.current = Math.max(4, Math.floor(pointBrushRadiusPx || 14)) }, [pointBrushRadiusPx])
+  useEffect(() => { selectedPointIndicesRef.current = Array.isArray(selectedPointIndices) ? selectedPointIndices : [] }, [selectedPointIndices])
 
   // Expose canvas element to parent for saving snapshots
   useEffect(() => {
@@ -205,6 +219,7 @@ export default function CanvasWind({
     if (!canvas || !uSum || !vSum) return
     const ctx = canvas.getContext('2d')
     const [xmin, xmax, ymin, ymax] = bbox
+    const viewRef = { current: { xmin, xmax, ymin, ymax } }
     const Wpx = canvas.width
     const Hpx = canvas.height
     const W = grid_res, H = grid_res
@@ -277,8 +292,9 @@ export default function CanvasWind({
       return [gx, gy]
     }
     function worldToScreen(x, y) {
-      const sx = (x - xmin) / (xmax - xmin) * Wpx
-      const sy = Hpx - (y - ymin) / (ymax - ymin) * Hpx
+      const v = viewRef.current
+      const sx = (x - v.xmin) / (v.xmax - v.xmin) * Wpx
+      const sy = Hpx - (y - v.ymin) / (v.ymax - v.ymin) * Hpx
       return [sx, sy]
     }
 
@@ -418,7 +434,8 @@ export default function CanvasWind({
         // vertical lines at x boundaries
         for (let k = 0; k <= W; k++) {
           const xk = xmin + (k / W) * (xmax - xmin)
-          const sx = (xk - xmin) / (xmax - xmin) * Wpx
+          const v = viewRef.current
+          const sx = (xk - v.xmin) / (v.xmax - v.xmin) * Wpx
           ctx.beginPath()
           ctx.moveTo(sx, 0)
           ctx.lineTo(sx, Hpx)
@@ -427,7 +444,8 @@ export default function CanvasWind({
         // horizontal lines at y boundaries
         for (let k = 0; k <= H; k++) {
           const yk = ymin + (k / H) * (ymax - ymin)
-          const sy = Hpx - (yk - ymin) / (ymax - ymin) * Hpx
+          const v = viewRef.current
+          const sy = Hpx - (yk - v.ymin) / (v.ymax - v.ymin) * Hpx
           ctx.beginPath()
           ctx.moveTo(0, sy)
           ctx.lineTo(Wpx, sy)
@@ -613,6 +631,23 @@ export default function CanvasWind({
             ctx.fillStyle = '#d9d9d9'
           }
           ctx.beginPath(); ctx.arc(sx, sy, shapeSize, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+        }
+      }
+
+      // Highlight selected data points by filling them in red and enlarging
+      const selPts = selectedPointIndicesRef.current
+      if (Array.isArray(selPts) && selPts.length > 0 && positions && positions.length) {
+        for (const pi of selPts) {
+          if (typeof pi !== 'number' || pi < 0 || pi >= positions.length) continue
+          const [wx, wy] = positions[pi]
+          const [sx, sy] = worldToScreen(wx, wy)
+          const r = (typeof shapeSize === 'number' ? shapeSize : 3.2) + 3.0
+          ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2)
+          ctx.fillStyle = '#dc2626'
+          ctx.fill()
+          ctx.strokeStyle = '#000000'
+          ctx.lineWidth = 1.5
+          ctx.stroke()
         }
       }
       }
@@ -980,11 +1015,23 @@ export default function CanvasWind({
       const rect = canvas.getBoundingClientRect()
       const cx = e.clientX - rect.left
       const cy = e.clientY - rect.top
-      const x = xmin + (cx / Wpx) * (xmax - xmin)
-      const y = ymin + ((Hpx - cy) / Hpx) * (ymax - ymin)
+      const v = viewRef.current
+      const x = v.xmin + (cx / Wpx) * (v.xmax - v.xmin)
+      const y = v.ymin + ((Hpx - cy) / Hpx) * (v.ymax - v.ymin)
       onHover({ x, y })
       // Brush selection while dragging
-      if (brushingRef.current && typeof brushCbRef.current === 'function') {
+      if (brushingRef.current && selectPointsModeRef.current && typeof onBrushPoints === 'function') {
+        const R = 14
+        const R2 = R * R
+        const indices = []
+        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
+          const [px, py] = positions[pIdx]
+          const [sx, sy] = worldToScreen(px, py)
+          const dx = sx - cx, dy = sy - cy
+          if (dx*dx + dy*dy <= R2) indices.push(pIdx)
+        }
+        if (indices.length) { try { onBrushPoints({ indices }) } catch {} }
+      } else if (brushingRef.current && typeof brushCbRef.current === 'function') {
         const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
         const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
         const last = lastBrushRef.current
@@ -996,14 +1043,66 @@ export default function CanvasWind({
     }
     canvas.addEventListener('mousemove', handleMove)
 
-    // Click handler to select grid cell
-    function handleClick(e) {
-      if (!onSelectCell) return
+    // Wheel zoom: zoom around mouse position
+    function handleWheel(e) {
+      try { e.preventDefault() } catch {}
       const rect = canvas.getBoundingClientRect()
       const cx = e.clientX - rect.left
       const cy = e.clientY - rect.top
-      const x = xmin + (cx / Wpx) * (xmax - xmin)
-      const y = ymin + ((Hpx - cy) / Hpx) * (ymax - ymin)
+      const v = viewRef.current
+      const wx = v.xmin + (cx / Wpx) * (v.xmax - v.xmin)
+      const wy = v.ymin + ((Hpx - cy) / Hpx) * (v.ymax - v.ymin)
+      const scale = Math.exp(-e.deltaY * 0.0015) // smooth zoom factor
+      const newW = (v.xmax - v.xmin) / scale
+      const newH = (v.ymax - v.ymin) / scale
+      const minW = (xmax - xmin) / 50
+      const minH = (ymax - ymin) / 50
+      const clampedW = Math.max(minW, Math.min((xmax - xmin), newW))
+      const clampedH = Math.max(minH, Math.min((ymax - ymin), newH))
+      // Keep mouse world position fixed
+      const tX = (wx - v.xmin) / (v.xmax - v.xmin)
+      const tY = (wy - v.ymin) / (v.ymax - v.ymin)
+      const nxmin = wx - tX * clampedW
+      const nxmax = nxmin + clampedW
+      const nymin = wy - tY * clampedH
+      const nymax = nymin + clampedH
+      // Clamp to global bbox
+      viewRef.current = {
+        xmin: Math.max(xmin, Math.min(xmax - clampedW, nxmin)),
+        xmax: Math.min(xmax, Math.max(xmin + clampedW, nxmax)),
+        ymin: Math.max(ymin, Math.min(ymax - clampedH, nymin)),
+        ymax: Math.min(ymax, Math.max(ymin + clampedH, nymax)),
+      }
+    }
+    canvas.addEventListener('wheel', handleWheel, { passive: false })
+
+    // Click handler to select grid cell
+    function handleClick(e) {
+      if (selectPointsModeRef.current && typeof onSelectPoint === 'function') {
+        const rect = canvas.getBoundingClientRect()
+        const cx = e.clientX - rect.left
+        const cy = e.clientY - rect.top
+        const R = 14
+        const R2 = R*R
+        let best = -1
+        let bestD2 = Infinity
+        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
+          const [px, py] = positions[pIdx]
+          const [sx, sy] = worldToScreen(px, py)
+          const dx = sx - cx, dy = sy - cy
+          const d2 = dx*dx + dy*dy
+          if (d2 <= R2 && d2 < bestD2) { bestD2 = d2; best = pIdx }
+        }
+        if (best >= 0) { try { onSelectPoint({ idx: best, append: !!e.shiftKey }) } catch {} }
+        return
+      }
+      if (!onSelectCell || selectPointsModeRef.current) return
+      const rect = canvas.getBoundingClientRect()
+      const cx = e.clientX - rect.left
+      const cy = e.clientY - rect.top
+      const v = viewRef.current
+      const x = v.xmin + (cx / Wpx) * (v.xmax - v.xmin)
+      const y = v.ymin + ((Hpx - cy) / Hpx) * (v.ymax - v.ymin)
       // grid indices
       const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
       const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
@@ -1018,10 +1117,25 @@ export default function CanvasWind({
       const cy = e.clientY - rect.top
       const x = xmin + (cx / Wpx) * (xmax - xmin)
       const y = ymin + ((Hpx - cy) / Hpx) * (ymax - ymin)
+      brushingRef.current = true
+      if (selectPointsModeRef.current && typeof onBrushPoints === 'function') {
+        // Initial point brush at down location
+        const R = 14
+        const R2 = R * R
+        const indices = []
+        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
+          const [px, py] = positions[pIdx]
+          const sx = (px - xmin) / (xmax - xmin) * Wpx
+          const sy = Hpx - (py - ymin) / (ymax - ymin) * Hpx
+          const dx = sx - cx, dy = sy - cy
+          if (dx*dx + dy*dy <= R2) indices.push(pIdx)
+        }
+        if (indices.length) { try { onBrushPoints({ indices }) } catch {} }
+        return
+      }
       const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
       const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
       lastBrushRef.current = { i, j }
-      brushingRef.current = true
       if (typeof brushCbRef.current === 'function') {
         try { brushCbRef.current({ i, j }) } catch {}
       }
@@ -1038,6 +1152,7 @@ export default function CanvasWind({
       runningRef.current = false
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       canvas.removeEventListener('mousemove', handleMove)
+      canvas.removeEventListener('wheel', handleWheel)
       canvas.removeEventListener('click', handleClick)
       canvas.removeEventListener('mousedown', handleDown)
       window.removeEventListener('mouseup', handleUp)

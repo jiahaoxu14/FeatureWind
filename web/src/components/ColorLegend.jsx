@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react'
 
 import { useState, useEffect } from 'react'
-export default function ColorLegend({ payload, dataset, onApplyFamilies, visible, selectedFeatures = [], onChangeSelectedFeatures }) {
+export default function ColorLegend({ payload, dataset, onApplyFamilies, visible, selectedFeatures = [], onChangeSelectedFeatures, onSwapFamilyColors }) {
   const { col_labels = [], colors = [], selection = {}, family_assignments = null } = payload || {}
 
   const visibleSet = useMemo(() => {
@@ -103,6 +103,29 @@ export default function ColorLegend({ payload, dataset, onApplyFamilies, visible
     const famIds = Array.from(famMap.keys()).sort((a, b) => a - b)
     return (
       <div className="legend-list">
+        {/* Swap colors between families */}
+        <div className="legend-item" style={{ gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: '#6b7280' }}>Swap Colors</span>
+          <select id="swapFamA" defaultValue={famIds[0] ?? ''} style={{ height: 26 }}>
+            {famIds.map((id) => (<option key={`fa-${id}`} value={id}>{`Family ${id}`}</option>))}
+          </select>
+          <span style={{ color: '#9ca3af' }}>↔</span>
+          <select id="swapFamB" defaultValue={famIds[1] ?? famIds[0] ?? ''} style={{ height: 26 }}>
+            {famIds.map((id) => (<option key={`fb-${id}`} value={id}>{`Family ${id}`}</option>))}
+          </select>
+          <button
+            className="btn"
+            onClick={() => {
+              try {
+                const a = document.getElementById('swapFamA').value
+                const b = document.getElementById('swapFamB').value
+                if (typeof onSwapFamilyColors === 'function' && a !== '' && b !== '' && a !== b) {
+                  onSwapFamilyColors(String(a), String(b))
+                }
+              } catch {}
+            }}
+          >Swap</button>
+        </div>
         {/* Top-K selection slider inside color family panel; updates legend checkboxes */}
         <div className="legend-item" style={{ gap: 10 }}>
           <label style={{ fontSize: 12, color: '#6b7280' }}>Top-K</label>
