@@ -38,6 +38,8 @@ export default function App() {
   const [uniformPointShape, setUniformPointShape] = useState(false)
   const [showParticleArrowheads, setShowParticleArrowheads] = useState(false)
   const [restrictSpawnToSelection, setRestrictSpawnToSelection] = useState(false)
+  const [autoRespawnEnabled, setAutoRespawnEnabled] = useState(false)
+  const [assessAllCells, setAssessAllCells] = useState(false)
   // Manual feature selection (overrides Top-K when enabled)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
   const [useManualFeatures, setUseManualFeatures] = useState(false)
@@ -155,6 +157,41 @@ export default function App() {
     }
     return hoverPos || null
   })()
+
+  // Compute average number of active (non-zero) selected features per valid grid cell
+  const avgActiveFeatures = useMemo(() => {
+    try {
+      if (!payload) return null
+      const { uAll = [], vAll = [], grid_res = 25, selection = {}, unmasked = null } = payload
+      const H = grid_res, W = grid_res
+      // Determine feature indices in scope
+      let indices = []
+      if (useManualFeatures) indices = selectedFeatureIndices
+      else if (selection && Array.isArray(selection.topKIndices)) indices = selection.topKIndices
+      else if (selection && typeof selection.featureIndex === 'number') indices = [selection.featureIndex]
+      if (!Array.isArray(indices) || indices.length === 0) return 0
+      let total = 0
+      let cells = 0
+      const eps = 1e-9
+      for (let i = 0; i < H; i++) {
+        for (let j = 0; j < W; j++) {
+          if (Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W) {
+            if (!unmasked[i][j]) continue
+          }
+          cells += 1
+          let cnt = 0
+          for (const fi of indices) {
+            const u = (uAll[fi]?.[i]?.[j] ?? 0)
+            const v = (vAll[fi]?.[i]?.[j] ?? 0)
+            if (u*u + v*v > eps) cnt += 1
+          }
+          total += cnt
+        }
+      }
+      if (cells === 0) return 0
+      return total / cells
+    } catch { return null }
+  }, [payload, selectedFeatureIndices, useManualFeatures])
 
   // Compute which features are visible in the current Wind Vane view
   const visibleFeatures = useMemo(() => {
@@ -316,6 +353,7 @@ export default function App() {
                 showParticleArrowheads={showParticleArrowheads}
                 allowGridSelection={restrictSpawnToSelection}
                 restrictSpawnToSelection={restrictSpawnToSelection}
+                autoRespawnRate={autoRespawnEnabled ? 0.3 : 0.0}
                 trailLineWidth={trailLineWidth}
                 onCanvasElement={(el) => { windMapCanvasRef.current = el }}
               />
@@ -444,6 +482,19 @@ export default function App() {
 
             <label>Restrict Spawns to Selection</label>
             <input type="checkbox" checked={restrictSpawnToSelection} onChange={(e) => setRestrictSpawnToSelection(e.target.checked)} />
+
+            <label>Auto Respawn (30% bursts)</label>
+            <input type="checkbox" checked={autoRespawnEnabled} onChange={(e) => setAutoRespawnEnabled(e.target.checked)} />
+
+            <label>Assess Feature Coverage</label>
+            <div className="slider-row">
+              <input type="checkbox" checked={assessAllCells} onChange={(e) => setAssessAllCells(e.target.checked)} />
+              {assessAllCells && (
+                <span className="control-val">
+                  Avg active: {typeof avgActiveFeatures === 'number' ? avgActiveFeatures.toFixed(2) : '-'}
+                </span>
+              )}
+            </div>
 
             <label>Particles</label>
             <div className="slider-row">

@@ -49,6 +49,7 @@ export default function CanvasWind({
   uniformPointShape = false,
   showParticleArrowheads = false,
   trailLineWidth = 2.0,
+  autoRespawnRate = 0.0,
   restrictSpawnToSelection = false,
   gradientFeatureIndices = null,
   speedScale = 1.0,
@@ -77,6 +78,7 @@ export default function CanvasWind({
   const showParticleArrowheadsRef = useRef(!!showParticleArrowheads)
   const allowGridSelectionRef = useRef(!!allowGridSelection)
   const restrictSpawnToSelectionRef = useRef(!!restrictSpawnToSelection)
+  const autoRespawnRateRef = useRef(Number(autoRespawnRate) || 0)
   const gradientFeatureIndicesRef = useRef(Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [])
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
@@ -95,6 +97,7 @@ export default function CanvasWind({
   useEffect(() => { showParticleArrowheadsRef.current = !!showParticleArrowheads }, [showParticleArrowheads])
   useEffect(() => { allowGridSelectionRef.current = !!allowGridSelection }, [allowGridSelection])
   useEffect(() => { restrictSpawnToSelectionRef.current = !!restrictSpawnToSelection }, [restrictSpawnToSelection])
+  useEffect(() => { autoRespawnRateRef.current = Number(autoRespawnRate) || 0 }, [autoRespawnRate])
 
   // Expose canvas element to parent for saving snapshots
   useEffect(() => {
@@ -279,6 +282,9 @@ export default function CanvasWind({
       return [sx, sy]
     }
 
+    // Frame counter for periodic behaviors
+    let frameCounter = 0
+
     function step(dt) {
       const MASK_THRESHOLD = 1e-6
       function isMaskedAt(x, y) {
@@ -329,6 +335,25 @@ export default function CanvasWind({
         const overAge = p.age > MAX_LIFETIME
         const inMasked = isMaskedAt(p.x, p.y)
         if (outOfBounds || overAge || inMasked) {
+          const { x: nx, y: ny } = randomSpawn()
+          p.x = nx
+          p.y = ny
+          p.age = 0
+          p.initX = nx
+          p.initY = ny
+          for (let t = 0; t <= TAIL_LENGTH; t++) { p.hist[t].x = nx; p.hist[t].y = ny }
+        }
+      }
+
+      // Optional automatic respawn in bursts every N frames: respawn ~fraction of particles
+      const frac = Math.max(0, Math.min(1, autoRespawnRateRef.current || 0))
+      const EVERY_N_FRAMES = 15
+      frameCounter += 1
+      if (frac > 0 && (frameCounter % EVERY_N_FRAMES === 0)) {
+        const count = Math.max(1, Math.floor(frac * particles.length))
+        for (let k = 0; k < count; k++) {
+          const idx = Math.floor(Math.random() * particles.length)
+          const p = particles[idx]
           const { x: nx, y: ny } = randomSpawn()
           p.x = nx
           p.y = ny
@@ -973,7 +998,7 @@ export default function CanvasWind({
 
     // Click handler to select grid cell
     function handleClick(e) {
-      if (!onSelectCell || !allowGridSelectionRef.current) return
+      if (!onSelectCell) return
       const rect = canvas.getBoundingClientRect()
       const cx = e.clientX - rect.left
       const cy = e.clientY - rect.top
@@ -988,7 +1013,6 @@ export default function CanvasWind({
 
     // Brush handlers
     function handleDown(e) {
-      if (!allowGridSelectionRef.current) return
       const rect = canvas.getBoundingClientRect()
       const cx = e.clientX - rect.left
       const cy = e.clientY - rect.top
