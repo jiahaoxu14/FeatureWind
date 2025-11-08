@@ -44,7 +44,7 @@ export default function App() {
   const [brushRadius, setBrushRadius] = useState(1)
   const [selectPointsMode, setSelectPointsMode] = useState(false)
   const [selectedPointIndices, setSelectedPointIndices] = useState([])
-  const [seriesFeatureIndex, setSeriesFeatureIndex] = useState(0)
+  const [seriesFeatureIndices, setSeriesFeatureIndices] = useState([])
   // Manual feature selection (overrides Top-K when enabled)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
   const [useManualFeatures, setUseManualFeatures] = useState(false)
@@ -377,11 +377,13 @@ export default function App() {
                 selectedPointIndices={selectedPointIndices}
                 onSelectPoint={({ idx, append }) => {
                   setSelectedPointIndices((prev) => {
+                    const exists = prev.includes(idx)
                     if (append) {
-                      const exists = prev.includes(idx)
-                      return exists ? prev : [...prev, idx]
+                      // Toggle in multi-select mode
+                      return exists ? prev.filter((i) => i !== idx) : [...prev, idx]
                     }
-                    return [idx]
+                    // Single-click: select this point, unless already selected → then unselect it
+                    return exists ? prev.filter((i) => i !== idx) : [idx]
                   })
                 }}
                 onBrushPoints={({ indices }) => {
@@ -488,9 +490,10 @@ export default function App() {
               <PointSeries
                 indices={selectedPointIndices}
                 featureValues={payload.feature_values || []}
-                featureIndex={seriesFeatureIndex}
-                onChangeFeatureIndex={setSeriesFeatureIndex}
+                featureIndices={seriesFeatureIndices}
+                onChangeFeatureIndices={setSeriesFeatureIndices}
                 colLabels={payload.col_labels || []}
+                colors={payload.colors || []}
                 width={600}
                 height={220}
               />

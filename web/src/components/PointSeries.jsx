@@ -3,45 +3,55 @@ import React, { useMemo } from 'react'
 export default function PointSeries({
   indices = [],
   featureValues = [],
-  featureIndex = 0,
-  onChangeFeatureIndex,
+  featureIndices = [],
+  onChangeFeatureIndices,
   colLabels = [],
+  colors = [],
   width = 600,
   height = 220,
 }) {
-  const { xs, ys, ymin, ymax } = useMemo(() => {
-    if (!Array.isArray(indices) || indices.length === 0) return { xs: [], ys: [], ymin: 0, ymax: 1 }
+  const { xs, lines, ymin, ymax } = useMemo(() => {
+    if (!Array.isArray(indices) || indices.length === 0) return { xs: [], lines: [], ymin: 0, ymax: 1 }
     const xs = indices.map((_, i) => i)
-    const ys = indices.map((rowIdx) => {
-      const row = featureValues?.[rowIdx]
-      if (!row || featureIndex < 0 || featureIndex >= row.length) return NaN
-      const v = Number(row[featureIndex])
-      return Number.isFinite(v) ? v : NaN
-    })
+    const fids = Array.isArray(featureIndices) && featureIndices.length ? featureIndices : []
     let ymin = Infinity, ymax = -Infinity
-    for (const v of ys) { if (Number.isFinite(v)) { if (v < ymin) ymin = v; if (v > ymax) ymax = v } }
+    const lines = fids.map((fid) => {
+      const ys = indices.map((rowIdx) => {
+        const row = featureValues?.[rowIdx]
+        if (!row || fid < 0 || fid >= row.length) return NaN
+        const v = Number(row[fid])
+        return Number.isFinite(v) ? v : NaN
+      })
+      for (const v of ys) { if (Number.isFinite(v)) { if (v < ymin) ymin = v; if (v > ymax) ymax = v } }
+      return { fid, ys }
+    })
     if (!Number.isFinite(ymin) || !Number.isFinite(ymax) || ymin === ymax) { ymin = 0; ymax = 1 }
-    return { xs, ys, ymin, ymax }
-  }, [indices, featureValues, featureIndex])
+    return { xs, lines, ymin, ymax }
+  }, [indices, featureValues, featureIndices])
 
   const padL = 36, padR = 8, padT = 10, padB = 20
   const W = Math.max(100, width), H = Math.max(120, height)
   const plotW = W - padL - padR, plotH = H - padT - padB
   function sx(i) { return padL + (xs.length <= 1 ? 0 : (i / (xs.length - 1)) * plotW) }
   function sy(v) { return padT + (1 - (v - ymin) / (ymax - ymin)) * plotH }
-
-  let pointsAttr = ''
-  if (xs.length > 0) {
-    pointsAttr = xs.map((_, i) => `${sx(i)},${sy(ys[i])}`).join(' ')
-  }
+  function polyAttr(ys){ return xs.map((_, i) => `${sx(i)},${sy(ys[i])}`).join(' ') }
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <div style={{ fontSize: 13, color: '#6b7280' }}>Selected Points: {indices.length}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 12, color: '#6b7280' }}>Feature</span>
-          <select value={featureIndex} onChange={(e) => onChangeFeatureIndex && onChangeFeatureIndex(Number(e.target.value))} style={{ height: 28 }}>
+          <span style={{ fontSize: 12, color: '#6b7280' }}>Features</span>
+          <select
+            multiple
+            size={Math.min(8, Math.max(3, colLabels.length))}
+            value={Array.isArray(featureIndices) ? featureIndices.map(String) : []}
+            onChange={(e) => {
+              const opts = Array.from(e.target.selectedOptions).map((o) => parseInt(o.value, 10)).filter((x) => Number.isFinite(x))
+              onChangeFeatureIndices && onChangeFeatureIndices(opts)
+            }}
+            style={{ height: 'auto', minHeight: 28 }}
+          >
             {Array.isArray(colLabels) && colLabels.map((n, i) => (
               <option key={i} value={i}>{String(n)}</option>
             ))}
@@ -65,11 +75,12 @@ export default function PointSeries({
             </g>
           )
         })}
-        {pointsAttr && (
-          <polyline points={pointsAttr} fill="none" stroke="#2563eb" strokeWidth={2} />
-        )}
+        {Array.isArray(lines) && lines.map((ln) => {
+          const pts = polyAttr(ln.ys)
+          const col = (Array.isArray(colors) && ln.fid >= 0 && ln.fid < colors.length && colors[ln.fid]) ? colors[ln.fid] : '#2563eb'
+          return (<polyline key={`ln-${ln.fid}`} points={pts} fill="none" stroke={col} strokeWidth={2} />)
+        })}
       </svg>
     </div>
   )
 }
-

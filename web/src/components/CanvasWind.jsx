@@ -89,6 +89,10 @@ export default function CanvasWind({
   const selectPointsModeRef = useRef(!!selectPointsMode)
   const pointBrushRadiusPxRef = useRef(Math.max(4, Math.floor(pointBrushRadiusPx || 14)))
   const selectedPointIndicesRef = useRef(Array.isArray(selectedPointIndices) ? selectedPointIndices : [])
+  // Point brushing state: only becomes true after movement threshold
+  const pointPointerDownRef = useRef(false)
+  const pointBrushingRef = useRef(false)
+  const pointDownPosRef = useRef({ x: 0, y: 0 })
   const gradientFeatureIndicesRef = useRef(Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [])
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
@@ -1020,7 +1024,17 @@ export default function CanvasWind({
       const y = v.ymin + ((Hpx - cy) / Hpx) * (v.ymax - v.ymin)
       onHover({ x, y })
       // Brush selection while dragging
-      if (brushingRef.current && selectPointsModeRef.current && typeof onBrushPoints === 'function') {
+      if (selectPointsModeRef.current && typeof onBrushPoints === 'function') {
+        // Activate point brushing after small movement threshold from mousedown
+        if (pointPointerDownRef.current && !pointBrushingRef.current) {
+          const dx0 = cx - pointDownPosRef.current.x
+          const dy0 = cy - pointDownPosRef.current.y
+          const d2 = dx0*dx0 + dy0*dy0
+          if (d2 > 36) { // 6px threshold
+            pointBrushingRef.current = true
+          }
+        }
+        if (!pointBrushingRef.current) return
         const R = 14
         const R2 = R * R
         const indices = []
@@ -1115,32 +1129,26 @@ export default function CanvasWind({
       const rect = canvas.getBoundingClientRect()
       const cx = e.clientX - rect.left
       const cy = e.clientY - rect.top
-      const x = xmin + (cx / Wpx) * (xmax - xmin)
-      const y = ymin + ((Hpx - cy) / Hpx) * (ymax - ymin)
-      brushingRef.current = true
-      if (selectPointsModeRef.current && typeof onBrushPoints === 'function') {
-        // Initial point brush at down location
-        const R = 14
-        const R2 = R * R
-        const indices = []
-        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
-          const [px, py] = positions[pIdx]
-          const sx = (px - xmin) / (xmax - xmin) * Wpx
-          const sy = Hpx - (py - ymin) / (ymax - ymin) * Hpx
-          const dx = sx - cx, dy = sy - cy
-          if (dx*dx + dy*dy <= R2) indices.push(pIdx)
-        }
-        if (indices.length) { try { onBrushPoints({ indices }) } catch {} }
+      pointPointerDownRef.current = true
+      pointBrushingRef.current = false
+      pointDownPosRef.current = { x: cx, y: cy }
+      if (selectPointsModeRef.current) {
+        // Do not start grid brushing in point-select mode
         return
       }
+      const x = xmin + (cx / Wpx) * (xmax - xmin)
+      const y = ymin + ((Hpx - cy) / Hpx) * (ymax - ymin)
       const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
       const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
       lastBrushRef.current = { i, j }
+      brushingRef.current = true
       if (typeof brushCbRef.current === 'function') {
         try { brushCbRef.current({ i, j }) } catch {}
       }
     }
     function handleUp() {
+      pointPointerDownRef.current = false
+      pointBrushingRef.current = false
       brushingRef.current = false
       lastBrushRef.current = { i: -1, j: -1 }
     }
