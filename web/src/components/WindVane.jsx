@@ -167,11 +167,19 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
         return { x2, y2, ux, uy, idx: indices[i], color: fv.color }
       })
 
-      // Convex hull (Monotone chain) over endpoints (skip near-duplicate points)
-      function convexHullIdx(pts) {
-        if (!pts || pts.length < 3) return pts.map((_, i) => i)
-        // Build array of [x,y,idx]
+      // Convex hull (Monotone chain) over endpoints (optionally include origin)
+      // Returns both: endpoint indices on hull, and a path (x,y) that may include origin
+      function convexHullIdx(pts, origin = null) {
+        if (!pts || pts.length < 3) {
+          return {
+            idxs: pts.map((_, i) => i),
+            path: pts.map((p) => ({ x: p.x2, y: p.y2 }))
+          }
+        }
+        // Build array of [x,y,idx]; if origin provided, add it with index -1
         const arr = pts.map((p, i) => [p.x2, p.y2, i])
+        const includeOrigin = origin && Number.isFinite(origin.x) && Number.isFinite(origin.y)
+        if (includeOrigin) arr.push([origin.x, origin.y, -1])
         // Sort by x then y
         arr.sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]))
         const cross = (o, a, b) => (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
@@ -188,29 +196,43 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
         }
         // Concatenate and drop last of each (duplicate endpoints)
         const hull = lower.slice(0, -1).concat(upper.slice(0, -1))
-        // Return unique indices in order
+        // Build endpoint-index list and draw path (including origin if present)
         const seen = new Set()
         const idxs = []
-        for (const h of hull) { if (!seen.has(h[2])) { seen.add(h[2]); idxs.push(h[2]) } }
-        return idxs
+        const path = []
+        for (const h of hull) {
+          const key = `${h[0]},${h[1]}`
+          if (!seen.has(key)) {
+            seen.add(key)
+            path.push({ x: h[0], y: h[1] })
+          }
+        }
+        // Endpoint indices only for filtering
+        const seenIdx = new Set()
+        for (const h of hull) {
+          const idx = h[2]
+          if (idx >= 0 && !seenIdx.has(idx)) { seenIdx.add(idx); idxs.push(idx) }
+        }
+        return { idxs, path }
       }
 
       let hullSet = null
       if (useConvexHull && endpoints.length >= 3) {
         try {
-          const hullIdx = convexHullIdx(endpoints)
+          // Include origin (vane center) as part of the hull geometry
+          const { idxs: hullIdx, path: hullPath } = convexHullIdx(endpoints, { x: cx, y: cy })
           hullSet = new Set(hullIdx)
-          if (showHull && hullIdx.length >= 3) {
+          if (showHull && hullPath && hullPath.length >= 3) {
             ctx.strokeStyle = 'rgba(114,114,114,0.7)'
             ctx.lineWidth = 2.0
             ctx.beginPath()
-            for (let k = 0; k < hullIdx.length; k++) {
-              const p = endpoints[hullIdx[k]]
-              if (k === 0) ctx.moveTo(p.x2, p.y2); else ctx.lineTo(p.x2, p.y2)
+            for (let k = 0; k < hullPath.length; k++) {
+              const p = hullPath[k]
+              if (k === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y)
             }
             // close
-            const p0 = endpoints[hullIdx[0]]
-            ctx.lineTo(p0.x2, p0.y2)
+            const p0 = hullPath[0]
+            ctx.lineTo(p0.x, p0.y)
             ctx.stroke()
           }
         } catch (e) { hullSet = null }

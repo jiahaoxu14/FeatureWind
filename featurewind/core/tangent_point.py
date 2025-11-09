@@ -98,9 +98,22 @@ class TangentPoint:
             self.anisotropy_index = np.sqrt(1 - lambda_min / lambda_max)
 
     def compute_convex_hull(self):
-        """Compute the convex hull of the combined endpoints."""
-        self.hull = ConvexHull(self.combined_endpoints)
-        self.boundary_indices_set = set(self.hull.vertices)
+        """Compute the convex hull of the combined endpoints, including the origin.
+
+        The origin of the wind vane (self.position) is included in the points set
+        used for the convex hull calculation so that boundary membership considers
+        whether endpoints are extreme relative to the center as well. When
+        mapping hull vertices back to the combined endpoints, the origin index is
+        filtered out to avoid out-of-range indexing.
+        """
+        # Build point set for hull: all endpoints plus the origin (position)
+        points_for_hull = np.vstack((self.combined_endpoints, self.position.reshape(1, 2)))
+        self.hull = ConvexHull(points_for_hull)
+
+        # Filter hull vertices to only those corresponding to combined_endpoints
+        n_end = self.combined_endpoints.shape[0]
+        self.hull_vertices = np.array([idx for idx in self.hull.vertices if idx < n_end], dtype=int)
+        self.boundary_indices_set = set(self.hull_vertices.tolist())
 
     def compute_ellipse_area(self):
         """Compute the area of the ellipse defined by the eigenvalues."""
@@ -229,7 +242,13 @@ class TangentPoint:
 
         # Plot the convex hull boundary
         if convex_hull:
-            hull_path = combined_endpoints[hull.vertices]
+            # Use filtered hull vertices that exclude the origin index
+            hull_vertices = getattr(self, 'hull_vertices', None)
+            if hull_vertices is None or len(hull_vertices) == 0:
+                hull_vertices = self.hull.vertices
+                # Best-effort filter in case origin was included
+                hull_vertices = [idx for idx in hull_vertices if idx < combined_endpoints.shape[0]]
+            hull_path = combined_endpoints[hull_vertices]
             hull_path = np.vstack([hull_path, hull_path[0]])  # Close the loop
             ax.plot(
                 hull_path[:, 0],

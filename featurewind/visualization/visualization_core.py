@@ -950,11 +950,13 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
                                          key=lambda x: x[0], reverse=True)
                     order_index = {f: r for r, (_, f) in enumerate(rank_sorted)}
                     top_feats = [f for (_, f) in rank_sorted[:max(1, top_n)]]
-                    # Hull features
+                    # Hull features (include origin so hull considers vane center)
                     hull_feats = set()
                     try:
-                        hull = ConvexHull(all_endpoints)
-                        hull_vertex_indices = set(hull.vertices)
+                        points_for_hull = np.array(all_endpoints + [np.array([0.0, 0.0])])
+                        hull = ConvexHull(points_for_hull)
+                        filtered_vertices = [idx for idx in hull.vertices if idx < len(all_endpoints)]
+                        hull_vertex_indices = set(filtered_vertices)
                         for info in vector_info:
                             pos_on_hull = any(np.allclose(info['pos_end'], all_endpoints[idx]) for idx in hull_vertex_indices)
                             if pos_on_hull:
@@ -1072,11 +1074,13 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             
         elif len(all_endpoints) >= 3 and bool(getattr(config, 'WIND_VANE_USE_CONVEX_HULL', True)):
             try:
-                # Calculate convex hull
-                hull = ConvexHull(all_endpoints)
+                # Calculate convex hull (include origin to consider vane center)
+                points_for_hull = np.array(all_endpoints + [np.array([0.0, 0.0])])
+                hull = ConvexHull(points_for_hull)
                 
                 # Calculate convex hull for boundary detection; optionally draw it
-                hull_points = np.array(all_endpoints)[hull.vertices]
+                filtered_vertices = [idx for idx in hull.vertices if idx < len(all_endpoints)]
+                hull_points = np.array(all_endpoints)[filtered_vertices]
                 if bool(getattr(config, 'WIND_VANE_SHOW_HULL', False)):
                     edge_c = getattr(config, 'WIND_VANE_HULL_EDGE_COLOR', '#1f77b4')
                     edge_w = float(getattr(config, 'WIND_VANE_HULL_EDGE_WIDTH', 1.0))
@@ -1262,7 +1266,11 @@ def update_wind_vane(ax2, mouse_data, system, col_labels, selected_features, fea
             hull_vertex_indices = set(range(len(all_endpoints)))  # treat all as on hull
         else:
             if len(all_endpoints) >= 3:
-                hull_vertex_indices = set(hull.vertices) if 'hull' in locals() else set()
+                if 'hull' in locals():
+                    # Filter out origin index from hull vertices when mapping back
+                    hull_vertex_indices = set([idx for idx in hull.vertices if idx < len(all_endpoints)])
+                else:
+                    hull_vertex_indices = set()
             else:
                 hull_vertex_indices = set()
         
