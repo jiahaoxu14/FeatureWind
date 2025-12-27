@@ -1,2 +1,0 @@
-"""FeatureWind Flask server package."""
-

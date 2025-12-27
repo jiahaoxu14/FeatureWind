@@ -15,6 +15,7 @@ lib64/
 parts/
 sdist/
 var/
+backend/var/
 wheels/
 *.egg-info/
 .installed.cfg
@@ -36,6 +37,11 @@ venv.bak/
 *.swp
 *.swo
 *~
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/build/
 
 # Generated output files
 output/
