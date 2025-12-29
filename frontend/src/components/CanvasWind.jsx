@@ -46,6 +46,7 @@ export default function CanvasWind({
   onBrushPoints = null,
   selectedPointIndices = [],
   showGrid = true,
+  showPoints = true,
   showParticles = true,
   showPointGradients = false,
   showCellGradients = false,
@@ -69,6 +70,9 @@ export default function CanvasWind({
   selectedCells = [],
   featureIndices = null,
   pointColorFeatureIndex = null,
+  colorCells = true,
+  showLIC = false,
+  useMask = true,
 }) {
   const canvasRef = useRef(null)
   const rafRef = useRef(0)
@@ -89,6 +93,7 @@ export default function CanvasWind({
   const selectPointsModeRef = useRef(!!selectPointsMode)
   const pointBrushRadiusPxRef = useRef(Math.max(4, Math.floor(pointBrushRadiusPx || 14)))
   const selectedPointIndicesRef = useRef(Array.isArray(selectedPointIndices) ? selectedPointIndices : [])
+  const licCanvasRef = useRef(null)
   // Point brushing state: only becomes true after movement threshold
   const pointPointerDownRef = useRef(false)
   const pointBrushingRef = useRef(false)
@@ -97,10 +102,12 @@ export default function CanvasWind({
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
   const showGridRef = useRef(!!showGrid)
+  const showPointsRef = useRef(!!showPoints)
   const selectedRef = useRef(selectedCells)
   // keep selection fresh for the draw loop without resetting particles
   useEffect(() => { selectedRef.current = selectedCells || [] }, [selectedCells])
   useEffect(() => { showGridRef.current = !!showGrid }, [showGrid])
+  useEffect(() => { showPointsRef.current = !!showPoints }, [showPoints])
   useEffect(() => { brushCbRef.current = onBrushCell }, [onBrushCell])
   useEffect(() => { showParticlesRef.current = !!showParticles }, [showParticles])
   useEffect(() => { showPointGradientsRef.current = !!showPointGradients }, [showPointGradients])
@@ -126,7 +133,7 @@ export default function CanvasWind({
 
   const {
     bbox = [0, 1, 0, 1],
-    grid_res = 25,
+    grid_res = 600,
     uAll = [],
     vAll = [],
     positions = [],
@@ -149,23 +156,6 @@ export default function CanvasWind({
   const uSum = useMemo(() => sumSelectedGrid(uAll, indices), [uAll, indices])
   const vSum = useMemo(() => sumSelectedGrid(vAll, indices), [vAll, indices])
 
-  // Precompute min/max for selected feature column to color points
-  const pointColorStats = useMemo(() => {
-    const idx = (typeof pointColorFeatureIndex === 'number') ? pointColorFeatureIndex : null
-    if (!Array.isArray(feature_values) || idx === null) return null
-    let min = Infinity, max = -Infinity
-    for (let r = 0; r < feature_values.length; r++) {
-      const row = feature_values[r]
-      if (!row || idx < 0 || idx >= row.length) continue
-      const v = Number(row[idx])
-      if (!Number.isFinite(v)) continue
-      if (v < min) min = v
-      if (v > max) max = v
-    }
-    if (!Number.isFinite(min) || !Number.isFinite(max)) return null
-    return { idx, min, max }
-  }, [feature_values, pointColorFeatureIndex])
-
   // Precompute magnitude grid and a robust scale (p95) for alpha mapping
   const magInfo = useMemo(() => {
     if (!uSum || !vSum) return null
@@ -186,6 +176,138 @@ export default function CanvasWind({
     const p99 = arr.length ? arr[Math.floor(arr.length * 0.99)] : 1.0
     return { H, W, mags, p99: p99 || 1.0 }
   }, [uSum, vSum])
+
+  // Build a LIC texture over the aggregated vector field (grayscale streaks)
+  useEffect(() => {
+    if (!showLIC || !uSum || !vSum) { licCanvasRef.current = null; return }
+    const H = uSum.length
+    const W = uSum[0]?.length || 0
+    if (!H || !W) { licCanvasRef.current = null; return }
+    const hasMask = useMask && Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
+    const magScale = (magInfo && typeof magInfo.p99 === 'number' && magInfo.p99 > 0) ? magInfo.p99 : 1.0
+    const noise = new Float32Array(H * W)
+    // Zero-mean noise helps the convolution keep visible contrast after averaging.
+    for (let k = 0; k < noise.length; k++) noise[k] = (Math.random() * 2 - 1)
+    const sampleNoise = (gx, gy) => {
+      const j0 = Math.max(0, Math.min(W - 1, Math.floor(gx)))
+      const i0 = Math.max(0, Math.min(H - 1, Math.floor(gy)))
+      const j1 = Math.min(j0 + 1, W - 1), i1 = Math.min(i0 + 1, H - 1)
+      const a = Math.min(Math.max(gx - j0, 0), 1)
+      const b = Math.min(Math.max(gy - i0, 0), 1)
+      const n00 = noise[i0 * W + j0]
+      const n01 = noise[i0 * W + j1]
+      const n10 = noise[i1 * W + j0]
+      const n11 = noise[i1 * W + j1]
+      const top = n00 * (1 - a) + n01 * a
+      const bot = n10 * (1 - a) + n11 * a
+      return top * (1 - b) + bot * b
+    }
+
+    // LIC: trace streamline in both directions for length 2L.
+    // Use a tapered (Hann) kernel to avoid the overly-blurry “box filter” look.
+    const L = 10 // streamline half-length in grid units (smaller = crisper)
+    const stepSize = 0.9 // step in grid units
+
+    // Hann window on [0,1] with max at 0 and 0 at 1
+    const hann01 = (t) => {
+      const x = Math.max(0, Math.min(1, t))
+      return 0.5 * (1 + Math.cos(Math.PI * x))
+    }
+    const data = new Uint8ClampedArray(W * H * 4)
+
+    const traceStream = (gx0, gy0, dir) => {
+      const samples = []
+      let gx = gx0
+      let gy = gy0
+      let travelled = 0
+      while (travelled < L) {
+        // If we ever step out of bounds, stop before sampling.
+        if (gx < 0 || gx > W - 1 || gy < 0 || gy > H - 1) break
+        const u = bilinearSample(uSum, gx, gy)
+        const v = bilinearSample(vSum, gx, gy)
+        const m = Math.hypot(u, v)
+        if (m <= 1e-9) break
+
+        const nx = gx + (u / m) * stepSize * dir
+        const ny = gy + (v / m) * stepSize * dir
+        const segLen = Math.hypot(nx - gx, ny - gy)
+        if (segLen <= 1e-6) break
+
+        travelled += segLen
+        gx = nx
+        gy = ny
+
+        // Record the new sample point and its distance from the seed
+        // (used for tapered convolution kernel)
+        samples.push({ gx, gy, segLen, dist: travelled })
+      }
+      return samples
+    }
+
+    for (let i = 0; i < H; i++) {
+      for (let j = 0; j < W; j++) {
+        const idx = 4 * (i * W + j)
+        if (hasMask && !unmasked[i][j]) { data[idx + 3] = 0; continue }
+
+        const centerMag = Math.hypot(uSum[i]?.[j] ?? 0, vSum[i]?.[j] ?? 0)
+        const gx0 = j + 0.5
+        const gy0 = i + 0.5
+
+        // Forward/backward streamlines with path-length weights
+        const forward = traceStream(gx0, gy0, 1)
+        const backward = traceStream(gx0, gy0, -1)
+        // Convolve zero-mean noise along the streamline using a tapered (Hann) kernel.
+        let acc = sampleNoise(gx0, gy0) * 1.0
+        let wsum = 1.0
+        for (const s of forward) {
+          const k = hann01(s.dist / L)
+          const w = s.segLen * k
+          acc += sampleNoise(s.gx, s.gy) * w
+          wsum += w
+        }
+        for (const s of backward) {
+          const k = hann01(s.dist / L)
+          const w = s.segLen * k
+          acc += sampleNoise(s.gx, s.gy) * w
+          wsum += w
+        }
+        const val0 = (wsum > 0) ? (acc / wsum) : 0.0 // roughly in [-1, 1]
+        const val = 0.5 + 0.5 * val0
+
+        // Contrast shaping: more aggressive stretch (because convolution is still an average)
+        const centered = 0.5 + 2.4 * (val - 0.5)
+        const clamped = Math.max(0, Math.min(1, centered))
+        const boosted = Math.pow(clamped, 0.85)
+        const c = Math.max(0, Math.min(255, Math.round(boosted * 255)))
+        const alphaScale = Math.max(0, Math.min(1, centerMag / magScale))
+        const a = Math.max(5, Math.round(255 * Math.pow(alphaScale, 0.85)))
+        data[idx] = c; data[idx + 1] = c; data[idx + 2] = c; data[idx + 3] = a
+      }
+    }
+    const off = document.createElement('canvas')
+    off.width = W; off.height = H
+    const ictx = off.getContext('2d')
+    const img = new ImageData(data, W, H)
+    ictx.putImageData(img, 0, 0)
+    licCanvasRef.current = off
+  }, [showLIC, uSum, vSum, unmasked, magInfo, useMask])
+
+  // Precompute min/max for selected feature column to color points
+  const pointColorStats = useMemo(() => {
+    const idx = (typeof pointColorFeatureIndex === 'number') ? pointColorFeatureIndex : null
+    if (!Array.isArray(feature_values) || idx === null) return null
+    let min = Infinity, max = -Infinity
+    for (let r = 0; r < feature_values.length; r++) {
+      const row = feature_values[r]
+      if (!row || idx < 0 || idx >= row.length) continue
+      const v = Number(row[idx])
+      if (!Number.isFinite(v)) continue
+      if (v < min) min = v
+      if (v > max) max = v
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return null
+    return { idx, min, max }
+  }, [feature_values, pointColorFeatureIndex])
 
   // Per-feature robust scale (p99) across the entire grid, independent of selection
   const p99ByFeature = useMemo(() => {
@@ -236,7 +358,7 @@ export default function CanvasWind({
     const SPEED_SCALE = speedScale
 
     // Optional mask helpers
-    let hasMask = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
+    let hasMask = useMask && Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
 
     // Precompute list of unmasked cells for efficient respawn
     let unmaskedList = []
@@ -396,9 +518,26 @@ export default function CanvasWind({
       }
       ctx.clearRect(0, 0, Wpx, Hpx)
 
+      if (showLIC && licCanvasRef.current) {
+        ctx.save()
+        ctx.globalAlpha = 0.9
+        ctx.imageSmoothingEnabled = false
+        // Draw LIC clipped to current view so it pans/zooms with the viewport
+        const v = viewRef.current
+        const srcX = Math.max(0, Math.min(licCanvasRef.current.width, (v.xmin - xmin) / (xmax - xmin) * licCanvasRef.current.width))
+        const srcY = Math.max(0, Math.min(licCanvasRef.current.height, (v.ymin - ymin) / (ymax - ymin) * licCanvasRef.current.height))
+        const srcW = Math.max(1, Math.min(licCanvasRef.current.width - srcX, (v.xmax - v.xmin) / (xmax - xmin) * licCanvasRef.current.width))
+        const srcH = Math.max(1, Math.min(licCanvasRef.current.height - srcY, (v.ymax - v.ymin) / (ymax - ymin) * licCanvasRef.current.height))
+        // Flip vertically via transform so world y-up aligns with screen y-down
+        ctx.scale(1, -1)
+        ctx.translate(0, -Hpx)
+        ctx.drawImage(licCanvasRef.current, srcX, srcY, srcW, srcH, 0, 0, Wpx, Hpx)
+        ctx.restore()
+      }
+
       // If aggregated cell gradients are shown, also color each cell by its dominant feature
       // Also apply when showing particle init overlays
-      if ((showCellAggregatedGradientsRef.current || showParticleInitsRef.current) && colors && colors.length) {
+      if (colorCells && (showCellAggregatedGradientsRef.current || showParticleInitsRef.current) && colors && colors.length) {
         const cellWpx = Wpx / W
         const cellHpx = Hpx / H
         for (let i = 0; i < H; i++) {
@@ -484,7 +623,7 @@ export default function CanvasWind({
 
       // Optional: draw base points with shapes per label (like Python)
       // Skip drawing data points when showing particle init overlays
-      if (!showParticleInitsRef.current) {
+      if (showPointsRef.current && !showParticleInitsRef.current) {
         // Shape cycle mirrors matplotlib-style markers used in the original
         const SHAPES = ['o','s','^', 'x', 'D','v','<','>','p','*','h','H','+']
         // Bigger, light-gray markers for better visibility
@@ -494,166 +633,166 @@ export default function CanvasWind({
         ctx.strokeStyle = '#222222'
         ctx.lineWidth = 0.8
 
-      function drawRegularPolygon(cx, cy, radius, sides, rotation = 0) {
-        if (sides < 3) return
-        ctx.beginPath()
-        for (let i = 0; i < sides; i++) {
-          const a = rotation + (i * 2 * Math.PI) / sides
-          const x = cx + radius * Math.cos(a)
-          const y = cy + radius * Math.sin(a)
-          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
-        }
-        ctx.closePath()
-        ctx.fill()
-        ctx.stroke()
-      }
-      function drawDiamond(cx, cy, r) {
-        ctx.beginPath()
-        ctx.moveTo(cx, cy - r * 1.2)
-        ctx.lineTo(cx - r * 1.2, cy)
-        ctx.lineTo(cx, cy + r * 1.2)
-        ctx.lineTo(cx + r * 1.2, cy)
-        ctx.closePath()
-        ctx.fill()
-        ctx.stroke()
-      }
-      function drawTriangle(cx, cy, r, orientation) {
-        ctx.beginPath()
-        if (orientation === 'up') {
-          ctx.moveTo(cx, cy - r * 1.3)
-          ctx.lineTo(cx - r * 1.1, cy + r * 0.9)
-          ctx.lineTo(cx + r * 1.1, cy + r * 0.9)
-        } else if (orientation === 'down') {
-          ctx.moveTo(cx, cy + r * 1.3)
-          ctx.lineTo(cx - r * 1.1, cy - r * 0.9)
-          ctx.lineTo(cx + r * 1.1, cy - r * 0.9)
-        } else if (orientation === 'left') {
-          ctx.moveTo(cx - r * 1.3, cy)
-          ctx.lineTo(cx + r * 0.9, cy - r * 1.1)
-          ctx.lineTo(cx + r * 0.9, cy + r * 1.1)
-        } else {
-          // right
-          ctx.moveTo(cx + r * 1.3, cy)
-          ctx.lineTo(cx - r * 0.9, cy - r * 1.1)
-          ctx.lineTo(cx - r * 0.9, cy + r * 1.1)
-        }
-        ctx.closePath()
-        ctx.fill()
-        ctx.stroke()
-      }
-      function drawStar(cx, cy, r, points = 5) {
-        const inner = r * 0.5
-        ctx.beginPath()
-        for (let i = 0; i < points * 2; i++) {
-          const angle = (i * Math.PI) / points - Math.PI / 2
-          const rad = (i % 2 === 0) ? r : inner
-          const x = cx + Math.cos(angle) * rad
-          const y = cy + Math.sin(angle) * rad
-          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
-        }
-        ctx.closePath(); ctx.fill(); ctx.stroke()
-      }
-      function drawPlus(cx, cy, r) {
-        ctx.beginPath()
-        ctx.moveTo(cx - r, cy)
-        ctx.lineTo(cx + r, cy)
-        ctx.moveTo(cx, cy - r)
-        ctx.lineTo(cx, cy + r)
-        ctx.stroke()
-      }
-      function drawCross(cx, cy, r) {
-        ctx.beginPath()
-        ctx.moveTo(cx - r, cy - r)
-        ctx.lineTo(cx + r, cy + r)
-        ctx.moveTo(cx + r, cy - r)
-        ctx.lineTo(cx - r, cy + r)
-        ctx.stroke()
-      }
-      function drawMarker(cx, cy, shape, r) {
-        switch (shape) {
-          case 'o':
-            ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break
-          case 's':
-            ctx.beginPath(); ctx.rect(cx - r, cy - r, 2 * r, 2 * r); ctx.fill(); ctx.stroke(); break
-          case '^': drawTriangle(cx, cy, r, 'up'); break
-          case 'v': drawTriangle(cx, cy, r, 'down'); break
-          case '<': drawTriangle(cx, cy, r, 'left'); break
-          case '>': drawTriangle(cx, cy, r, 'right'); break
-          case 'D': drawDiamond(cx, cy, r); break
-          case 'p': drawRegularPolygon(cx, cy, r * 1.1, 5); break
-          case 'h': drawRegularPolygon(cx, cy, r * 1.1, 6); break
-          case 'H': drawRegularPolygon(cx, cy, r * 1.15, 6, Math.PI / 6); break
-          case '*': drawStar(cx, cy, r * 1.2); break
-          case '+': drawPlus(cx, cy, r * 1.2); break
-          case 'x': drawCross(cx, cy, r * 1.2); break
-          default:
-            ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); break
-        }
-      }
-
-      if (!showParticleInitsRef.current && Array.isArray(point_labels) && point_labels.length === positions.length) {
-        // Build stable mapping value→index using sorted unique labels
-        const unique = Array.from(new Set(point_labels.map((l) => String(l))))
-        unique.sort()
-        const map = new Map(unique.map((val, idx) => [val, idx]))
-        for (let idx = 0; idx < positions.length; idx++) {
-          const [x, y] = positions[idx]
-          const [sx, sy] = worldToScreen(x, y)
-          const li = map.get(String(point_labels[idx])) || 0
-          const shape = uniformPointShapeRef.current ? 'o' : SHAPES[li % SHAPES.length]
-          if (pointColorStats && Array.isArray(feature_values)) {
-            const col = pointColorStats.idx
-            const row = feature_values[idx]
-            const v = (row && col >= 0 && col < row.length) ? Number(row[col]) : NaN
-            let t = 0.5
-            if (Number.isFinite(v) && pointColorStats.max > pointColorStats.min) {
-              t = Math.max(0, Math.min(1, (v - pointColorStats.min) / (pointColorStats.max - pointColorStats.min)))
-            }
-            const g = Math.round(255 * (1 - t))
-            ctx.fillStyle = `rgb(${g},${g},${g})`
-          } else {
-            ctx.fillStyle = '#d9d9d9'
+        function drawRegularPolygon(cx, cy, radius, sides, rotation = 0) {
+          if (sides < 3) return
+          ctx.beginPath()
+          for (let i = 0; i < sides; i++) {
+            const a = rotation + (i * 2 * Math.PI) / sides
+            const x = cx + radius * Math.cos(a)
+            const y = cy + radius * Math.sin(a)
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
           }
-          drawMarker(sx, sy, shape, shapeSize)
-        }
-      } else if (!showParticleInitsRef.current) {
-        // Fallback: simple circles (larger, gray) with border
-        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
-          const [x, y] = positions[pIdx]
-          const [sx, sy] = worldToScreen(x, y)
-          if (pointColorStats && Array.isArray(feature_values)) {
-            const col = pointColorStats.idx
-            const row = feature_values[pIdx]
-            const v = (row && col >= 0 && col < row.length) ? Number(row[col]) : NaN
-            let t = 0.5
-            if (Number.isFinite(v) && pointColorStats.max > pointColorStats.min) {
-              t = Math.max(0, Math.min(1, (v - pointColorStats.min) / (pointColorStats.max - pointColorStats.min)))
-            }
-            const g = Math.round(255 * (1 - t))
-            ctx.fillStyle = `rgb(${g},${g},${g})`
-          } else {
-            ctx.fillStyle = '#d9d9d9'
-          }
-          ctx.beginPath(); ctx.arc(sx, sy, shapeSize, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
-        }
-      }
-
-      // Highlight selected data points by filling them in red and enlarging
-      const selPts = selectedPointIndicesRef.current
-      if (Array.isArray(selPts) && selPts.length > 0 && positions && positions.length) {
-        for (const pi of selPts) {
-          if (typeof pi !== 'number' || pi < 0 || pi >= positions.length) continue
-          const [wx, wy] = positions[pi]
-          const [sx, sy] = worldToScreen(wx, wy)
-          const r = (typeof shapeSize === 'number' ? shapeSize : 3.2) + 3.0
-          ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2)
-          ctx.fillStyle = '#dc2626'
+          ctx.closePath()
           ctx.fill()
-          ctx.strokeStyle = '#000000'
-          ctx.lineWidth = 1.5
           ctx.stroke()
         }
-      }
+        function drawDiamond(cx, cy, r) {
+          ctx.beginPath()
+          ctx.moveTo(cx, cy - r * 1.2)
+          ctx.lineTo(cx - r * 1.2, cy)
+          ctx.lineTo(cx, cy + r * 1.2)
+          ctx.lineTo(cx + r * 1.2, cy)
+          ctx.closePath()
+          ctx.fill()
+          ctx.stroke()
+        }
+        function drawTriangle(cx, cy, r, orientation) {
+          ctx.beginPath()
+          if (orientation === 'up') {
+            ctx.moveTo(cx, cy - r * 1.3)
+            ctx.lineTo(cx - r * 1.1, cy + r * 0.9)
+            ctx.lineTo(cx + r * 1.1, cy + r * 0.9)
+          } else if (orientation === 'down') {
+            ctx.moveTo(cx, cy + r * 1.3)
+            ctx.lineTo(cx - r * 1.1, cy - r * 0.9)
+            ctx.lineTo(cx + r * 1.1, cy - r * 0.9)
+          } else if (orientation === 'left') {
+            ctx.moveTo(cx - r * 1.3, cy)
+            ctx.lineTo(cx + r * 0.9, cy - r * 1.1)
+            ctx.lineTo(cx + r * 0.9, cy + r * 1.1)
+          } else {
+            // right
+            ctx.moveTo(cx + r * 1.3, cy)
+            ctx.lineTo(cx - r * 0.9, cy - r * 1.1)
+            ctx.lineTo(cx - r * 0.9, cy + r * 1.1)
+          }
+          ctx.closePath()
+          ctx.fill()
+          ctx.stroke()
+        }
+        function drawStar(cx, cy, r, points = 5) {
+          const inner = r * 0.5
+          ctx.beginPath()
+          for (let i = 0; i < points * 2; i++) {
+            const angle = (i * Math.PI) / points - Math.PI / 2
+            const rad = (i % 2 === 0) ? r : inner
+            const x = cx + Math.cos(angle) * rad
+            const y = cy + Math.sin(angle) * rad
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+          }
+          ctx.closePath(); ctx.fill(); ctx.stroke()
+        }
+        function drawPlus(cx, cy, r) {
+          ctx.beginPath()
+          ctx.moveTo(cx - r, cy)
+          ctx.lineTo(cx + r, cy)
+          ctx.moveTo(cx, cy - r)
+          ctx.lineTo(cx, cy + r)
+          ctx.stroke()
+        }
+        function drawCross(cx, cy, r) {
+          ctx.beginPath()
+          ctx.moveTo(cx - r, cy - r)
+          ctx.lineTo(cx + r, cy + r)
+          ctx.moveTo(cx + r, cy - r)
+          ctx.lineTo(cx - r, cy + r)
+          ctx.stroke()
+        }
+        function drawMarker(cx, cy, shape, r) {
+          switch (shape) {
+            case 'o':
+              ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break
+            case 's':
+              ctx.beginPath(); ctx.rect(cx - r, cy - r, 2 * r, 2 * r); ctx.fill(); ctx.stroke(); break
+            case '^': drawTriangle(cx, cy, r, 'up'); break
+            case 'v': drawTriangle(cx, cy, r, 'down'); break
+            case '<': drawTriangle(cx, cy, r, 'left'); break
+            case '>': drawTriangle(cx, cy, r, 'right'); break
+            case 'D': drawDiamond(cx, cy, r); break
+            case 'p': drawRegularPolygon(cx, cy, r * 1.1, 5); break
+            case 'h': drawRegularPolygon(cx, cy, r * 1.1, 6); break
+            case 'H': drawRegularPolygon(cx, cy, r * 1.15, 6, Math.PI / 6); break
+            case '*': drawStar(cx, cy, r * 1.2); break
+            case '+': drawPlus(cx, cy, r * 1.2); break
+            case 'x': drawCross(cx, cy, r * 1.2); break
+            default:
+              ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); break
+          }
+        }
+
+        if (Array.isArray(point_labels) && point_labels.length === positions.length) {
+          // Build stable mapping value→index using sorted unique labels
+          const unique = Array.from(new Set(point_labels.map((l) => String(l))))
+          unique.sort()
+          const map = new Map(unique.map((val, idx) => [val, idx]))
+          for (let idx = 0; idx < positions.length; idx++) {
+            const [x, y] = positions[idx]
+            const [sx, sy] = worldToScreen(x, y)
+            const li = map.get(String(point_labels[idx])) || 0
+            const shape = uniformPointShapeRef.current ? 'o' : SHAPES[li % SHAPES.length]
+            if (pointColorStats && Array.isArray(feature_values)) {
+              const col = pointColorStats.idx
+              const row = feature_values[idx]
+              const v = (row && col >= 0 && col < row.length) ? Number(row[col]) : NaN
+              let t = 0.5
+              if (Number.isFinite(v) && pointColorStats.max > pointColorStats.min) {
+                t = Math.max(0, Math.min(1, (v - pointColorStats.min) / (pointColorStats.max - pointColorStats.min)))
+              }
+              const g = Math.round(255 * (1 - t))
+              ctx.fillStyle = `rgb(${g},${g},${g})`
+            } else {
+              ctx.fillStyle = '#d9d9d9'
+            }
+            drawMarker(sx, sy, shape, shapeSize)
+          }
+        } else {
+          // Fallback: simple circles (larger, gray) with border
+          for (let pIdx = 0; pIdx < positions.length; pIdx++) {
+            const [x, y] = positions[pIdx]
+            const [sx, sy] = worldToScreen(x, y)
+            if (pointColorStats && Array.isArray(feature_values)) {
+              const col = pointColorStats.idx
+              const row = feature_values[pIdx]
+              const v = (row && col >= 0 && col < row.length) ? Number(row[col]) : NaN
+              let t = 0.5
+              if (Number.isFinite(v) && pointColorStats.max > pointColorStats.min) {
+                t = Math.max(0, Math.min(1, (v - pointColorStats.min) / (pointColorStats.max - pointColorStats.min)))
+              }
+              const g = Math.round(255 * (1 - t))
+              ctx.fillStyle = `rgb(${g},${g},${g})`
+            } else {
+              ctx.fillStyle = '#d9d9d9'
+            }
+            ctx.beginPath(); ctx.arc(sx, sy, shapeSize, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+          }
+        }
+
+        // Highlight selected data points by filling them in red and enlarging
+        const selPts = selectedPointIndicesRef.current
+        if (Array.isArray(selPts) && selPts.length > 0 && positions && positions.length) {
+          for (const pi of selPts) {
+            if (typeof pi !== 'number' || pi < 0 || pi >= positions.length) continue
+            const [wx, wy] = positions[pi]
+            const [sx, sy] = worldToScreen(wx, wy)
+            const r = (typeof shapeSize === 'number' ? shapeSize : 3.2) + 3.0
+            ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2)
+            ctx.fillStyle = '#dc2626'
+            ctx.fill()
+            ctx.strokeStyle = '#000000'
+            ctx.lineWidth = 1.5
+            ctx.stroke()
+          }
+        }
       }
 
       // Optional: per-feature gradients attached to each point
@@ -1188,6 +1327,9 @@ export default function CanvasWind({
     showCellAggregatedGradients,
     showCellGradients,
     showPointGradients,
+    colorCells,
+    showLIC,
+    useMask,
   ])
 
   const canvasWidth = (typeof width === 'number' && width > 0) ? width : size
