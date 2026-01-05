@@ -144,6 +144,30 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
     except Exception as e:
         # If masking fails for any reason, proceed without final masking
         print(f"Final buffer masking skipped due to error: {e}")
+
+    # Optional: distance-based masking (zero out cells too far from any data point)
+    try:
+        dist_thresh = float(getattr(config, "MASK_DISTANCE_THRESHOLD", 0.0) or 0.0)
+    except Exception:
+        dist_thresh = 0.0
+    if dist_thresh > 0 and positions is not None and len(positions) > 0:
+        try:
+            tree = cKDTree(positions)
+            flat_cells = np.column_stack([grid_x.ravel(), grid_y.ravel()])
+            dists, _ = tree.query(flat_cells)
+            dist_grid = dists.reshape(grid_u_sum.shape)
+            dist_mask = dist_grid > dist_thresh
+            final_mask = dist_mask if final_mask is None else np.logical_or(final_mask, dist_mask)
+            # Apply mask to all grids consistently
+            grid_u_sum[final_mask] = 0.0
+            grid_v_sum[final_mask] = 0.0
+            grid_u_feats[:, final_mask] = 0.0
+            grid_v_feats[:, final_mask] = 0.0
+            grid_u_all_feats[:, final_mask] = 0.0
+            grid_v_all_feats[:, final_mask] = 0.0
+            cell_dominant_features[final_mask] = -1
+        except Exception as e:
+            print(f"Distance-based masking skipped due to error: {e}")
     
     # Determine the dominant feature at each grid cell from ALL features
     # First, compute grids for ALL features to find true dominant feature

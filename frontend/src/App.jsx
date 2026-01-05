@@ -19,8 +19,8 @@ export default function App() {
   const [showStreamlines, setShowStreamlines] = useState(false)
   const [selectedFeatures, setSelectedFeatures] = useState([])
   // Higher grid resolution to sharpen LIC / vector field visualization
-  const gridRes = 200
-  const maskBufferFactor = 0.2
+  const gridRes = 300
+  const maskBufferFactor = 10.0
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   // Grid selection disabled for this view

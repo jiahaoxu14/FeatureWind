@@ -427,9 +427,19 @@ export default function CanvasWind({
     licCanvasRef.current = off
     if (showLicDebug) {
       try {
+        const toFlippedDataUrl = (c) => {
+          const flip = document.createElement('canvas')
+          flip.width = c.width; flip.height = c.height
+          const fctx = flip.getContext('2d')
+          fctx.scale(1, -1)
+          fctx.translate(0, -c.height)
+          fctx.drawImage(c, 0, 0)
+          return flip.toDataURL('image/png')
+        }
         setLicDebugUrls({
-          noise: noiseCanvas.toDataURL('image/png'),
-          field: fieldCanvas.toDataURL('image/png'),
+          // Flip vertically to match main canvas world y-up orientation
+          noise: toFlippedDataUrl(noiseCanvas),
+          field: toFlippedDataUrl(fieldCanvas),
         })
       } catch {
         setLicDebugUrls({ noise: null, field: null })
