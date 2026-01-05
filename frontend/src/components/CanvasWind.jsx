@@ -73,6 +73,7 @@ export default function CanvasWind({
   colorCells = true,
   showLIC = false,
   useMask = true,
+  pointGradientColor = null,
 }) {
   const canvasRef = useRef(null)
   const rafRef = useRef(0)
@@ -156,6 +157,52 @@ export default function CanvasWind({
   const uSum = useMemo(() => sumSelectedGrid(uAll, indices), [uAll, indices])
   const vSum = useMemo(() => sumSelectedGrid(vAll, indices), [vAll, indices])
 
+  // Single-feature selection for LIC (falls back to aggregated when none provided)
+  const licFeatureIndex = useMemo(() => {
+    if (Array.isArray(featureIndices) && featureIndices.length > 0) return featureIndices[0]
+    if (selection && selection.featureIndex !== undefined) return selection.featureIndex
+    if (selection && Array.isArray(selection.topKIndices) && selection.topKIndices.length > 0) return selection.topKIndices[0]
+    return null
+  }, [featureIndices, selection])
+
+  const licField = useMemo(() => {
+    const idx = licFeatureIndex
+    const u = (typeof idx === 'number' && uAll?.[idx]) ? uAll[idx] : uSum
+    const v = (typeof idx === 'number' && vAll?.[idx]) ? vAll[idx] : vSum
+    return { u, v }
+  }, [licFeatureIndex, uAll, vAll, uSum, vSum])
+
+  // Normalized field for LIC tracing (unit vectors per cell)
+  const licFieldNorm = useMemo(() => {
+    const u = licField.u
+    const v = licField.v
+    if (!u || !v || !u.length || !v.length) return { u: null, v: null }
+    const H = u.length
+    const W = u[0]?.length || 0
+    if (!H || !W) return { u: null, v: null }
+    const uN = Array.from({ length: H }, () => new Float32Array(W))
+    const vN = Array.from({ length: H }, () => new Float32Array(W))
+    for (let i = 0; i < H; i++) {
+      const ui = u[i]
+      const vi = v[i]
+      const uo = uN[i]
+      const vo = vN[i]
+      for (let j = 0; j < W; j++) {
+        const uu = ui?.[j] ?? 0
+        const vv = vi?.[j] ?? 0
+        const m = Math.hypot(uu, vv)
+        if (m > 1e-9) {
+          uo[j] = uu / m
+          vo[j] = vv / m
+        } else {
+          uo[j] = 0
+          vo[j] = 0
+        }
+      }
+    }
+    return { u: uN, v: vN }
+  }, [licField])
+
   // Precompute magnitude grid and a robust scale (p95) for alpha mapping
   const magInfo = useMemo(() => {
     if (!uSum || !vSum) return null
@@ -177,14 +224,36 @@ export default function CanvasWind({
     return { H, W, mags, p99: p99 || 1.0 }
   }, [uSum, vSum])
 
-  // Build a LIC texture over the aggregated vector field (grayscale streaks)
+  // Build a LIC texture over a normalized single-feature vector field
   useEffect(() => {
-    if (!showLIC || !uSum || !vSum) { licCanvasRef.current = null; return }
-    const H = uSum.length
-    const W = uSum[0]?.length || 0
+    const uRaw = licField.u
+    const vRaw = licField.v
+    const uField = licFieldNorm.u
+    const vField = licFieldNorm.v
+    if (!showLIC || !uRaw || !vRaw || !uField || !vField) { licCanvasRef.current = null; return }
+    const H = uRaw.length
+    const W = uRaw[0]?.length || 0
     if (!H || !W) { licCanvasRef.current = null; return }
     const hasMask = useMask && Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
-    const magScale = (magInfo && typeof magInfo.p99 === 'number' && magInfo.p99 > 0) ? magInfo.p99 : 1.0
+
+    // p99 magnitude from the raw (unnormalized) LIC field for alpha scaling
+    let magScale = 1.0
+    try {
+      const mags = new Float32Array(H * W)
+      let k = 0
+      for (let i = 0; i < H; i++) {
+        const ui = uRaw[i]
+        const vi = vRaw[i]
+        for (let j = 0; j < W; j++, k++) {
+          mags[k] = Math.hypot(ui?.[j] ?? 0, vi?.[j] ?? 0)
+        }
+      }
+      const arr = Array.from(mags)
+      arr.sort((a, b) => a - b)
+      magScale = arr.length ? (arr[Math.floor(arr.length * 0.99)] || 1.0) : 1.0
+      if (!(magScale > 0)) magScale = 1.0
+    } catch { magScale = 1.0 }
+
     const noise = new Float32Array(H * W)
     // Zero-mean noise helps the convolution keep visible contrast after averaging.
     for (let k = 0; k < noise.length; k++) noise[k] = (Math.random() * 2 - 1)
@@ -203,7 +272,7 @@ export default function CanvasWind({
       return top * (1 - b) + bot * b
     }
 
-    // LIC: trace streamline in both directions for length 2L.
+    // LIC: trace streamline in both directions for length 2L on normalized field.
     // Use a tapered (Hann) kernel to avoid the overly-blurry “box filter” look.
     const L = 10 // streamline half-length in grid units (smaller = crisper)
     const stepSize = 0.9 // step in grid units
@@ -223,8 +292,8 @@ export default function CanvasWind({
       while (travelled < L) {
         // If we ever step out of bounds, stop before sampling.
         if (gx < 0 || gx > W - 1 || gy < 0 || gy > H - 1) break
-        const u = bilinearSample(uSum, gx, gy)
-        const v = bilinearSample(vSum, gx, gy)
+        const u = bilinearSample(uField, gx, gy)
+        const v = bilinearSample(vField, gx, gy)
         const m = Math.hypot(u, v)
         if (m <= 1e-9) break
 
@@ -249,7 +318,7 @@ export default function CanvasWind({
         const idx = 4 * (i * W + j)
         if (hasMask && !unmasked[i][j]) { data[idx + 3] = 0; continue }
 
-        const centerMag = Math.hypot(uSum[i]?.[j] ?? 0, vSum[i]?.[j] ?? 0)
+        const centerMag = Math.hypot(uRaw[i]?.[j] ?? 0, vRaw[i]?.[j] ?? 0)
         const gx0 = j + 0.5
         const gy0 = i + 0.5
 
@@ -290,7 +359,7 @@ export default function CanvasWind({
     const img = new ImageData(data, W, H)
     ictx.putImageData(img, 0, 0)
     licCanvasRef.current = off
-  }, [showLIC, uSum, vSum, unmasked, magInfo, useMask])
+  }, [showLIC, licField, licFieldNorm, unmasked, useMask])
 
   // Precompute min/max for selected feature column to color points
   const pointColorStats = useMemo(() => {
@@ -804,7 +873,7 @@ export default function CanvasWind({
           const p99Sum = magInfo?.p99 || 1.0
           const sxScale = Wpx / (xmax - xmin)
           const syScale = Hpx / (ymax - ymin)
-          const headLen = Math.max(6, Math.min(12, Math.floor(Math.min(Wpx, Hpx) * 0.015)))
+          const headLenBase = Math.max(6, Math.min(12, Math.floor(Math.min(Wpx, Hpx) * 0.015)))
           const phi = Math.PI / 7 // ~25.7 degrees
           ctx.lineWidth = 1.0
           for (let pIdx = 0; pIdx < positions.length; pIdx++) {
@@ -829,10 +898,13 @@ export default function CanvasWind({
               const diry = ddy / dnorm
               const baseLen = Math.max(10, Math.min(40, Math.min(Wpx, Hpx) * 0.05))
               const len = Math.max(0, Math.min(1, aField)) * baseLen
+              const headLen = Math.max(4, Math.min(headLenBase, len * 0.35))
               const ex = sx + dirx * len
               const ey = sy + diry * len
-              // Stroke color with field-strength alpha
-              const col = (colors && fi >= 0 && fi < colors.length) ? colors[fi] : '#222222'
+              // Stroke color with field-strength alpha (override if provided)
+              const col = (pointGradientColor && typeof pointGradientColor === 'string')
+                ? pointGradientColor
+                : (colors && fi >= 0 && fi < colors.length) ? colors[fi] : '#222222'
               ctx.strokeStyle = col
               ctx.globalAlpha = 0.9
               // Main shaft
@@ -866,7 +938,7 @@ export default function CanvasWind({
           const p99Sum = magInfo?.p99 || 1.0
           const sxScale = Wpx / (xmax - xmin)
           const syScale = Hpx / (ymax - ymin)
-          const headLen = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
+          const headLenBase = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
           const phi = Math.PI / 7
           const dx = (xmax - xmin) / W
           const dy = (ymax - ymin) / H
@@ -894,6 +966,7 @@ export default function CanvasWind({
                 const dirx = ddx / dnorm
                 const diry = ddy / dnorm
                 const len = aField * baseLen
+                const headLen = Math.max(4, Math.min(headLenBase, len * 0.35))
                 const ex = sx + dirx * len
                 const ey = sy + diry * len
                 const col = (colors && fi >= 0 && fi < colors.length) ? colors[fi] : '#222222'
@@ -918,7 +991,7 @@ export default function CanvasWind({
         const p99 = magInfo?.p99 || 1.0
         const sxScale = Wpx / (xmax - xmin)
         const syScale = Hpx / (ymax - ymin)
-        const headLen = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
+        const headLenBase = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
         const phi = Math.PI / 7
         const dx = (xmax - xmin) / W
         const dy = (ymax - ymin) / H
@@ -943,6 +1016,7 @@ export default function CanvasWind({
             const dirx = ddx / dnorm
             const diry = ddy / dnorm
             const len = aField * baseLen
+            const headLen = Math.max(4, Math.min(headLenBase, len * 0.35))
             const ex = sx + dirx * len
             const ey = sy + diry * len
             ctx.globalAlpha = 1.0
@@ -1053,7 +1127,7 @@ export default function CanvasWind({
         // Optional: arrowhead at each particle head
         if (showParticleArrowheadsRef.current) {
           // Slightly larger arrowheads for better visibility
-          const headLen = Math.max(8, Math.min(16, Math.floor(Math.min(Wpx, Hpx) * 0.02)))
+          const headLenBase = Math.max(8, Math.min(16, Math.floor(Math.min(Wpx, Hpx) * 0.02)))
           const phi = Math.PI / 7
           for (const p of particles) {
             // Use cached head alpha/color to exactly match the head segment's opacity and color
@@ -1066,6 +1140,8 @@ export default function CanvasWind({
             const [sx0, sy0] = worldToScreen(x0, y0)
             const [sx1, sy1] = worldToScreen(x1, y1)
             const ang = Math.atan2(sy0 - sy1, sx0 - sx1)
+            const segLen = Math.hypot(sx0 - sx1, sy0 - sy1)
+            const headLen = Math.max(4, Math.min(headLenBase, segLen * 0.35))
             ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha.toFixed(3)})`
             const hx1 = sx0 - headLen * Math.cos(ang - phi)
             const hy1 = sy0 - headLen * Math.sin(ang - phi)
@@ -1086,11 +1162,11 @@ export default function CanvasWind({
         const p99 = magInfo?.p99 || 1.0
         const sxScale = Wpx / (xmax - xmin)
         const syScale = Hpx / (ymax - ymin)
-        const headLen = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
-        const phi = Math.PI / 7
-        const baseLen = Math.max(8, Math.min(28, Math.min(Wpx, Hpx) * 0.045))
-        ctx.lineWidth = 1.0
-        for (const p of particles) {
+    const headLen = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
+    const phi = Math.PI / 7
+    const baseLen = Math.max(8, Math.min(28, Math.min(Wpx, Hpx) * 0.045))
+    ctx.lineWidth = 1.0
+    for (const p of particles) {
           const x0 = p.initX
           const y0 = p.initY
           const [gx0, gy0] = worldToGrid(x0, y0)
@@ -1131,22 +1207,23 @@ export default function CanvasWind({
           // Arrow from init along driving vector (account for aspect and y-flip)
           const ddx = u0 * sxScale
           const ddy = -v0 * syScale
-          const dnorm = Math.hypot(ddx, ddy)
-          if (!Number.isFinite(dnorm) || dnorm <= 0) continue
-          const dirx = ddx / dnorm
-          const diry = ddy / dnorm
-          const len = aField * baseLen
-          const ex = sx0 + dirx * len
-          const ey = sy0 + diry * len
-          ctx.beginPath(); ctx.moveTo(sx0, sy0); ctx.lineTo(ex, ey); ctx.stroke()
-          const ang = Math.atan2(ey - sy0, ex - sx0)
-          const hx1 = ex - headLen * Math.cos(ang - Math.PI / 7)
-          const hy1 = ey - headLen * Math.sin(ang - Math.PI / 7)
-          const hx2 = ex - headLen * Math.cos(ang + Math.PI / 7)
-          const hy2 = ey - headLen * Math.sin(ang + Math.PI / 7)
-          ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(hx1, hy1); ctx.moveTo(ex, ey); ctx.lineTo(hx2, hy2); ctx.stroke()
-        }
-      }
+      const dnorm = Math.hypot(ddx, ddy)
+      if (!Number.isFinite(dnorm) || dnorm <= 0) continue
+      const dirx = ddx / dnorm
+      const diry = ddy / dnorm
+      const len = aField * baseLen
+      const headDyn = Math.max(4, Math.min(headLen, len * 0.35))
+      const ex = sx0 + dirx * len
+      const ey = sy0 + diry * len
+      ctx.beginPath(); ctx.moveTo(sx0, sy0); ctx.lineTo(ex, ey); ctx.stroke()
+      const ang = Math.atan2(ey - sy0, ex - sx0)
+      const hx1 = ex - headDyn * Math.cos(ang - Math.PI / 7)
+      const hy1 = ey - headDyn * Math.sin(ang - Math.PI / 7)
+      const hx2 = ex - headDyn * Math.cos(ang + Math.PI / 7)
+      const hy2 = ey - headDyn * Math.sin(ang + Math.PI / 7)
+      ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(hx1, hy1); ctx.moveTo(ex, ey); ctx.lineTo(hx2, hy2); ctx.stroke()
+    }
+  }
       rafRef.current = requestAnimationFrame(draw)
     }
     runningRef.current = true
