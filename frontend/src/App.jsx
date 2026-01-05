@@ -115,6 +115,13 @@ export default function App() {
           />
         </div>
         {busy && <span className="hint">Computing…</span>}
+        {payload && (
+          <button
+            className="btn"
+            title="Show or hide per-point feature vectors"
+            onClick={() => setShowPointVectors(v => !v)}
+          >{showPointVectors ? 'Hide Point Vectors' : 'Show Point Vectors'}</button>
+        )}
       </div>
 
       {error && <div className="hint" style={{ color: '#b91c1c' }}>{error}</div>}
@@ -170,11 +177,6 @@ export default function App() {
                   title="Toggle points"
                   onClick={() => setShowPoints(v => !v)}
                 >{showPoints ? 'Hide Points' : 'Show Points'}</button>
-                <button
-                  className="btn"
-                  title="Toggle per-point feature vectors"
-                  onClick={() => setShowPointVectors(v => !v)}
-                >{showPointVectors ? 'Hide Point Vectors' : 'Show Point Vectors'}</button>
                 <button
                   className="btn"
                   title="Save Wind Map as PNG"
