@@ -11,17 +11,21 @@ export default function App() {
   const [dataset, setDataset] = useState(null)
   const [payload, setPayload] = useState(null)
   const [topK, setTopK] = useState(0)
-  const [showVectors, setShowVectors] = useState(true)
+  const [showVectors, setShowVectors] = useState(false)
   const [showLic, setShowLic] = useState(true)
   const [showPoints, setShowPoints] = useState(false)
   const [showPointVectors, setShowPointVectors] = useState(false)
+  const [showLicDebug, setShowLicDebug] = useState(true)
+  const [showStreamlines, setShowStreamlines] = useState(false)
   const [selectedFeatures, setSelectedFeatures] = useState([])
   // Higher grid resolution to sharpen LIC / vector field visualization
-  const gridRes = 32
+  const gridRes = 200
   const maskBufferFactor = 0.2
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   // Grid selection disabled for this view
+  // Allow LIC texture resolution to differ from grid resolution
+  const licTextureRes = 720
 
   function saveCanvasAsPng(canvas, filename) {
     try {
@@ -174,9 +178,19 @@ export default function App() {
                 >{showLic ? 'Hide LIC' : 'Show LIC'}</button>
                 <button
                   className="btn"
+                  title="Show LIC input texture and vector field previews"
+                  onClick={() => setShowLicDebug(v => !v)}
+                >{showLicDebug ? 'Hide LIC Debug' : 'Show LIC Debug'}</button>
+                <button
+                  className="btn"
                   title="Toggle points"
                   onClick={() => setShowPoints(v => !v)}
                 >{showPoints ? 'Hide Points' : 'Show Points'}</button>
+                <button
+                  className="btn"
+                  title="Show or hide animated streamlines"
+                  onClick={() => setShowStreamlines(v => !v)}
+                >{showStreamlines ? 'Hide Streamlines' : 'Show Streamlines'}</button>
                 <button
                   className="btn"
                   title="Save Wind Map as PNG"
@@ -190,6 +204,7 @@ export default function App() {
               payload={payload}
               showParticles={false}
               particleCount={0}
+              showStaticStreamlines={showStreamlines}
               allowGridSelection={false}
               showGrid={false}
               showPoints={showPoints}
@@ -197,6 +212,8 @@ export default function App() {
               showCellGradients={false}
               showPointGradients={showPointVectors}
               gradientFeatureIndices={selectedFeatures}
+              licTextureRes={licTextureRes}
+              showLicDebug={showLicDebug}
               pointGradientColor="#f97316"
               colorCells={false}
               showLIC={showLic}

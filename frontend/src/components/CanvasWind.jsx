@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo } from 'react'
+import React, { useEffect, useRef, useMemo, useState } from 'react'
 
 function sumSelectedGrid(grids, indices) {
   if (!grids || grids.length === 0) return null
@@ -74,6 +74,9 @@ export default function CanvasWind({
   showLIC = false,
   useMask = true,
   pointGradientColor = null,
+  showLicDebug = false,
+  licTextureRes = null,
+  showStaticStreamlines = false,
 }) {
   const canvasRef = useRef(null)
   const rafRef = useRef(0)
@@ -95,6 +98,8 @@ export default function CanvasWind({
   const pointBrushRadiusPxRef = useRef(Math.max(4, Math.floor(pointBrushRadiusPx || 14)))
   const selectedPointIndicesRef = useRef(Array.isArray(selectedPointIndices) ? selectedPointIndices : [])
   const licCanvasRef = useRef(null)
+  const [licDebugUrls, setLicDebugUrls] = useState({ noise: null, field: null })
+  const staticStreamlinesRef = useRef([])
   // Point brushing state: only becomes true after movement threshold
   const pointPointerDownRef = useRef(false)
   const pointBrushingRef = useRef(false)
@@ -230,10 +235,13 @@ export default function CanvasWind({
     const vRaw = licField.v
     const uField = licFieldNorm.u
     const vField = licFieldNorm.v
-    if (!showLIC || !uRaw || !vRaw || !uField || !vField) { licCanvasRef.current = null; return }
+    if (!showLIC || !uRaw || !vRaw || !uField || !vField) { licCanvasRef.current = null; setLicDebugUrls({ noise: null, field: null }); return }
     const H = uRaw.length
     const W = uRaw[0]?.length || 0
     if (!H || !W) { licCanvasRef.current = null; return }
+    // Decouple texture resolution from field resolution (default: use field resolution)
+    const texH = Math.max(1, Math.floor(licTextureRes || H))
+    const texW = Math.max(1, Math.floor(licTextureRes || W))
     const hasMask = useMask && Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
 
     // p99 magnitude from the raw (unnormalized) LIC field for alpha scaling
@@ -254,19 +262,22 @@ export default function CanvasWind({
       if (!(magScale > 0)) magScale = 1.0
     } catch { magScale = 1.0 }
 
-    const noise = new Float32Array(H * W)
+    const noise = new Float32Array(texH * texW)
     // Zero-mean noise helps the convolution keep visible contrast after averaging.
     for (let k = 0; k < noise.length; k++) noise[k] = (Math.random() * 2 - 1)
-    const sampleNoise = (gx, gy) => {
-      const j0 = Math.max(0, Math.min(W - 1, Math.floor(gx)))
-      const i0 = Math.max(0, Math.min(H - 1, Math.floor(gy)))
-      const j1 = Math.min(j0 + 1, W - 1), i1 = Math.min(i0 + 1, H - 1)
+    // Sample noise in texture space; inputs are in field-grid coordinates, so rescale first.
+    const sampleNoise = (gxField, gyField) => {
+      const gx = gxField * (texW / W)
+      const gy = gyField * (texH / H)
+      const j0 = Math.max(0, Math.min(texW - 1, Math.floor(gx)))
+      const i0 = Math.max(0, Math.min(texH - 1, Math.floor(gy)))
+      const j1 = Math.min(j0 + 1, texW - 1), i1 = Math.min(i0 + 1, texH - 1)
       const a = Math.min(Math.max(gx - j0, 0), 1)
       const b = Math.min(Math.max(gy - i0, 0), 1)
-      const n00 = noise[i0 * W + j0]
-      const n01 = noise[i0 * W + j1]
-      const n10 = noise[i1 * W + j0]
-      const n11 = noise[i1 * W + j1]
+      const n00 = noise[i0 * texW + j0]
+      const n01 = noise[i0 * texW + j1]
+      const n10 = noise[i1 * texW + j0]
+      const n11 = noise[i1 * texW + j1]
       const top = n00 * (1 - a) + n01 * a
       const bot = n10 * (1 - a) + n11 * a
       return top * (1 - b) + bot * b
@@ -274,7 +285,7 @@ export default function CanvasWind({
 
     // LIC: trace streamline in both directions for length 2L on normalized field.
     // Use a tapered (Hann) kernel to avoid the overly-blurry “box filter” look.
-    const L = 10 // streamline half-length in grid units (smaller = crisper)
+    const L = 5 // streamline half-length in grid units (smaller = crisper)
     const stepSize = 0.9 // step in grid units
 
     // Hann window on [0,1] with max at 0 and 0 at 1
@@ -282,7 +293,7 @@ export default function CanvasWind({
       const x = Math.max(0, Math.min(1, t))
       return 0.5 * (1 + Math.cos(Math.PI * x))
     }
-    const data = new Uint8ClampedArray(W * H * 4)
+    const data = new Uint8ClampedArray(texW * texH * 4)
 
     const traceStream = (gx0, gy0, dir) => {
       const samples = []
@@ -313,14 +324,22 @@ export default function CanvasWind({
       return samples
     }
 
-    for (let i = 0; i < H; i++) {
-      for (let j = 0; j < W; j++) {
-        const idx = 4 * (i * W + j)
-        if (hasMask && !unmasked[i][j]) { data[idx + 3] = 0; continue }
+    for (let i = 0; i < texH; i++) {
+      for (let j = 0; j < texW; j++) {
+        const idx = 4 * (i * texW + j)
+        // Map texture pixel to field grid coords
+        const gx0 = (j + 0.5) * (W / texW)
+        const gy0 = (i + 0.5) * (H / texH)
+        if (hasMask) {
+          const mi = Math.max(0, Math.min(H - 1, Math.round(gy0)))
+          const mj = Math.max(0, Math.min(W - 1, Math.round(gx0)))
+          if (!unmasked[mi][mj]) { data[idx + 3] = 0; continue }
+        }
 
-        const centerMag = Math.hypot(uRaw[i]?.[j] ?? 0, vRaw[i]?.[j] ?? 0)
-        const gx0 = j + 0.5
-        const gy0 = i + 0.5
+        const centerMag = Math.hypot(
+          bilinearSample(uRaw, gx0, gy0),
+          bilinearSample(vRaw, gx0, gy0)
+        )
 
         // Forward/backward streamlines with path-length weights
         const forward = traceStream(gx0, gy0, 1)
@@ -353,13 +372,72 @@ export default function CanvasWind({
         data[idx] = c; data[idx + 1] = c; data[idx + 2] = c; data[idx + 3] = a
       }
     }
+    // Build debug canvases (noise and vector field preview)
+    const noiseCanvas = document.createElement('canvas')
+    noiseCanvas.width = texW; noiseCanvas.height = texH
+    const nctx = noiseCanvas.getContext('2d')
+    const noiseData = new Uint8ClampedArray(texW * texH * 4)
+    for (let i = 0; i < texH; i++) {
+      for (let j = 0; j < texW; j++) {
+        const idx = 4 * (i * texW + j)
+        const val = noise[i * texW + j]
+        const g = Math.max(0, Math.min(255, Math.round((0.5 + 0.5 * val) * 255)))
+        noiseData[idx] = g; noiseData[idx + 1] = g; noiseData[idx + 2] = g; noiseData[idx + 3] = 255
+      }
+    }
+    nctx.putImageData(new ImageData(noiseData, texW, texH), 0, 0)
+
+    const fieldCanvas = document.createElement('canvas')
+    fieldCanvas.width = texW; fieldCanvas.height = texH
+    const fctx = fieldCanvas.getContext('2d')
+    fctx.fillStyle = '#ffffff'
+    fctx.fillRect(0, 0, texW, texH)
+    fctx.strokeStyle = '#111'
+    fctx.lineWidth = 0.8
+    const step = Math.max(1, Math.floor(Math.min(texW, texH) / 24))
+    const baseLen = Math.max(6, Math.min(18, Math.min(texW, texH) * 0.12))
+    for (let i = 0; i < texH; i += step) {
+      for (let j = 0; j < texW; j += step) {
+        const gx = (j + 0.5) * (W / texW)
+        const gy = (i + 0.5) * (H / texH)
+        const u = bilinearSample(uRaw, gx, gy)
+        const v = bilinearSample(vRaw, gx, gy)
+        const m = Math.hypot(u, v)
+        if (!(m > 1e-9)) continue
+        const len = Math.min(baseLen, (m / (magScale || 1)) * baseLen)
+        const dn = Math.hypot(u, v)
+        const dirx = u / dn, diry = v / dn
+        const cx = j + 0.5
+        const cy = i + 0.5
+        const ex = cx + dirx * len
+        const ey = cy + diry * len
+        fctx.beginPath()
+        fctx.moveTo(cx, cy)
+        fctx.lineTo(ex, ey)
+        fctx.stroke()
+      }
+    }
+
     const off = document.createElement('canvas')
-    off.width = W; off.height = H
+    off.width = texW; off.height = texH
     const ictx = off.getContext('2d')
-    const img = new ImageData(data, W, H)
+    // Build ImageData at the texture resolution (texW x texH) to match the data buffer
+    const img = new ImageData(data, texW, texH)
     ictx.putImageData(img, 0, 0)
     licCanvasRef.current = off
-  }, [showLIC, licField, licFieldNorm, unmasked, useMask])
+    if (showLicDebug) {
+      try {
+        setLicDebugUrls({
+          noise: noiseCanvas.toDataURL('image/png'),
+          field: fieldCanvas.toDataURL('image/png'),
+        })
+      } catch {
+        setLicDebugUrls({ noise: null, field: null })
+      }
+    } else {
+      setLicDebugUrls({ noise: null, field: null })
+    }
+  }, [showLIC, licField, licFieldNorm, unmasked, useMask, licTextureRes, showLicDebug])
 
   // Precompute min/max for selected feature column to color points
   const pointColorStats = useMemo(() => {
@@ -411,7 +489,7 @@ export default function CanvasWind({
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || !uSum || !vSum) return
+    if (!canvas || !uSum || !vSum) { staticStreamlinesRef.current = []; return }
     const ctx = canvas.getContext('2d')
     const [xmin, xmax, ymin, ymax] = bbox
     const viewRef = { current: { xmin, xmax, ymin, ymax } }
@@ -419,15 +497,78 @@ export default function CanvasWind({
     const Hpx = canvas.height
     const W = grid_res, H = grid_res
 
+    // Optional mask helpers (used by static streamlines and particles)
+    let hasMask = useMask && Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
+
+    // Precompute static streamlines when requested (no animation)
+    if (showStaticStreamlines) {
+      const seeds = []
+      const gridN = 16
+      for (let ii = 0; ii < gridN; ii++) {
+        for (let jj = 0; jj < gridN; jj++) {
+          const x = xmin + (jj + 0.5) / gridN * (xmax - xmin)
+          const y = ymin + (ii + 0.5) / gridN * (ymax - ymin)
+          seeds.push({ x, y })
+        }
+      }
+      const maxLen = Math.max(xmax - xmin, ymax - ymin) * 0.45
+      const stepWorld = Math.min((xmax - xmin), (ymax - ymin)) / Math.max(grid_res, 20) * 0.8
+
+      function isMaskedAtWorld(x, y) {
+        const gx = (x - xmin) / (xmax - xmin) * (W - 1)
+        const gy = (y - ymin) / (ymax - ymin) * (H - 1)
+        const mi = Math.max(0, Math.min(H - 1, Math.round(gy)))
+        const mj = Math.max(0, Math.min(W - 1, Math.round(gx)))
+        if (hasMask) return !unmasked[mi][mj]
+        const u = bilinearSample(uSum, gx, gy)
+        const v = bilinearSample(vSum, gx, gy)
+        return Math.hypot(u, v) <= 1e-9
+      }
+
+      function traceLine(x0, y0, dir) {
+        const pts = [{ x: x0, y: y0 }]
+        let traveled = 0
+        let x = x0, y = y0
+        for (let k = 0; k < 256; k++) {
+          const gx = (x - xmin) / (xmax - xmin) * (W - 1)
+          const gy = (y - ymin) / (ymax - ymin) * (H - 1)
+          const u = bilinearSample(uSum, gx, gy)
+          const v = bilinearSample(vSum, gx, gy)
+          const m = Math.hypot(u, v)
+          if (!(m > 1e-9)) break
+          const nx = x + dir * (u / m) * stepWorld
+          const ny = y + dir * (v / m) * stepWorld
+          const seg = Math.hypot(nx - x, ny - y)
+          if (!(seg > 1e-12)) break
+          traveled += seg
+          if (traveled > maxLen) break
+          if (nx < xmin || nx > xmax || ny < ymin || ny > ymax) break
+          if (isMaskedAtWorld(nx, ny)) break
+          x = nx; y = ny
+          pts.push({ x, y })
+        }
+        return pts
+      }
+
+      const lines = []
+      for (const s of seeds) {
+        if (isMaskedAtWorld(s.x, s.y)) continue
+        const forward = traceLine(s.x, s.y, 1)
+        const backward = traceLine(s.x, s.y, -1)
+        const merged = [...backward.reverse(), ...forward.slice(1)]
+        if (merged.length >= 2) lines.push(merged)
+      }
+      staticStreamlinesRef.current = lines
+    } else {
+      staticStreamlinesRef.current = []
+    }
+
     // Trail configuration (mirrors defaults in featurewind/config.py)
     const TAIL_LENGTH = Math.max(1, Math.floor(tailLength))
     const TRAIL_TAIL_MIN = Math.max(0, Math.min(1, trailTailMin))
     const TRAIL_TAIL_EXP = Math.max(0.5, trailTailExp)
     const MAX_LIFETIME = Math.max(1, Math.floor(maxLifetime))
     const SPEED_SCALE = speedScale
-
-    // Optional mask helpers
-    let hasMask = useMask && Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
 
     // Precompute list of unmasked cells for efficient respawn
     let unmaskedList = []
@@ -1031,6 +1172,24 @@ export default function CanvasWind({
         }
       }
 
+      // Draw static streamlines (no animation) when requested
+      const staticLines = staticStreamlinesRef.current || []
+      if (showStaticStreamlines && staticLines.length > 0) {
+        ctx.strokeStyle = '#111111'
+        ctx.lineWidth = 1.0
+        ctx.globalAlpha = 0.9
+        for (const line of staticLines) {
+          if (!Array.isArray(line) || line.length < 2) continue
+          ctx.beginPath()
+          for (let idx = 0; idx < line.length; idx++) {
+            const [sx, sy] = worldToScreen(line[idx].x, line[idx].y)
+            if (idx === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy)
+          }
+          ctx.stroke()
+        }
+        ctx.globalAlpha = 1.0
+      }
+
       // Draw trails as fading line segments (colored by feature family)
       ctx.lineWidth = Math.max(0.5, Number(trailLineWidth) || 1.2)
       ctx.lineCap = 'round'
@@ -1407,16 +1566,36 @@ export default function CanvasWind({
     colorCells,
     showLIC,
     useMask,
+    showStaticStreamlines,
   ])
 
   const canvasWidth = (typeof width === 'number' && width > 0) ? width : size
   const canvasHeight = (typeof height === 'number' && height > 0) ? height : size
+  const debugThumbSize = Math.max(80, Math.floor(canvasWidth / 2))
   return (
-    <canvas
-      ref={canvasRef}
-      width={canvasWidth}
-      height={canvasHeight}
-      style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px`, border: '1px solid #ddd' }}
-    />
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+      {showLIC && showLicDebug && (licDebugUrls.noise || licDebugUrls.field) && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: debugThumbSize + 10 }}>
+          {licDebugUrls.noise && (
+            <div style={{ textAlign: 'center', fontSize: 12, color: '#444' }}>
+              <div>LIC Input Noise</div>
+              <img src={licDebugUrls.noise} alt="LIC noise texture" style={{ width: debugThumbSize, height: debugThumbSize, objectFit: 'contain', border: '1px solid #e5e7eb', borderRadius: 6 }} />
+            </div>
+          )}
+          {licDebugUrls.field && (
+            <div style={{ textAlign: 'center', fontSize: 12, color: '#444' }}>
+              <div>Vector Field (LIC)</div>
+              <img src={licDebugUrls.field} alt="LIC vector field" style={{ width: debugThumbSize, height: debugThumbSize, objectFit: 'contain', border: '1px solid #e5e7eb', borderRadius: 6 }} />
+            </div>
+          )}
+        </div>
+      )}
+      <canvas
+        ref={canvasRef}
+        width={canvasWidth}
+        height={canvasHeight}
+        style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px`, border: '1px solid #ddd' }}
+      />
+    </div>
   )
 }
