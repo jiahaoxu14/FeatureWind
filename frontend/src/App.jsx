@@ -20,7 +20,7 @@ export default function App() {
   const [selectedFeatures, setSelectedFeatures] = useState([])
   // Higher grid resolution to sharpen LIC / vector field visualization
   const gridRes = 300
-  const maskBufferFactor = 10.0
+  const maskBufferFactor = 15.0
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   // Grid selection disabled for this view
@@ -217,7 +217,7 @@ export default function App() {
               pointGradientColor="#f97316"
               colorCells={false}
               showLIC={showLic}
-              useMask={false}
+              useMask={true}
               featureIndices={selectedFeatures}
               onCanvasElement={(el) => { windMapCanvasRef.current = el }}
             />
