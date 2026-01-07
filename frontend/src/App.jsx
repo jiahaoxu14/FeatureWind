@@ -4,7 +4,6 @@ import { uploadFile, compute, recolor } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
 import WindVane from './components/WindVane.jsx'
 import ColorLegend from './components/ColorLegend.jsx'
-import PointSeries from './components/PointSeries.jsx'
 
 export default function App() {
   const fileInputRef = useRef(null)
@@ -42,9 +41,6 @@ export default function App() {
   const [autoRespawnEnabled, setAutoRespawnEnabled] = useState(false)
   const [assessAllCells, setAssessAllCells] = useState(false)
   const [brushRadius, setBrushRadius] = useState(1)
-  const [selectPointsMode, setSelectPointsMode] = useState(false)
-  const [selectedPointIndices, setSelectedPointIndices] = useState([])
-  const [seriesFeatureIndices, setSeriesFeatureIndices] = useState([])
   // Manual feature selection (overrides Top-K when enabled)
   const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
   const [useManualFeatures, setUseManualFeatures] = useState(false)
@@ -373,28 +369,6 @@ export default function App() {
                 allowGridSelection={restrictSpawnToSelection}
                 restrictSpawnToSelection={restrictSpawnToSelection}
                 autoRespawnRate={autoRespawnEnabled ? 0.3 : 0.0}
-                selectPointsMode={selectPointsMode}
-                selectedPointIndices={selectedPointIndices}
-                onSelectPoint={({ idx, append }) => {
-                  setSelectedPointIndices((prev) => {
-                    const exists = prev.includes(idx)
-                    if (append) {
-                      // Toggle in multi-select mode
-                      return exists ? prev.filter((i) => i !== idx) : [...prev, idx]
-                    }
-                    // Single-click: select this point, unless already selected → then unselect it
-                    return exists ? prev.filter((i) => i !== idx) : [idx]
-                  })
-                }}
-                onBrushPoints={({ indices }) => {
-                  if (!Array.isArray(indices) || !indices.length) return
-                  setSelectedPointIndices((prev) => {
-                    const setPrev = new Set(prev)
-                    const out = prev.slice()
-                    for (const i of indices) { if (!setPrev.has(i)) { setPrev.add(i); out.push(i) } }
-                    return out
-                  })
-                }}
                 trailLineWidth={trailLineWidth}
                 onCanvasElement={(el) => { windMapCanvasRef.current = el }}
               />
@@ -475,30 +449,6 @@ export default function App() {
               />
             ) : (
               <div className="hint">Upload a dataset to see colors</div>
-            )}
-          </div>
-
-          {/* Point Series */}
-          <div className="panel padded">
-            <p className="panel-title">Point Series</p>
-            <div className="row" style={{ alignItems: 'center', marginBottom: 8, gap: 10 }}>
-              <label style={{ color: 'var(--muted)', fontSize: 13 }}>Select Points Mode</label>
-              <input type="checkbox" checked={selectPointsMode} onChange={(e) => setSelectPointsMode(e.target.checked)} />
-              <button className="btn" onClick={() => setSelectedPointIndices([])}>Clear Points</button>
-            </div>
-            {payload ? (
-              <PointSeries
-                indices={selectedPointIndices}
-                featureValues={payload.feature_values || []}
-                featureIndices={seriesFeatureIndices}
-                onChangeFeatureIndices={setSeriesFeatureIndices}
-                colLabels={payload.col_labels || []}
-                colors={payload.colors || []}
-                width={600}
-                height={220}
-              />
-            ) : (
-              <div className="hint">Upload a dataset to view series</div>
             )}
           </div>
 
