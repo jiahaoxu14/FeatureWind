@@ -48,6 +48,7 @@ export default function CanvasWind({
   showGrid = true,
   showParticles = true,
   showPointGradients = false,
+  showPointAggregatedGradients = false,
   showCellGradients = false,
   showCellAggregatedGradients = false,
   showParticleInits = false,
@@ -77,6 +78,7 @@ export default function CanvasWind({
   const lastBrushRef = useRef({ i: -1, j: -1 })
   const showParticlesRef = useRef(!!showParticles)
   const showPointGradientsRef = useRef(!!showPointGradients)
+  const showPointAggregatedGradientsRef = useRef(!!showPointAggregatedGradients)
   const showCellGradientsRef = useRef(!!showCellGradients)
   const showCellAggregatedGradientsRef = useRef(!!showCellAggregatedGradients)
   const showParticleInitsRef = useRef(!!showParticleInits)
@@ -104,6 +106,7 @@ export default function CanvasWind({
   useEffect(() => { brushCbRef.current = onBrushCell }, [onBrushCell])
   useEffect(() => { showParticlesRef.current = !!showParticles }, [showParticles])
   useEffect(() => { showPointGradientsRef.current = !!showPointGradients }, [showPointGradients])
+  useEffect(() => { showPointAggregatedGradientsRef.current = !!showPointAggregatedGradients }, [showPointAggregatedGradients])
   useEffect(() => { showCellGradientsRef.current = !!showCellGradients }, [showCellGradients])
   useEffect(() => { showCellAggregatedGradientsRef.current = !!showCellAggregatedGradients }, [showCellAggregatedGradients])
   useEffect(() => { showParticleInitsRef.current = !!showParticleInits }, [showParticleInits])
@@ -656,6 +659,54 @@ export default function CanvasWind({
       }
       }
 
+      // Optional: aggregated gradients attached to each point (sum over selected features)
+      if (showPointAggregatedGradientsRef.current && positions && uSum && vSum) {
+        const p99 = magInfo?.p99 || 1.0
+        const sxScale = Wpx / (xmax - xmin)
+        const syScale = Hpx / (ymax - ymin)
+        const headLen = Math.max(6, Math.min(12, Math.floor(Math.min(Wpx, Hpx) * 0.015)))
+        const baseLen = Math.max(10, Math.min(40, Math.min(Wpx, Hpx) * 0.05))
+        const phi = Math.PI / 7
+        ctx.lineWidth = 1.0
+        ctx.strokeStyle = '#111111'
+        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
+          const [wx, wy] = positions[pIdx]
+          const [sx, sy] = worldToScreen(wx, wy)
+          const [gx, gy] = worldToGrid(wx, wy)
+          const ux = bilinearSample(uSum, gx, gy)
+          const vy = bilinearSample(vSum, gx, gy)
+          const m = Math.hypot(ux, vy)
+          if (m <= 1e-12) continue
+          const aField = Math.max(0, Math.min(1, m / p99))
+          const ddx = ux * sxScale
+          const ddy = -vy * syScale
+          const dnorm = Math.hypot(ddx, ddy)
+          if (!Number.isFinite(dnorm) || dnorm <= 0) continue
+          const dirx = ddx / dnorm
+          const diry = ddy / dnorm
+          const len = Math.max(0, Math.min(1, aField)) * baseLen
+          const ex = sx + dirx * len
+          const ey = sy + diry * len
+          ctx.globalAlpha = 0.9
+          ctx.beginPath()
+          ctx.moveTo(sx, sy)
+          ctx.lineTo(ex, ey)
+          ctx.stroke()
+          const ang = Math.atan2(ey - sy, ex - sx)
+          const hx1 = ex - headLen * Math.cos(ang - phi)
+          const hy1 = ey - headLen * Math.sin(ang - phi)
+          const hx2 = ex - headLen * Math.cos(ang + phi)
+          const hy2 = ey - headLen * Math.sin(ang + phi)
+          ctx.beginPath()
+          ctx.moveTo(ex, ey)
+          ctx.lineTo(hx1, hy1)
+          ctx.moveTo(ex, ey)
+          ctx.lineTo(hx2, hy2)
+          ctx.stroke()
+          ctx.globalAlpha = 1.0
+        }
+      }
+
       // Optional: per-feature gradients attached to each point
       if (showPointGradientsRef.current && positions) {
         // Use manually checked features when provided; otherwise fall back to current selection indices
@@ -1188,6 +1239,7 @@ export default function CanvasWind({
     showCellAggregatedGradients,
     showCellGradients,
     showPointGradients,
+    showPointAggregatedGradients,
   ])
 
   const canvasWidth = (typeof width === 'number' && width > 0) ? width : size

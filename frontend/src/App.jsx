@@ -32,6 +32,7 @@ export default function App() {
   const [hideParticles, setHideParticles] = useState(false)
   const [pointColorFeature, setPointColorFeature] = useState('') // '' or feature index string
   const [showPointGradients, setShowPointGradients] = useState(false)
+  const [showPointAggGradients, setShowPointAggGradients] = useState(false)
   const [showCellGradients, setShowCellGradients] = useState(false)
   const [showCellAggGradients, setShowCellAggGradients] = useState(false)
   const [showParticleInits, setShowParticleInits] = useState(false)
@@ -358,6 +359,7 @@ export default function App() {
                 showParticles={!hideParticles}
                 pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
                 showPointGradients={showPointGradients}
+                showPointAggregatedGradients={showPointAggGradients}
                 showCellGradients={showCellGradients}
                 showCellAggregatedGradients={showCellAggGradients}
                 showParticleInits={showParticleInits}
@@ -507,6 +509,9 @@ export default function App() {
 
             <label>Show Point Gradients</label>
             <input type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} />
+
+            <label>Show Aggregated Point Gradients</label>
+            <input type="checkbox" checked={showPointAggGradients} onChange={(e) => setShowPointAggGradients(e.target.checked)} />
 
             <label>Show Cell Gradients</label>
             <input type="checkbox" checked={showCellGradients} onChange={(e) => setShowCellGradients(e.target.checked)} />
