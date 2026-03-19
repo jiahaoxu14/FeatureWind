@@ -6,32 +6,30 @@ from .tsne import tsne
 from .mds_torch import mds, distance_matrix_HD_tensor
 import torch
 
-
-def get_best_device():
-    """Choose the best available torch device for projections."""
-    if torch.cuda.is_available():
-        return torch.device('cuda')
-    if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        return torch.device('mps')
-    return torch.device('cpu')
-
-
-def set_random_seed(seed=None):
-    """Set deterministic seeds for repeatable projection reruns."""
-    if seed is None:
-        return
-    seed = int(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
 class ProjectionRunner:
     def __init__(self, projection, params=None):
         self.params = params
         self.projection = projection
         self.firstRun = False
 
-    def _compute_projection(self, data):
+    def calculateValues(self, points, perturbations=None):
+        self.points = points
+        # self.origPoints = points
+
+        # Choose best available device (CUDA > MPS > CPU)
+        if torch.cuda.is_available():
+            device = torch.device('cuda')
+            print("Using device: CUDA")
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            device = torch.device('mps')
+            print("Using device: MPS")
+        else:
+            device = torch.device('cpu')
+            print("Using device: CPU")
+
+        # Convert data to PyTorch tensor on selected device with requires_grad=True
+        data = torch.tensor(points, dtype=torch.float32, device=device, requires_grad=True)
+
         # Usage for DimReader:
         if self.projection == tsne or (isinstance(self.projection, str) and self.projection.lower() == 'tsne'):
             # Optional perplexity override via self.params (supports 'perplexity=NN', 'perp=NN', or a lone number)
@@ -45,6 +43,7 @@ class ProjectionRunner:
                             if k.strip().lower() in ('perplexity', 'perp'):
                                 perp_override = float(v)
                         else:
+                            # no key, treat as numeric perplexity if possible
                             try:
                                 perp_override = float(s)
                             except Exception:
@@ -57,61 +56,21 @@ class ProjectionRunner:
 
             print("Step 1/3: Computing base t-SNE projection (1000 iterations)...")
             with torch.no_grad():
-                _, params = tsne(data, 2, 1000, 10, perp_base, save_params=True)
+                Y_base, params = tsne(data, 2, 1000, 10, perp_base, save_params = True)
             print("Step 2/3: Computing projection with gradients (1 iteration)...")
-            Y, _ = tsne(
-                data,
-                no_dims=2,
-                maxIter=1,
-                initial_dims=10,
-                perplexity=perp_grad,
-                save_params=False,
-                initY=params[0],
-                initBeta=params[2],
-                betaTries=50,
-                initIY=params[1],
-            )
-            return Y
-
-        if self.projection == mds or (isinstance(self.projection, str) and self.projection.lower() == 'mds'):
+            Y, params = tsne(data, no_dims=2, maxIter = 1, initial_dims=10, perplexity=perp_grad, save_params = False,
+                                initY = params[0], initBeta = params[2], betaTries = 50, initIY =params[1])
+        elif self.projection == mds or (isinstance(self.projection, str) and self.projection.lower() == 'mds'):
             print("Step 1/3: Computing base MDS projection (999 iterations)...")
             with torch.no_grad():
                 dist_hd = distance_matrix_HD_tensor(data)
-                _ = mds(dist_hd, n_components=2, max_iter=999)
+                Y_base = mds(dist_hd, n_components=2, max_iter=999)
             print("Step 2/3: Computing projection with gradients (1 iteration)...")
             # Recompute with graph enabled so autograd can backprop to input coordinates
             dist_hd = distance_matrix_HD_tensor(data)
-            return mds(dist_hd, n_components=2, max_iter=1)
-
-        raise ValueError("Unsupported projection method. Use 'tsne' or 'mds'.")
-
-    def project_only(self, points, seed=None):
-        """Compute projected positions without extracting Jacobians."""
-        self.points = points
-        if seed is not None:
-            set_random_seed(seed)
-
-        device = get_best_device()
-        print(f"Using device: {str(device).upper()}")
-        data = torch.tensor(points, dtype=torch.float32, device=device, requires_grad=True)
-        Y = self._compute_projection(data)
-        self.outPoints = Y
-        try:
-            return Y.detach().cpu().numpy()
-        except Exception:
-            return Y
-
-    def calculateValues(self, points, perturbations=None):
-        self.points = points
-        # self.origPoints = points
-
-        # Choose best available device (CUDA > MPS > CPU)
-        device = get_best_device()
-        print(f"Using device: {str(device).upper()}")
-
-        # Convert data to PyTorch tensor on selected device with requires_grad=True
-        data = torch.tensor(points, dtype=torch.float32, device=device, requires_grad=True)
-        Y = self._compute_projection(data)
+            Y = mds(dist_hd, n_components=2, max_iter=1)
+        else:
+            raise ValueError("Unsupported projection method. Use 'tsne' or 'mds'.")
         
         # Compute gradients and full Jacobian matrix
         self.outPoints = Y
@@ -209,9 +168,3 @@ def readFile(filename):
                 exit(0)
         points.append(rowDat)
     return points
-
-
-def project_points(points, projection, params=None, seed=None):
-    """Convenience wrapper for projection reruns without Jacobians."""
-    runner = ProjectionRunner(projection, params=params)
-    return runner.project_only(points, seed=seed)

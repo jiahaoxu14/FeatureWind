@@ -94,6 +94,7 @@ def calcTangentMap(points, projection, params):
     pj.calculateValues(points)  # Initial run to get base projection
     base_proj = pj.outPoints  # Base projection points
     outPerts = pj.grads
+    print(outPerts.shape)
 
     # Compute tangent map 
     pj.firstRun == False
@@ -107,6 +108,7 @@ def calcTangentMap(points, projection, params):
             tMap[j]["tangent"][0][i] = float(outPerts[j][0][i]) # derivative of x-coordinate
             tMap[j]["tangent"][1][i] = float(outPerts[j][1][i])  # derivative of y-coordinate
 
+        print("tmap", tMap[i])
         print("Progress: ", int(((i + 1) / m) * 10000) / 100.0, "%")
 
     return tMap

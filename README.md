@@ -4,10 +4,10 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
 
 ## Monorepo Layout
 
-- `backend/` — Python core, scripts, datasets, docs, and Flask API.
+- `backend/` — Python core, CLIs, datasets, docs, and Flask API.
   - `src/featurewind/` core library
-  - `src/` scripts (`createwind.py`, `generate_tangent_map.py`)
-  - `app.py` + `routes.py` Flask service
+  - `cli/` CLIs (`createwind.py`, `generate_tangent_map.py`)
+  - `api/` Flask service
   - `datasets/` sample CSVs and `.tmap` files
   - `var/` run artifacts (outputs/uploads; gitignored)
 - `frontend/` — React UI.
@@ -30,8 +30,8 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
   ```bash
   # From repo root
   cd backend
-  PYTHONPATH=src python src/generate_tangent_map.py datasets/examples/iris/iris.csv tsne iris_tsne
-  PYTHONPATH=src python src/generate_tangent_map.py datasets/examples/iris/iris.csv mds iris_mds
+  PYTHONPATH=src python cli/generate_tangent_map.py datasets/examples/iris/iris.csv tsne iris_tsne
+  PYTHONPATH=src python cli/generate_tangent_map.py datasets/examples/iris/iris.csv mds  iris_mds
   ```
 
   This writes a .tmap JSON alongside the input CSV (or to the provided output name).
@@ -39,18 +39,18 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
 - Visualize in the Feature Wind Map UI (from `backend/`):
 
   ```bash
-  PYTHONPATH=src python src/createwind.py --tangent-map datasets/examples/iris/iris_tsne.tmap --top-k 5
+  PYTHONPATH=src python cli/createwind.py --tangent-map datasets/examples/iris/iris_tsne.tmap --top-k 5
   # or a single feature by name (substring match)
-  PYTHONPATH=src python src/createwind.py --tangent-map datasets/examples/iris/iris_tsne.tmap --feature "sepal"
+  PYTHONPATH=src python cli/createwind.py --tangent-map datasets/examples/iris/iris_tsne.tmap --feature "sepal"
   # list all feature names in the .tmap
-  PYTHONPATH=src python src/createwind.py --tangent-map datasets/examples/iris/iris_tsne.tmap --list-features
+  PYTHONPATH=src python cli/createwind.py --tangent-map datasets/examples/iris/iris_tsne.tmap --list-features
   ```
 
 
 ## Data → Tangent Map
 
-- Script: `backend/src/generate_tangent_map.py`
-  - Usage (from `backend/`): `PYTHONPATH=src python src/generate_tangent_map.py <dataset.csv> <tsne|mds> [output_name]`
+- Script: `backend/cli/generate_tangent_map.py`
+  - Usage (from `backend/`): `PYTHONPATH=src python cli/generate_tangent_map.py <dataset.csv> <tsne|mds> [output_name]`
   - The CSV can include a label column (e.g., `label`, `class`, `target`, or any last non‑numeric column). The generator:
     1) extracts labels,
     2) runs DR only on feature columns to 2D with gradients via PyTorch autograd,
@@ -70,7 +70,7 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
 
 ## Visualization (Wind Map + Wind Vane)
 
-- Entry: `src/createwind.py` (run from `backend/` with `PYTHONPATH=src`)
+- Entry: `cli/createwind.py` (run from `backend/` with `PYTHONPATH=src`)
   - `--top-k N | all` to show the N strongest features (by mean gradient magnitude) or all.
   - `--feature NAME` to show a single feature (substring match).
   - `--name-filter REGEX` to filter the feature set before selection (e.g., `'3$'` to keep columns ending with 3).
@@ -83,10 +83,10 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
   - Generate + visualize:
     ```bash
     cd backend
-    PYTHONPATH=src python src/generate_tangent_map.py datasets/examples/breast_cancer/breast_cancer_wdbc.csv tsne breast_tsne
-    PYTHONPATH=src python src/createwind.py --tangent-map datasets/examples/breast_cancer/breast_tsne.tmap --top-k all
+    PYTHONPATH=src python cli/generate_tangent_map.py datasets/examples/breast_cancer/breast_cancer_wdbc.csv tsne breast_tsne
+    PYTHONPATH=src python cli/createwind.py --tangent-map datasets/examples/breast_cancer/breast_tsne.tmap --top-k all
     # or select features ending with "3"
-    PYTHONPATH=src python src/createwind.py --tangent-map datasets/examples/breast_cancer/breast_tsne.tmap --name-filter '3$' --top-k all
+    PYTHONPATH=src python cli/createwind.py --tangent-map datasets/examples/breast_cancer/breast_tsne.tmap --name-filter '3$' --top-k all
     ```
 
 
@@ -102,8 +102,8 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
 
 ## Project Structure (selected)
 
-- `backend/src/generate_tangent_map.py` — Canonical CLI to create `.tmap` files from CSVs.
-- `backend/src/createwind.py` — Main visualization entry point (Wind Map + Wind Vane).
+- `backend/cli/generate_tangent_map.py` — CLI to create `.tmap` files from CSVs.
+- `backend/cli/createwind.py` — Main visualization entry point (Wind Map + Wind Vane).
 - `backend/src/featurewind/core/`
   - `tangent_map.py` — Computes tangent maps from points using DimReader.
   - `dim_reader.py` — Runs differentiable DR (t‑SNE/MDS), collects Jacobians.

@@ -1,120 +1,54 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import './styles.css'
-import {
-  uploadFile,
-  uploadTmapJson,
-  compute,
-  recolor,
-  validateAnalysis,
-  downloadJsonFile,
-} from './services/api'
+import { uploadFile, compute, recolor } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
 import WindVane from './components/WindVane.jsx'
 import ColorLegend from './components/ColorLegend.jsx'
 
-function sanitizeFileStem(name) {
-  return String(name || 'featurewind')
-    .replace(/\.[^/.]+$/, '')
-    .replace(/[^a-zA-Z0-9_-]+/g, '_')
-    .replace(/^_+|_+$/g, '') || 'featurewind'
-}
-
-function formatNumber(value, digits = 3) {
-  const num = Number(value)
-  return Number.isFinite(num) ? num.toFixed(digits) : '-'
-}
-
-function validationModeLabel(mode) {
-  switch (mode) {
-    case 'exact-tsne-rerun':
-      return 'Exact t-SNE rerun'
-    case 'projection-not-yet-supported':
-      return 'Unsupported projection'
-    case 'domain-values-missing':
-      return 'Domain values missing'
-    case 'projection-metadata-missing':
-    default:
-      return 'Not available in this file'
-  }
-}
-
-function colorWithAlpha(hex, alpha) {
-  if (!hex || typeof hex !== 'string') return `rgba(37,99,235,${alpha})`
-  const raw = hex.replace('#', '')
-  const normalized = raw.length === 3 ? raw.split('').map((c) => c + c).join('') : raw
-  if (normalized.length !== 6) return `rgba(37,99,235,${alpha})`
-  const r = parseInt(normalized.slice(0, 2), 16)
-  const g = parseInt(normalized.slice(2, 4), 16)
-  const b = parseInt(normalized.slice(4, 6), 16)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
-
-async function readJsonFile(file) {
-  const text = await file.text()
-  return JSON.parse(text)
-}
-
 export default function App() {
   const fileInputRef = useRef(null)
-  const sessionInputRef = useRef(null)
-  const windMapCanvasRef = useRef(null)
-  const windVaneCanvasRef = useRef(null)
-  const canvasViewportRef = useRef(null)
-  const skipValidationResetRef = useRef(false)
-
+  const [file, setFile] = useState(null)
   const [dataset, setDataset] = useState(null)
+  const [topK, setTopK] = useState(0)
+  const [gridRes, setGridRes] = useState(25)
   const [payload, setPayload] = useState(null)
-  const [uploadedTmapData, setUploadedTmapData] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-
-  const [mode, setMode] = useState('analyze')
-  const [selectionMode, setSelectionMode] = useState('point')
-  const [selectedPointIndices, setSelectedPointIndices] = useState([])
-  const [selectedFeatureIndex, setSelectedFeatureIndex] = useState(null)
-  const [featureDelta, setFeatureDelta] = useState(0.1)
-
-  const [gridRes, setGridRes] = useState(25)
-  const [maskBufferFactor, setMaskBufferFactor] = useState(0.2)
-  const [showGrid, setShowGrid] = useState(false)
-  const [pointColorFeature, setPointColorFeature] = useState('')
-  const [showPredictedTrail, setShowPredictedTrail] = useState(false)
-  const [showSelectionVectors, setShowSelectionVectors] = useState(false)
-  const [showParticlesPreview, setShowParticlesPreview] = useState(false)
-  const [showWindVane, setShowWindVane] = useState(false)
-  const [showFeatureFamilies, setShowFeatureFamilies] = useState(false)
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [featureSearch, setFeatureSearch] = useState('')
   const [hoverPos, setHoverPos] = useState(null)
+  const [selectedCells, setSelectedCells] = useState([]) // array of {i,j}
+  // Interactive config (frontend + backend overrides)
+  const [showGrid, setShowGrid] = useState(true)
+  const [particleCount, setParticleCount] = useState(1000)
+  const [speedScale, setSpeedScale] = useState(1.0)
+  const [tailLength, setTailLength] = useState(10)
+  const [trailTailMin, setTrailTailMin] = useState(0.10)
+  const [trailTailExp, setTrailTailExp] = useState(2.0)
+  const [trailLineWidth, setTrailLineWidth] = useState(2.0)
+  const [maxLifetime, setMaxLifetime] = useState(200)
+  const [maskBufferFactor, setMaskBufferFactor] = useState(0.2)
+  const [showHull, setShowHull] = useState(false)
+  const [showVectorLabels, setShowVectorLabels] = useState(false)
+  const [showAllVectors, setShowAllVectors] = useState(false)
+  const [hideParticles, setHideParticles] = useState(false)
+  const [pointColorFeature, setPointColorFeature] = useState('') // '' or feature index string
+  const [showPointGradients, setShowPointGradients] = useState(false)
+  const [showPointAggGradients, setShowPointAggGradients] = useState(false)
+  const [showCellGradients, setShowCellGradients] = useState(false)
+  const [showCellAggGradients, setShowCellAggGradients] = useState(false)
+  const [showParticleInits, setShowParticleInits] = useState(false)
+  const [uniformPointShape, setUniformPointShape] = useState(false)
+  const [showParticleArrowheads, setShowParticleArrowheads] = useState(false)
+  const [restrictSpawnToSelection, setRestrictSpawnToSelection] = useState(false)
+  const [autoRespawnEnabled, setAutoRespawnEnabled] = useState(false)
+  const [assessAllCells, setAssessAllCells] = useState(false)
+  const [brushRadius, setBrushRadius] = useState(1)
+  // Manual feature selection (overrides Top-K when enabled)
+  const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
+  const [useManualFeatures, setUseManualFeatures] = useState(false)
 
-  const [validationBusy, setValidationBusy] = useState(false)
-  const [validationResult, setValidationResult] = useState(null)
-
-  const selectedPointKey = useMemo(() => selectedPointIndices.join(','), [selectedPointIndices])
-
-  function resetForNewDataset() {
-    setDataset(null)
-    setPayload(null)
-    setUploadedTmapData(null)
-    setSelectedPointIndices([])
-    setSelectionMode('point')
-    setSelectedFeatureIndex(null)
-    setFeatureDelta(0.1)
-    setGridRes(25)
-    setMaskBufferFactor(0.2)
-    setShowGrid(false)
-    setPointColorFeature('')
-    setShowPredictedTrail(false)
-    setShowSelectionVectors(false)
-    setShowParticlesPreview(false)
-    setShowWindVane(false)
-    setShowFeatureFamilies(false)
-    setShowAdvanced(false)
-    setFeatureSearch('')
-    setHoverPos(null)
-    setValidationResult(null)
-    setMode('analyze')
-  }
+  // Refs to canvases for exporting PNGs
+  const windMapCanvasRef = useRef(null)
+  const windVaneCanvasRef = useRef(null)
 
   function saveCanvasAsPng(canvas, filename) {
     try {
@@ -126,906 +60,544 @@ export default function App() {
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
-    } catch {
-      // ignore download errors in the browser
-    }
+    } catch (e) { /* ignore */ }
   }
 
-  function applySessionState(state) {
-    const next = state || {}
-    setMode(next.mode === 'validate' ? 'validate' : 'analyze')
-    setSelectionMode(next.selectionMode === 'region' ? 'region' : 'point')
-    setSelectedPointIndices(Array.isArray(next.selectedPointIndices) ? next.selectedPointIndices.map((idx) => Number(idx)).filter(Number.isFinite) : [])
-    setSelectedFeatureIndex(Number.isInteger(next.selectedFeatureIndex) ? next.selectedFeatureIndex : null)
-    setFeatureDelta(Number.isFinite(Number(next.featureDelta)) ? Number(next.featureDelta) : 0.1)
-    setGridRes(Number.isFinite(Number(next.gridRes)) ? Number(next.gridRes) : 25)
-    setMaskBufferFactor(Number.isFinite(Number(next.maskBufferFactor)) ? Number(next.maskBufferFactor) : 0.2)
-    setShowGrid(Boolean(next.showGrid))
-    setShowPredictedTrail(Boolean(next.showPredictedTrail))
-    setShowSelectionVectors(Boolean(next.showSelectionVectors))
-    setShowParticlesPreview(Boolean(next.showParticlesPreview))
-    setShowWindVane(Boolean(next.showWindVane))
-    setShowFeatureFamilies(Boolean(next.showFeatureFamilies))
-    setShowAdvanced(Boolean(next.showAdvanced))
-    setPointColorFeature(
-      Number.isInteger(next.pointColorFeatureIndex) ? String(next.pointColorFeatureIndex) : ''
-    )
-  }
+  // Controls update live; no separate "Apply/Update" states
 
-  async function restoreSession(sessionPayload) {
-    try {
-      setBusy(true)
-      setError('')
-      skipValidationResetRef.current = true
-      resetForNewDataset()
-      applySessionState(sessionPayload?.state || {})
-
-      if (sessionPayload?.embeddedTmap) {
-        setUploadedTmapData(sessionPayload.embeddedTmap)
-        const res = await uploadTmapJson(
-          sessionPayload.embeddedTmap,
-          sessionPayload?.dataset?.sourceName || 'restored-session.tmap',
-        )
-        setDataset(res)
-      } else {
-        throw new Error('Session file is missing embedded tangent-map data.')
-      }
-
-      if (sessionPayload?.state?.validationResult) {
-        setValidationResult(sessionPayload.state.validationResult)
-      }
-    } catch (e) {
-      setError(e.message)
-      skipValidationResetRef.current = false
-    } finally {
-      setBusy(false)
-    }
-  }
+  // Clamp manual feature selection when payload changes (e.g., new dataset)
+  useEffect(() => {
+    const n = (payload?.col_labels?.length) || 0
+    if (!n) { setSelectedFeatureIndices([]); return }
+    setSelectedFeatureIndices((prev) => prev.filter((i) => i >= 0 && i < n))
+    setUseManualFeatures(false)
+  }, [payload?.col_labels])
 
   async function handleUpload(selected) {
-    const file = selected
-    if (!file) return
+    const f = selected || file
+    if (!f) return
     setError('')
-    setBusy(true)
     try {
-      const parsed = await readJsonFile(file).catch(() => null)
-      if (parsed?.sessionType === 'featurewind-analysis-session') {
-        await restoreSession(parsed)
+      // Only accept .tmap or .json uploads
+      const lower = (f.name || '').toLowerCase()
+      if (!(lower.endsWith('.tmap') || lower.endsWith('.json'))) {
+        setError('Please upload a .tmap (or JSON with tmap structure).')
         return
       }
-
-      resetForNewDataset()
-      setUploadedTmapData(parsed && Array.isArray(parsed.tmap) ? parsed : null)
-      const res = await uploadFile(file)
+      const res = await uploadFile(f)
+      // Default Top-K to all features in the dataset
+      const m = Array.isArray(res.col_labels) ? res.col_labels.length : 0
+      if (m > 0) { setTopK(m) }
       setDataset(res)
     } catch (e) {
       setError(e.message)
+    }
+  }
+
+  async function handleCompute(forDatasetId) {
+    const dsId = forDatasetId || (dataset && dataset.datasetId)
+    if (!dsId) return
+    setBusy(true)
+    setError('')
+    try {
+      const res = await compute({
+        dataset_id: dsId,
+        topK: Number(topK),
+        gridRes: Number(gridRes),
+        config: { maskBufferFactor: Number(maskBufferFactor) }
+      })
+      setPayload(res)
+    } catch (e) {
+      setError(e.message)
     } finally {
       setBusy(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
-  async function handleLoadSession(selected) {
-    const file = selected
-    if (!file) return
-    setError('')
-    try {
-      const parsed = await readJsonFile(file)
-      if (parsed?.sessionType !== 'featurewind-analysis-session') {
-        throw new Error('Please choose a FeatureWind session JSON file.')
-      }
-      await restoreSession(parsed)
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      if (sessionInputRef.current) sessionInputRef.current.value = ''
-    }
-  }
-
+  // Auto compute whenever dataset or server-affecting options change
   useEffect(() => {
-    if (!dataset?.datasetId) return undefined
+    const dsId = dataset && dataset.datasetId
+    if (!dsId) return
+    const t = setTimeout(() => {
+      handleCompute(dsId)
+    }, 200)
+    return () => clearTimeout(t)
+  // Only recompute when applied values change or dataset changes
+  }, [dataset?.datasetId, topK, gridRes, maskBufferFactor])
 
-    let cancelled = false
-    const timer = window.setTimeout(async () => {
-      setBusy(true)
-      setError('')
-      try {
-        const result = await compute({
-          dataset_id: dataset.datasetId,
-          gridRes: Number(gridRes),
-          featureIndex: Number.isInteger(selectedFeatureIndex) ? selectedFeatureIndex : undefined,
-          includeRawGradients: true,
-          config: {
-            maskBufferFactor: Number(maskBufferFactor),
-          },
-        })
-        if (!cancelled) setPayload(result)
-      } catch (e) {
-        if (!cancelled) setError(e.message)
-      } finally {
-        if (!cancelled) setBusy(false)
-      }
-    }, 180)
-
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [dataset?.datasetId, gridRes, maskBufferFactor, selectedFeatureIndex])
-
-  useEffect(() => {
-    if (!payload?.positions?.length) {
-      setSelectedPointIndices([])
-      return
-    }
-    setSelectedPointIndices((prev) => prev.filter((idx) => idx >= 0 && idx < payload.positions.length))
-  }, [payload?.positions?.length])
-
-  useEffect(() => {
-    if (!payload?.col_labels?.length) {
-      setSelectedFeatureIndex(null)
-      return
-    }
-    if (selectedFeatureIndex != null && selectedFeatureIndex >= 0 && selectedFeatureIndex < payload.col_labels.length) {
-      return
-    }
-    const fallback = payload?.feature_stats?.globalRanking?.[0]
-    if (Number.isInteger(fallback)) setSelectedFeatureIndex(fallback)
-  }, [payload?.col_labels?.length, payload?.feature_stats, selectedFeatureIndex])
-
-  useEffect(() => {
-    if (!payload?.col_labels?.length) {
-      setPointColorFeature('')
-      return
-    }
-    if (pointColorFeature === '') return
-    const idx = Number(pointColorFeature)
-    if (!Number.isInteger(idx) || idx < 0 || idx >= payload.col_labels.length) {
-      setPointColorFeature('')
-    }
-  }, [payload?.col_labels?.length, pointColorFeature])
-
-  useEffect(() => {
-    if (skipValidationResetRef.current) {
-      skipValidationResetRef.current = false
-      return
-    }
-    setValidationResult(null)
-  }, [dataset?.datasetId, selectedFeatureIndex, featureDelta, selectedPointKey])
-
-  function handleSelectPoint({ idx, append }) {
-    if (!Number.isInteger(idx)) return
-    setSelectedPointIndices((prev) => {
-      if (!append) return [idx]
-      if (prev.includes(idx)) return prev
-      return [...prev, idx].sort((a, b) => a - b)
+  // Selection handlers
+  function toggleCell(i, j) {
+    setSelectedCells((prev) => {
+      const exists = prev.some((c) => c.i === i && c.j === j)
+      if (exists) return prev.filter((c) => !(c.i === i && c.j === j))
+      return [...prev, { i, j }]
     })
-    setSelectionMode(append ? 'region' : 'point')
   }
+  function setSingleCell(i, j) {
+    setSelectedCells([{ i, j }])
+  }
+  function clearSelection() { setSelectedCells([]) }
 
-  function handleBrushPoints({ indices }) {
-    if (!Array.isArray(indices) || indices.length === 0) return
-    setSelectedPointIndices((prev) => {
-      const next = new Set(prev)
+  // Keyboard: 'c' clears selection
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'c' || e.key === 'C') clearSelection() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Derive focus for Wind Vane: center of last selected cell, else hover, else center
+  const vaneFocus = (() => {
+    const bbox = payload?.bbox || [0,1,0,1]
+    const [xmin,xmax,ymin,ymax] = bbox
+    const H = payload?.grid_res || 25
+    const W = H
+    if (selectedCells && selectedCells.length > 0) {
+      const { i, j } = selectedCells[selectedCells.length - 1]
+      const x = xmin + (j + 0.5) * (xmax - xmin) / W
+      const y = ymin + (i + 0.5) * (ymax - ymin) / H
+      return { x, y }
+    }
+    return hoverPos || null
+  })()
+
+  // Compute average number of active (non-zero) selected features per valid grid cell
+  const avgActiveFeatures = useMemo(() => {
+    try {
+      if (!payload) return null
+      const { uAll = [], vAll = [], grid_res = 25, selection = {}, unmasked = null } = payload
+      const H = grid_res, W = grid_res
+      // Determine feature indices in scope
+      let indices = []
+      if (useManualFeatures) indices = selectedFeatureIndices
+      else if (selection && Array.isArray(selection.topKIndices)) indices = selection.topKIndices
+      else if (selection && typeof selection.featureIndex === 'number') indices = [selection.featureIndex]
+      if (!Array.isArray(indices) || indices.length === 0) return 0
+      let total = 0
+      let cells = 0
+      const eps = 1e-9
+      for (let i = 0; i < H; i++) {
+        for (let j = 0; j < W; j++) {
+          if (Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W) {
+            if (!unmasked[i][j]) continue
+          }
+          cells += 1
+          let cnt = 0
+          for (const fi of indices) {
+            const u = (uAll[fi]?.[i]?.[j] ?? 0)
+            const v = (vAll[fi]?.[i]?.[j] ?? 0)
+            if (u*u + v*v > eps) cnt += 1
+          }
+          total += cnt
+        }
+      }
+      if (cells === 0) return 0
+      return total / cells
+    } catch { return null }
+  }, [payload, selectedFeatureIndices, useManualFeatures])
+
+  // Compute which features are visible in the current Wind Vane view
+  const visibleFeatures = useMemo(() => {
+    const result = new Set()
+    if (!payload) return result
+    const { bbox = [0,1,0,1], grid_res = 25, uAll = [], vAll = [], selection = {}, unmasked = null, dominant = null } = payload
+    const [xmin, xmax, ymin, ymax] = bbox
+    const H = grid_res, W = grid_res
+    // Determine selected features (indices rendered in vane)
+    let indices = []
+    if (useManualFeatures) indices = selectedFeatureIndices
+    else if (selection && Array.isArray(selection.topKIndices)) indices = selection.topKIndices
+    else if (selection && typeof selection.featureIndex === 'number') indices = [selection.featureIndex]
+    if (!indices.length) return result
+    // Selection mode
+    const useSel = selectedCells && selectedCells.length > 0
+    const hasUnmasked = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
+    const hasDominant = Array.isArray(dominant) && dominant.length === H && dominant[0].length === W
+    const eps = 1e-9
+    // Helper: convex hull (monotone chain) returns indices
+    function hullIdx(pts) {
+      if (!pts || pts.length < 3) return pts.map((_, i) => i)
+      const arr = pts.map((p, i) => [p[0], p[1], i]).sort((a,b)=> (a[0]===b[0]? a[1]-b[1] : a[0]-b[0]))
+      const cross = (o,a,b)=> (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
+      const lower=[]; for (const p of arr){ while(lower.length>=2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) lower.pop(); lower.push(p) }
+      const upper=[]; for (let k=arr.length-1;k>=0;k--){ const p=arr[k]; while(upper.length>=2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) upper.pop(); upper.push(p) }
+      const hull = lower.slice(0,-1).concat(upper.slice(0,-1))
+      const seen=new Set(), idxs=[]; for (const h of hull){ if(!seen.has(h[2])){ seen.add(h[2]); idxs.push(h[2]) } }
+      return idxs
+    }
+    if (useSel) {
+      // Filter to valid cells
+      const valid = []
+      if (hasUnmasked) {
+        for (const c of selectedCells) {
+          const ii = Math.max(0, Math.min(H - 1, c.i|0))
+          const jj = Math.max(0, Math.min(W - 1, c.j|0))
+          if (unmasked[ii][jj]) valid.push({ i: ii, j: jj })
+        }
+      } else {
+        for (const c of selectedCells) {
+          const ii = Math.max(0, Math.min(H - 1, c.i|0))
+          const jj = Math.max(0, Math.min(W - 1, c.j|0))
+          valid.push({ i: ii, j: jj })
+        }
+      }
+      if (!valid.length) return result
+      // Build vectors for selected features
+      const vecs = []
+      const feats = []
       for (const idx of indices) {
-        const num = Number(idx)
-        if (Number.isInteger(num)) next.add(num)
+        let u = 0, v = 0
+        for (const c of valid) { u += (uAll[idx]?.[c.i]?.[c.j] ?? 0); v += (vAll[idx]?.[c.i]?.[c.j] ?? 0) }
+        const mag2 = u*u + v*v
+        if (mag2 > eps) { vecs.push([u, v]); feats.push(idx) }
       }
-      return Array.from(next).sort((a, b) => a - b)
-    })
-    setSelectionMode('region')
-  }
-
-  function clearSelection() {
-    setSelectedPointIndices([])
-    setSelectionMode('point')
-  }
-
-  const selectedPoints = useMemo(() => {
-    if (!payload?.positions || !selectedPointIndices.length) return []
-    return selectedPointIndices
-      .map((idx) => {
-        const pos = payload.positions[idx]
-        return Array.isArray(pos) && pos.length === 2 ? { idx, x: Number(pos[0]), y: Number(pos[1]) } : null
-      })
-      .filter(Boolean)
-  }, [payload?.positions, selectedPointKey])
-
-  const selectionCentroid = useMemo(() => {
-    if (!selectedPoints.length) return null
-    const sum = selectedPoints.reduce((acc, point) => {
-      acc.x += point.x
-      acc.y += point.y
-      return acc
-    }, { x: 0, y: 0 })
-    return {
-      x: sum.x / selectedPoints.length,
-      y: sum.y / selectedPoints.length,
+      if (vecs.length === 0) return result
+      if (vecs.length < 3) { feats.forEach(i=>result.add(i)); return result }
+      // Normalize endpoints by max magnitude to mirror vane scaling
+      let maxMag = 0; for (const [u,v] of vecs){ const m=Math.hypot(u,v); if(m>maxMag) maxMag=m }
+      const pts = vecs.map(([u,v]) => [u/(maxMag||1), v/(maxMag||1)])
+      const hidx = hullIdx(pts)
+      for (const hi of hidx) result.add(feats[hi])
+      return result
     }
-  }, [selectedPoints])
-
-  const selectionLabelSummary = useMemo(() => {
-    if (!payload?.point_labels || !selectedPointIndices.length) return 'No labels'
-    const counts = new Map()
-    for (const idx of selectedPointIndices) {
-      const label = String(payload.point_labels[idx])
-      counts.set(label, (counts.get(label) || 0) + 1)
+    // Hover mode: snap to clicked/hovered cell center indices using floor mapping
+    const xCoord = vaneFocus?.x
+    const yCoord = vaneFocus?.y
+    if (typeof xCoord !== 'number' || typeof yCoord !== 'number') return result
+    const cj = Math.max(0, Math.min(W - 1, Math.floor(((xCoord - xmin) / (xmax - xmin)) * W)))
+    const ci = Math.max(0, Math.min(H - 1, Math.floor(((yCoord - ymin) / (ymax - ymin)) * H)))
+    // Masked?
+    if (hasUnmasked && !unmasked[ci][cj]) return result
+    if (hasDominant && dominant[ci][cj] === -1) return result
+    // Build vectors
+    const vecs = []
+    const feats = []
+    for (const idx of indices) {
+      const u = (uAll[idx]?.[ci]?.[cj] ?? 0)
+      const v = (vAll[idx]?.[ci]?.[cj] ?? 0)
+      if ((u*u + v*v) > eps) { vecs.push([u, v]); feats.push(idx) }
     }
-    return Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 4)
-      .map(([label, count]) => `${label}: ${count}`)
-      .join(', ')
-  }, [payload?.point_labels, selectedPointKey])
-
-  const localFeatureRanking = useMemo(() => {
-    const labels = Array.isArray(payload?.col_labels) ? payload.col_labels : []
-    if (!labels.length) return []
-
-    if (!Array.isArray(payload?.gradVectors) || payload.gradVectors.length === 0 || selectedPointIndices.length === 0) {
-      const globalRanking = Array.isArray(payload?.feature_stats?.globalRanking)
-        ? payload.feature_stats.globalRanking
-        : labels.map((_, idx) => idx)
-      const avgMagnitude = Array.isArray(payload?.feature_stats?.avgMagnitude)
-        ? payload.feature_stats.avgMagnitude
-        : []
-      return globalRanking.map((index) => ({
-        index,
-        label: labels[index],
-        magnitude: Number(avgMagnitude[index] || 0),
-        dx: 0,
-        dy: 0,
-      }))
-    }
-
-    return labels
-      .map((label, index) => {
-        let dx = 0
-        let dy = 0
-        for (const pointIndex of selectedPointIndices) {
-          const vector = payload.gradVectors?.[pointIndex]?.[index]
-          dx += Number(vector?.[0] || 0)
-          dy += Number(vector?.[1] || 0)
-        }
-        dx /= selectedPointIndices.length
-        dy /= selectedPointIndices.length
-        return {
-          index,
-          label,
-          dx,
-          dy,
-          magnitude: Math.hypot(dx, dy),
-        }
-      })
-      .sort((a, b) => b.magnitude - a.magnitude)
-  }, [payload?.col_labels, payload?.feature_stats, payload?.gradVectors, selectedPointKey])
-
-  useEffect(() => {
-    if (selectedFeatureIndex != null) return
-    const fallback = localFeatureRanking[0]?.index
-    if (Number.isInteger(fallback)) setSelectedFeatureIndex(fallback)
-  }, [localFeatureRanking, selectedFeatureIndex])
-
-  const selectedFeatureSummary = useMemo(() => {
-    if (!Number.isInteger(selectedFeatureIndex)) return null
-    return localFeatureRanking.find((item) => item.index === selectedFeatureIndex) || null
-  }, [localFeatureRanking, selectedFeatureIndex])
-
-  const featureOptions = useMemo(() => {
-    const labels = Array.isArray(payload?.col_labels) ? payload.col_labels : []
-    const query = featureSearch.trim().toLowerCase()
-    return labels
-      .map((label, index) => ({ index, label }))
-      .filter((item) => !query || item.label.toLowerCase().includes(query))
-  }, [payload?.col_labels, featureSearch])
-
-  const competingFeatureIndices = useMemo(() => {
-    const top = localFeatureRanking.slice(0, 5).map((item) => item.index)
-    if (Number.isInteger(selectedFeatureIndex) && !top.includes(selectedFeatureIndex)) {
-      top.unshift(selectedFeatureIndex)
-    }
-    return top.slice(0, 5)
-  }, [localFeatureRanking, selectedFeatureIndex])
-
-  const analysisOverlay = useMemo(() => {
-    if (!payload?.gradVectors || !selectedPoints.length || !Number.isInteger(selectedFeatureIndex)) return null
-    const featureColor = payload?.colors?.[selectedFeatureIndex] || '#2563eb'
-    const pointVectors = selectedPoints.map((point) => {
-      const vector = payload.gradVectors?.[point.idx]?.[selectedFeatureIndex]
-      const dx = Number(vector?.[0] || 0) * Number(featureDelta)
-      const dy = Number(vector?.[1] || 0) * Number(featureDelta)
-      return {
-        index: point.idx,
-        anchor: [point.x, point.y],
-        dx,
-        dy,
-      }
-    })
-    const centroid = selectionCentroid || {
-      x: pointVectors[0].anchor[0],
-      y: pointVectors[0].anchor[1],
-    }
-    const centroidVector = pointVectors.reduce((acc, item) => {
-      acc.dx += item.dx
-      acc.dy += item.dy
-      return acc
-    }, { dx: 0, dy: 0 })
-    centroidVector.dx /= pointVectors.length
-    centroidVector.dy /= pointVectors.length
-
-    const trail = Array.from({ length: 4 }, (_, idx) => {
-      const t = (idx + 1) / 4
-      return {
-        x: centroid.x + centroidVector.dx * t,
-        y: centroid.y + centroidVector.dy * t,
-      }
-    })
-
-    return {
-      color: featureColor,
-      centroid,
-      centroidVector,
-      pointVectors,
-      trail,
-    }
-  }, [payload?.gradVectors, payload?.colors, selectedPoints, selectedFeatureIndex, featureDelta, selectionCentroid])
-
-  const validationOverlay = useMemo(() => {
-    if (!validationResult?.centroid) return null
-    return {
-      actualColor: '#f97316',
-      centroid: validationResult.centroid,
-      points: Array.isArray(validationResult.points) ? validationResult.points : [],
-    }
-  }, [validationResult])
-
-  const canAnalyze = Boolean(payload && analysisOverlay && Number.isInteger(selectedFeatureIndex) && selectedPointIndices.length > 0)
-  const canValidate = Boolean(dataset?.supportsValidation && canAnalyze)
-  const focusPoint = selectionCentroid || hoverPos || null
-
-  const currentSession = useMemo(() => ({
-    sessionType: 'featurewind-analysis-session',
-    version: 1,
-    createdAt: new Date().toISOString(),
-    dataset: dataset
-      ? {
-          datasetId: dataset.datasetId,
-          sourceName: dataset.sourceName,
-          datasetType: dataset.datasetType || dataset.type,
-          fileHash: dataset.fileHash,
-          projectionMeta: dataset.projectionMeta || {},
-          supportsValidation: dataset.supportsValidation,
-          validationMode: dataset.validationMode,
-        }
-      : null,
-    state: {
-      mode,
-      selectionMode,
-      selectedPointIndices,
-      selectedFeatureIndex,
-      featureDelta,
-      gridRes,
-      maskBufferFactor,
-      pointColorFeatureIndex: pointColorFeature === '' ? null : Number(pointColorFeature),
-      showGrid,
-      showPredictedTrail,
-      showSelectionVectors,
-      showParticlesPreview,
-      showWindVane,
-      showFeatureFamilies,
-      showAdvanced,
-      validationResult,
-    },
-    embeddedTmap: uploadedTmapData && Array.isArray(uploadedTmapData.tmap) ? uploadedTmapData : null,
-  }), [
-    dataset,
-    mode,
-    selectionMode,
-    selectedPointIndices,
-    selectedFeatureIndex,
-    featureDelta,
-    gridRes,
-    maskBufferFactor,
-    pointColorFeature,
-    showGrid,
-    showPredictedTrail,
-    showSelectionVectors,
-    showParticlesPreview,
-    showWindVane,
-    showFeatureFamilies,
-    showAdvanced,
-    validationResult,
-    uploadedTmapData,
-  ])
-
-  async function handleRunValidation() {
-    if (!canValidate) return
-    setValidationBusy(true)
-    setError('')
-    try {
-      const result = await validateAnalysis({
-        dataset_id: dataset.datasetId,
-        pointIndices: selectedPointIndices,
-        featureIndex: selectedFeatureIndex,
-        delta: Number(featureDelta),
-      })
-      setValidationResult(result)
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setValidationBusy(false)
-    }
-  }
-
-  function exportSessionOnly() {
-    if (!dataset) return
-    const stem = `${sanitizeFileStem(dataset.sourceName)}_${mode}`
-    downloadJsonFile(currentSession, `${stem}.session.json`)
-  }
-
-  function exportFigure() {
-    if (!windMapCanvasRef.current || !dataset) return
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const stem = `${sanitizeFileStem(dataset.sourceName)}_${mode}_${stamp}`
-    saveCanvasAsPng(windMapCanvasRef.current, `${stem}.png`)
-    downloadJsonFile(currentSession, `${stem}.session.json`)
-  }
-
-  const predictedVector = analysisOverlay?.centroidVector
-  const selectedFeatureLabel = Number.isInteger(selectedFeatureIndex)
-    ? payload?.col_labels?.[selectedFeatureIndex] || `Feature ${selectedFeatureIndex}`
-    : 'Select a feature'
-  const selectedFeatureColor = Number.isInteger(selectedFeatureIndex)
-    ? payload?.colors?.[selectedFeatureIndex] || '#2563eb'
-    : '#2563eb'
+    if (vecs.length === 0) return result
+    if (vecs.length < 3) { feats.forEach(i=>result.add(i)); return result }
+    let maxMag = 0; for (const [u,v] of vecs){ const m=Math.hypot(u,v); if(m>maxMag) maxMag=m }
+    const pts = vecs.map(([u,v]) => [u/(maxMag||1), v/(maxMag||1)])
+    const hidx = hullIdx(pts)
+    for (const hi of hidx) result.add(feats[hi])
+    return result
+  }, [payload, selectedCells, vaneFocus, selectedFeatureIndices, useManualFeatures])
 
   return (
-    <div className="app paper-shell">
-      <header className="app-header">
-        <div>
-          <h1 className="title">FeatureWind Analysis</h1>
-          <p className="subtitle">
-            Inspect how one feature moves a selected point or region in the 2D embedding.
-          </p>
+    <div className="app">
+      <div className="header">
+        <h2 className="title">Feature Wind Map</h2>
+        <div className="file-upload">
+          <button
+            className="btn"
+            onClick={() => fileInputRef.current && fileInputRef.current.click()}
+            title="Choose a .tmap or JSON file"
+          >Choose File</button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".tmap,.json"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0] || null
+              setFile(f)
+              if (f) handleUpload(f)
+            }}
+          />
         </div>
-
-        <div className="header-actions">
-          <button className="btn btn-primary" onClick={() => fileInputRef.current?.click()}>
-            Upload .tmap
-          </button>
-          <button className="btn" onClick={() => sessionInputRef.current?.click()}>
-            Load Session
-          </button>
-          <button className="btn" onClick={exportFigure} disabled={!dataset || !payload}>
-            Export Figure
-          </button>
-          <button className="btn" onClick={exportSessionOnly} disabled={!dataset}>
-            Export Session
-          </button>
-        </div>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".tmap,.json"
-          style={{ display: 'none' }}
-          onChange={(e) => {
-            const file = e.target.files?.[0] || null
-            if (file) handleUpload(file)
-          }}
-        />
-        <input
-          ref={sessionInputRef}
-          type="file"
-          accept=".json"
-          style={{ display: 'none' }}
-          onChange={(e) => {
-            const file = e.target.files?.[0] || null
-            if (file) handleLoadSession(file)
-          }}
-        />
-      </header>
-
-      {error && <div className="banner banner-error">{error}</div>}
-
-      <div className="mode-switch">
-        <button
-          className={`mode-pill ${mode === 'analyze' ? 'active' : ''}`}
-          onClick={() => setMode('analyze')}
-        >
-          Analyze
-        </button>
-        <button
-          className={`mode-pill ${mode === 'validate' ? 'active' : ''}`}
-          onClick={() => setMode('validate')}
-        >
-          Validate
-        </button>
       </div>
-
-      <div className="workspace">
-        <aside className="sidebar">
-          <section className="panel section">
-            <div className="section-header">
-              <h2>Dataset</h2>
-              {busy && <span className="status-pill">Computing</span>}
+      <div className="content">
+        <div className="three-up">
+          {/* Wind Map */}
+          <div className="panel canvas-frame">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <p className="panel-title" style={{ margin: 0 }}>Wind Map</p>
+              {payload && (
+                <button
+                  className="btn"
+                  title="Save Wind Map as PNG"
+                  onClick={() => saveCanvasAsPng(windMapCanvasRef.current, 'wind_map.png')}
+                >Save PNG</button>
+              )}
             </div>
-            {dataset ? (
-              <div className="section-body stack">
-                <div className="meta-list">
-                  <div><span>File</span><strong>{dataset.sourceName || 'Uploaded dataset'}</strong></div>
-                  <div><span>Type</span><strong>{dataset.datasetType || dataset.type || 'tmap'}</strong></div>
-                  <div><span>Points</span><strong>{payload?.positions?.length ?? dataset.pointCount ?? '-'}</strong></div>
-                  <div><span>Features</span><strong>{payload?.col_labels?.length ?? dataset.col_labels?.length ?? '-'}</strong></div>
-                  <div><span>Validation</span><strong>{validationModeLabel(payload?.validationMode || dataset.validationMode)}</strong></div>
-                </div>
-                <p className="hint">
-                  Validation is exact only for t-SNE tangent maps generated with projection metadata.
-                </p>
-              </div>
+            {payload ? (
+              <CanvasWind
+                payload={payload}
+                onHover={setHoverPos}
+                onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
+                onBrushCell={(payload) => {
+                  if (payload && Array.isArray(payload.cells)) {
+                    const cells = payload.cells
+                    setSelectedCells((prev) => {
+                      const key = (c) => `${c.i}:${c.j}`
+                      const setPrev = new Set(prev.map(key))
+                      const out = prev.slice()
+                      for (const c of cells) { const k = key(c); if (!setPrev.has(k)) { setPrev.add(k); out.push({ i: c.i, j: c.j }) } }
+                      return out
+                    })
+                    return
+                  }
+                  const { i, j } = payload || {}
+                  if (typeof i === 'number' && typeof j === 'number') {
+                    setSelectedCells((prev) => {
+                      const exists = prev.some((c) => c.i === i && c.j === j)
+                      if (exists) return prev
+                      return [...prev, { i, j }]
+                    })
+                  }
+                }}
+                showGrid={showGrid}
+                particleCount={particleCount}
+                speedScale={speedScale}
+                tailLength={tailLength}
+                trailTailMin={trailTailMin}
+                trailTailExp={trailTailExp}
+                maxLifetime={maxLifetime}
+                size={600}
+                showParticles={!hideParticles}
+                pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
+                showPointGradients={showPointGradients}
+                showPointAggregatedGradients={showPointAggGradients}
+                showCellGradients={showCellGradients}
+                showCellAggregatedGradients={showCellAggGradients}
+                showParticleInits={showParticleInits}
+                gradientFeatureIndices={useManualFeatures ? selectedFeatureIndices : []}
+                selectedCells={selectedCells}
+                featureIndices={useManualFeatures ? selectedFeatureIndices : null}
+                uniformPointShape={uniformPointShape}
+                showParticleArrowheads={showParticleArrowheads}
+                allowGridSelection={restrictSpawnToSelection}
+                restrictSpawnToSelection={restrictSpawnToSelection}
+                autoRespawnRate={autoRespawnEnabled ? 0.3 : 0.0}
+                trailLineWidth={trailLineWidth}
+                onCanvasElement={(el) => { windMapCanvasRef.current = el }}
+              />
             ) : (
-              <div className="section-body">
-                <p className="hint">Upload a `.tmap` file to begin analysis.</p>
-              </div>
+              <div className="panel placeholder" style={{ width: 600, height: 600 }}>Wind Map</div>
             )}
-          </section>
+          </div>
 
-          <section className="panel section">
-            <div className="section-header">
-              <h2>Target</h2>
-              {selectedPointIndices.length > 0 && (
-                <span className="status-pill">{selectionMode === 'region' ? 'Region' : 'Point'}</span>
+          {/* Wind Vane */}
+          <div className="panel canvas-frame">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <p className="panel-title" style={{ margin: 0 }}>Wind Vane{selectedCells.length > 0 ? ` (selection: ${selectedCells.length} cells)` : ''}</p>
+              {payload && (
+                <button
+                  className="btn"
+                  title="Save Wind Vane as PNG"
+                  onClick={() => saveCanvasAsPng(windVaneCanvasRef.current, 'wind_vane.png')}
+                >Save PNG</button>
               )}
             </div>
-            <div className="section-body stack">
-              {selectedPointIndices.length === 0 ? (
-                <p className="hint">
-                  Click a point to inspect it. Shift-click or drag on nearby points to build a region.
-                </p>
-              ) : (
-                <>
-                  <div className="meta-list">
-                    <div><span>Selection</span><strong>{selectedPointIndices.length} point{selectedPointIndices.length === 1 ? '' : 's'}</strong></div>
-                    <div><span>Centroid X</span><strong>{formatNumber(selectionCentroid?.x)}</strong></div>
-                    <div><span>Centroid Y</span><strong>{formatNumber(selectionCentroid?.y)}</strong></div>
-                    <div><span>Labels</span><strong>{selectionLabelSummary}</strong></div>
-                  </div>
-                  <button className="btn btn-subtle" onClick={clearSelection}>Clear Selection</button>
-                </>
-              )}
-            </div>
-          </section>
+            {payload ? (
+                <WindVane
+                  payload={payload}
+                  focus={vaneFocus}
+                  selectedCells={selectedCells}
+                  useConvexHull={!showAllVectors}
+                  showHull={showHull}
+                  showLabels={showVectorLabels}
+                  featureIndices={useManualFeatures ? selectedFeatureIndices : null}
+                  onCanvasElement={(el) => { windVaneCanvasRef.current = el }}
+                />
+            ) : (
+              <div className="panel placeholder" style={{ width: 600, height: 600 }}>Wind Vane</div>
+            )}
+          </div>
 
-          <section className="panel section">
-            <div className="section-header">
-              <h2>Feature</h2>
-              {Number.isInteger(selectedFeatureIndex) && (
-                <span className="feature-pill" style={{ background: colorWithAlpha(selectedFeatureColor, 0.18), color: selectedFeatureColor }}>
-                  {selectedFeatureLabel}
+          {/* Color Families */}
+          <div className="panel padded color-panel">
+            <p className="panel-title">Color Families</p>
+            {payload ? (
+              <ColorLegend
+                payload={payload}
+                dataset={dataset}
+                visible={visibleFeatures}
+                selectedFeatures={useManualFeatures ? selectedFeatureIndices : null}
+                onChangeSelectedFeatures={(arr) => { setSelectedFeatureIndices(arr); setUseManualFeatures(true) }}
+                onSwapFamilyColors={(famA, famB) => {
+                  // Swap colors between two family IDs across all features (front-end only)
+                  setPayload((prev) => {
+                    try {
+                      if (!prev) return prev
+                      const fams = prev.family_assignments || []
+                      const cols = (prev.colors || []).slice()
+                      if (!Array.isArray(fams) || !Array.isArray(cols)) return prev
+                      // Representative colors (first feature in each family)
+                      const idxA = fams.findIndex((f) => String(f) === String(famA))
+                      const idxB = fams.findIndex((f) => String(f) === String(famB))
+                      const colA = idxA >= 0 ? cols[idxA] : '#888'
+                      const colB = idxB >= 0 ? cols[idxB] : '#888'
+                      const out = cols.slice()
+                      for (let i = 0; i < fams.length; i++) {
+                        if (String(fams[i]) === String(famA)) out[i] = colB
+                        else if (String(fams[i]) === String(famB)) out[i] = colA
+                      }
+                      return { ...prev, colors: out }
+                    } catch { return prev }
+                  })
+                }}
+                onApplyFamilies={async (families) => {
+                  try {
+                    if (!dataset) return
+                    const res = await recolor(dataset.datasetId, families)
+                    setPayload((prev) => ({ ...prev, colors: res.colors, family_assignments: res.family_assignments }))
+                  } catch (e) {
+                    setError(e.message)
+                  }
+                }}
+              />
+            ) : (
+              <div className="hint">Upload a dataset to see colors</div>
+            )}
+          </div>
+
+          {/* Controls */}
+          <div className="panel padded controls-grid full-span">
+            {null}
+
+            {null}
+
+            <label>Grid Res</label>
+            <div className="slider-row">
+              <input type="range" min={8} max={200} step={1} value={gridRes}
+                onChange={(e) => setGridRes(Number(e.target.value))} />
+              <span className="control-val">{gridRes}</span>
+            </div>
+
+            <label>Mask Buffer</label>
+            <div className="slider-row">
+              <input type="range" min={0} max={2} step={0.05} value={maskBufferFactor}
+                onChange={(e) => setMaskBufferFactor(Number(e.target.value))} />
+              <span className="control-val">{maskBufferFactor.toFixed(2)}</span>
+            </div>
+
+            <label>Show Grid</label>
+            <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+
+            <label>Show Convex Hull</label>
+            <input type="checkbox" checked={showHull} onChange={(e) => setShowHull(e.target.checked)} />
+
+            <label>Show Vector Labels</label>
+            <input type="checkbox" checked={showVectorLabels} onChange={(e) => setShowVectorLabels(e.target.checked)} />
+
+            <label>Show All Vectors</label>
+            <input type="checkbox" checked={showAllVectors} onChange={(e) => setShowAllVectors(e.target.checked)} />
+
+            <label>Hide Particles</label>
+            <input type="checkbox" checked={hideParticles} onChange={(e) => setHideParticles(e.target.checked)} />
+
+            <label>Point Color By</label>
+            <select
+              value={pointColorFeature}
+              onChange={(e) => setPointColorFeature(e.target.value)}
+              disabled={!payload || !Array.isArray(payload.feature_values)}
+            >
+              <option value="">None</option>
+              {Array.isArray(payload?.col_labels) && payload?.col_labels.map((name, idx) => (
+                <option key={idx} value={String(idx)}>{name}</option>
+              ))}
+            </select>
+
+            <label>Use Circle Markers</label>
+            <input type="checkbox" checked={uniformPointShape} onChange={(e) => setUniformPointShape(e.target.checked)} />
+
+            <label>Particle Arrowheads</label>
+            <input type="checkbox" checked={showParticleArrowheads} onChange={(e) => setShowParticleArrowheads(e.target.checked)} />
+
+            <label>Show Point Gradients</label>
+            <input type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} />
+
+            <label>Show Aggregated Point Gradients</label>
+            <input type="checkbox" checked={showPointAggGradients} onChange={(e) => setShowPointAggGradients(e.target.checked)} />
+
+            <label>Show Cell Gradients</label>
+            <input type="checkbox" checked={showCellGradients} onChange={(e) => setShowCellGradients(e.target.checked)} />
+
+            <label>Show Aggregated Cell Gradients</label>
+            <input type="checkbox" checked={showCellAggGradients} onChange={(e) => setShowCellAggGradients(e.target.checked)} />
+
+            <label>Show Particle Inits</label>
+            <input type="checkbox" checked={showParticleInits} onChange={(e) => setShowParticleInits(e.target.checked)} />
+
+            <label>Restrict Spawns to Selection</label>
+            <input type="checkbox" checked={restrictSpawnToSelection} onChange={(e) => setRestrictSpawnToSelection(e.target.checked)} />
+
+            <label>Auto Respawn (30% bursts)</label>
+            <input type="checkbox" checked={autoRespawnEnabled} onChange={(e) => setAutoRespawnEnabled(e.target.checked)} />
+
+            <label>Assess Feature Coverage</label>
+            <div className="slider-row">
+              <input type="checkbox" checked={assessAllCells} onChange={(e) => setAssessAllCells(e.target.checked)} />
+              {assessAllCells && (
+                <span className="control-val">
+                  Avg active: {typeof avgActiveFeatures === 'number' ? avgActiveFeatures.toFixed(2) : '-'}
                 </span>
               )}
             </div>
-            <div className="section-body stack">
-              <input
-                className="text-input"
-                type="text"
-                placeholder="Search features"
-                value={featureSearch}
-                onChange={(e) => setFeatureSearch(e.target.value)}
-                disabled={!payload?.col_labels?.length}
-              />
 
-              <div className="feature-chip-row">
-                {localFeatureRanking.slice(0, 6).map((item) => (
-                  <button
-                    key={item.index}
-                    className={`feature-chip ${item.index === selectedFeatureIndex ? 'active' : ''}`}
-                    onClick={() => setSelectedFeatureIndex(item.index)}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-
-              <select
-                className="feature-select"
-                size={Math.min(10, Math.max(5, featureOptions.length || 5))}
-                value={Number.isInteger(selectedFeatureIndex) ? String(selectedFeatureIndex) : ''}
-                onChange={(e) => setSelectedFeatureIndex(Number(e.target.value))}
-                disabled={!featureOptions.length}
-              >
-                {featureOptions.map((item) => (
-                  <option key={item.index} value={item.index}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-
-              <label className="field-label">Feature delta</label>
-              <div className="slider-row">
-                <input
-                  type="range"
-                  min={-0.5}
-                  max={0.5}
-                  step={0.01}
-                  value={featureDelta}
-                  onChange={(e) => setFeatureDelta(Number(e.target.value))}
-                />
-                <span className="control-val">{featureDelta.toFixed(2)}</span>
-              </div>
-
-              {selectedFeatureSummary && (
-                <div className="meta-list compact">
-                  <div><span>Local rank</span><strong>{localFeatureRanking.findIndex((item) => item.index === selectedFeatureIndex) + 1}</strong></div>
-                  <div><span>Mean dx</span><strong>{formatNumber(selectedFeatureSummary.dx)}</strong></div>
-                  <div><span>Mean dy</span><strong>{formatNumber(selectedFeatureSummary.dy)}</strong></div>
-                  <div><span>Magnitude</span><strong>{formatNumber(selectedFeatureSummary.magnitude)}</strong></div>
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section className="panel section">
-            <div className="section-header">
-              <h2>View</h2>
-            </div>
-            <div className="section-body stack">
-              <label className="toggle-row">
-                <span>Show predicted trail</span>
-                <input type="checkbox" checked={showPredictedTrail} onChange={(e) => setShowPredictedTrail(e.target.checked)} />
-              </label>
-              <label className="toggle-row">
-                <span>Show per-point vectors</span>
-                <input type="checkbox" checked={showSelectionVectors} onChange={(e) => setShowSelectionVectors(e.target.checked)} />
-              </label>
-              <label className="toggle-row">
-                <span>Show particles preview</span>
-                <input type="checkbox" checked={showParticlesPreview} onChange={(e) => setShowParticlesPreview(e.target.checked)} />
-              </label>
-              <label className="toggle-row">
-                <span>Show local inspector</span>
-                <input type="checkbox" checked={showWindVane} onChange={(e) => setShowWindVane(e.target.checked)} />
-              </label>
-            </div>
-          </section>
-
-          {mode === 'validate' && (
-            <section className="panel section">
-              <div className="section-header">
-                <h2>Validate</h2>
-                {validationBusy && <span className="status-pill">Running</span>}
-              </div>
-              <div className="section-body stack">
-                <p className="hint">
-                  Run a perturb-and-compare rerun for the selected feature and selection.
-                </p>
-                <button className="btn btn-primary" onClick={handleRunValidation} disabled={!canValidate || validationBusy}>
-                  Run Perturb-and-Compare
-                </button>
-                {!dataset?.supportsValidation && dataset && (
-                  <p className="hint">
-                    This file does not expose enough projection metadata for exact validation.
-                  </p>
-                )}
-              </div>
-            </section>
-          )}
-
-          <section className="panel section">
-            <div className="section-header">
-              <h2>Advanced</h2>
-              <button className="btn btn-subtle" onClick={() => setShowAdvanced((prev) => !prev)}>
-                {showAdvanced ? 'Hide' : 'Show'}
-              </button>
-            </div>
-            {showAdvanced && (
-              <div className="section-body stack">
-                <label className="toggle-row">
-                  <span>Show grid</span>
-                  <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
-                </label>
-                <label className="toggle-row">
-                  <span>Show feature families</span>
-                  <input type="checkbox" checked={showFeatureFamilies} onChange={(e) => setShowFeatureFamilies(e.target.checked)} />
-                </label>
-
-                <label className="field-label">Grid resolution</label>
-                <div className="slider-row">
-                  <input type="range" min={10} max={120} step={1} value={gridRes} onChange={(e) => setGridRes(Number(e.target.value))} />
-                  <span className="control-val">{gridRes}</span>
-                </div>
-
-                <label className="field-label">Mask buffer</label>
-                <div className="slider-row">
-                  <input type="range" min={0} max={2} step={0.05} value={maskBufferFactor} onChange={(e) => setMaskBufferFactor(Number(e.target.value))} />
-                  <span className="control-val">{maskBufferFactor.toFixed(2)}</span>
-                </div>
-
-                <label className="field-label">Point color by feature</label>
-                <select
-                  className="text-input"
-                  value={pointColorFeature}
-                  onChange={(e) => setPointColorFeature(e.target.value)}
-                  disabled={!payload?.feature_values}
-                >
-                  <option value="">None</option>
-                  {Array.isArray(payload?.col_labels) && payload.col_labels.map((name, idx) => (
-                    <option key={idx} value={String(idx)}>{name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </section>
-        </aside>
-
-        <main className="main-column">
-          <section className="panel canvas-panel">
-            <div className="canvas-toolbar">
-              <div className="canvas-toolbar-copy">
-                <h2>Embedding View</h2>
-                <p className="hint">
-                  {selectedPointIndices.length
-                    ? `Focused on ${selectionMode === 'region' ? 'a region' : 'one point'} and feature "${selectedFeatureLabel}".`
-                    : 'Select one point or brush a region to start.'}
-                </p>
-                <p className="hint canvas-hint">
-                  Scroll to zoom. Use the controls to zoom or reset the view.
-                </p>
-              </div>
-
-              <div className="canvas-actions">
-                <button className="btn btn-subtle" onClick={() => canvasViewportRef.current?.zoomOut()} disabled={!payload}>
-                  Zoom Out
-                </button>
-                <button className="btn btn-subtle" onClick={() => canvasViewportRef.current?.zoomIn()} disabled={!payload}>
-                  Zoom In
-                </button>
-                <button className="btn btn-subtle" onClick={() => canvasViewportRef.current?.reset()} disabled={!payload}>
-                  Reset View
-                </button>
-              </div>
+            <label>Particles</label>
+            <div className="slider-row">
+              <input type="range" min={50} max={5000} step={50} value={particleCount}
+                onChange={(e) => setParticleCount(Number(e.target.value))} />
+              <span className="control-val">{particleCount}</span>
             </div>
 
-            {payload ? (
-              <div className="canvas-shell">
-                <CanvasWind
-                  payload={payload}
-                  onHover={setHoverPos}
-                  selectPointsMode
-                  onSelectPoint={handleSelectPoint}
-                  onBrushPoints={handleBrushPoints}
-                  selectedPointIndices={selectedPointIndices}
-                  showGrid={showGrid}
-                  showParticles={showParticlesPreview}
-                  particleCount={800}
-                  speedScale={1.0}
-                  tailLength={8}
-                  trailTailMin={0.12}
-                  trailTailExp={2.2}
-                  maxLifetime={160}
-                  width={1480}
-                  height={880}
-                  responsive
-                  pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
-                  analysisOverlay={analysisOverlay}
-                  showSelectionVectors={showSelectionVectors}
-                  showPredictedTrail={showPredictedTrail}
-                  validationOverlay={validationOverlay}
-                  viewportControlsRef={canvasViewportRef}
-                  onCanvasElement={(el) => { windMapCanvasRef.current = el }}
-                />
-              </div>
-            ) : (
-              <div className="placeholder canvas-placeholder">
-                Upload a `.tmap` file to enter analysis mode.
-              </div>
-            )}
-          </section>
+            {null}
 
-          <section className="metric-grid">
-            <div className="panel metric-card">
-              <span className="metric-label">Feature</span>
-              <strong>{selectedFeatureLabel}</strong>
+            <label>Speed Scale</label>
+            <div className="slider-row">
+              <input type="range" min={0.1} max={10} step={0.1} value={speedScale}
+                onChange={(e) => setSpeedScale(Number(e.target.value))} />
+              <span className="control-val">{speedScale.toFixed(1)}</span>
             </div>
-            <div className="panel metric-card">
-              <span className="metric-label">Predicted dx</span>
-              <strong>{formatNumber(predictedVector?.dx)}</strong>
-            </div>
-            <div className="panel metric-card">
-              <span className="metric-label">Predicted dy</span>
-              <strong>{formatNumber(predictedVector?.dy)}</strong>
-            </div>
-            <div className="panel metric-card">
-              <span className="metric-label">Predicted magnitude</span>
-              <strong>{formatNumber(predictedVector ? Math.hypot(predictedVector.dx, predictedVector.dy) : null)}</strong>
-            </div>
-          </section>
 
-          {mode === 'validate' && (
-            <section className="panel section">
-              <div className="section-header">
-                <h2>Validation Summary</h2>
-                {validationResult?.status === 'ok' && <span className="status-pill ok">Ready</span>}
-              </div>
-              <div className="section-body stack">
-                {validationResult ? (
-                  <>
-                    <div className="meta-list">
-                      <div><span>Mean error</span><strong>{formatNumber(validationResult.metrics?.meanErrorNorm)}</strong></div>
-                      <div><span>Mean cosine</span><strong>{formatNumber(validationResult.metrics?.meanCosineSimilarity)}</strong></div>
-                      <div><span>Magnitude ratio</span><strong>{formatNumber(validationResult.metrics?.meanMagnitudeRatio)}</strong></div>
-                      <div><span>Alignment RMSE</span><strong>{formatNumber(validationResult.metrics?.baselineAlignmentRmse)}</strong></div>
-                    </div>
-                    <div className="compare-strip">
-                      <div className="compare-pill predicted">Predicted: ({formatNumber(validationResult.centroid?.predicted?.[0])}, {formatNumber(validationResult.centroid?.predicted?.[1])})</div>
-                      <div className="compare-pill actual">Actual: ({formatNumber(validationResult.centroid?.actual?.[0])}, {formatNumber(validationResult.centroid?.actual?.[1])})</div>
-                    </div>
-                  </>
-                ) : (
-                  <p className="hint">Run validation to compare the Jacobian prediction with a rerun projection.</p>
-                )}
-              </div>
-            </section>
-          )}
+            <label>Tail Length</label>
+            <div className="slider-row">
+              <input type="range" min={2} max={60} step={1} value={tailLength}
+                onChange={(e) => setTailLength(Number(e.target.value))} />
+              <span className="control-val">{tailLength}</span>
+            </div>
 
-          {showWindVane && payload && competingFeatureIndices.length > 0 && focusPoint && (
-            <section className="panel section">
-              <div className="section-header">
-                <h2>Local Feature Inspector</h2>
-              </div>
-              <div className="section-body inline-panel">
-                <WindVane
-                  payload={payload}
-                  focus={focusPoint}
-                  selectedCells={[]}
-                  useConvexHull={false}
-                  showHull={false}
-                  showLabels
-                  featureIndices={competingFeatureIndices}
-                  size={260}
-                  onCanvasElement={(el) => { windVaneCanvasRef.current = el }}
-                />
-                <div className="stack grow">
-                  <p className="hint">
-                    This view is demoted from the default UI. Use it to compare the selected feature against the strongest local competitors.
-                  </p>
-                  <div className="feature-chip-row">
-                    {competingFeatureIndices.map((idx) => (
-                      <span key={idx} className={`feature-chip ${idx === selectedFeatureIndex ? 'active' : ''}`}>
-                        {payload.col_labels?.[idx]}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </section>
-          )}
+            <label>Trail Width</label>
+            <div className="slider-row">
+              <input type="range" min={0.5} max={4} step={0.1} value={trailLineWidth}
+                onChange={(e) => setTrailLineWidth(Number(e.target.value))} />
+              <span className="control-val">{trailLineWidth.toFixed(1)} px</span>
+            </div>
 
-          {showFeatureFamilies && payload && (
-            <section className="panel section">
-              <div className="section-header">
-                <h2>Feature Families (Advanced)</h2>
-              </div>
-              <div className="section-body">
-                <ColorLegend
-                  payload={payload}
-                  dataset={dataset}
-                  visible={new Set(competingFeatureIndices)}
-                  selectedFeatures={Number.isInteger(selectedFeatureIndex) ? [selectedFeatureIndex] : []}
-                  onApplyFamilies={async (families) => {
-                    try {
-                      const res = await recolor(dataset.datasetId, families)
-                      setPayload((prev) => prev ? { ...prev, colors: res.colors, family_assignments: res.family_assignments } : prev)
-                    } catch (e) {
-                      setError(e.message)
-                    }
-                  }}
-                />
-              </div>
-            </section>
-          )}
-        </main>
+            <label>Tail Min Alpha</label>
+            <div className="slider-row">
+              <input type="range" min={0} max={1} step={0.01} value={trailTailMin}
+                onChange={(e) => setTrailTailMin(Number(e.target.value))} />
+              <span className="control-val">{trailTailMin.toFixed(2)}</span>
+            </div>
+
+            <label>Tail Exp</label>
+            <div className="slider-row">
+              <input type="range" min={0.5} max={6} step={0.1} value={trailTailExp}
+                onChange={(e) => setTrailTailExp(Number(e.target.value))} />
+              <span className="control-val">{trailTailExp.toFixed(1)}</span>
+            </div>
+
+            <label>Max Lifetime</label>
+            <div className="slider-row">
+              <input type="range" min={1} max={300} step={1} value={maxLifetime}
+                onChange={(e) => setMaxLifetime(Number(e.target.value))} />
+              <span className="control-val">{maxLifetime}</span>
+            </div>
+
+            <div className="spacer" />
+            <label>Selection</label>
+            <div>
+              <button onClick={clearSelection} style={{ height: 32, padding: '0 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff' }}>Clear (C)</button>
+            </div>
+            <div className="spacer" />
+            {error && <div className="hint" style={{ color: '#b91c1c' }}>{error}</div>}
+          </div>
+        </div>
       </div>
     </div>
   )

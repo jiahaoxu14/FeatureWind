@@ -5,9 +5,6 @@ Generate Tangent Map Script
 This script takes a dataset as input and outputs a tangent map file (.tmap) 
 that can be used with FeatureWind for visualization.
 
-Deprecated: prefer `backend/src/generate_tangent_map.py` as the canonical
-generator entry point. This legacy script is kept for compatibility.
-
 Usage:
     python generate_tangent_map.py <input_csv> <method> [options]
     
@@ -25,11 +22,6 @@ import numpy as np
 from pathlib import Path
 
 # Import from the new package structure
-
-LEGACY_MESSAGE = (
-    "Deprecated: use backend/src/generate_tangent_map.py as the canonical "
-    "tangent-map generator."
-)
 
 
 def preprocess_data(input_file, target_column=None, normalize=True, output_prefix=None):
@@ -183,7 +175,6 @@ def postprocess_tangent_map(tmap_file, target_values, feature_columns, output_fi
 
 
 def main():
-    print(LEGACY_MESSAGE)
     parser = argparse.ArgumentParser(
         description="Generate tangent map files from datasets for FeatureWind visualization",
         formatter_class=argparse.RawDescriptionHelpFormatter,
