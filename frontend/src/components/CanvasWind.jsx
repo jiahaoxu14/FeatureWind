@@ -67,13 +67,20 @@ export default function CanvasWind({
   size = 600,
   width = null,
   height = null,
+  responsive = false,
   selectedCells = [],
   featureIndices = null,
   pointColorFeatureIndex = null,
+  analysisOverlay = null,
+  showSelectionVectors = false,
+  showPredictedTrail = false,
+  validationOverlay = null,
+  viewportControlsRef = null,
 }) {
   const canvasRef = useRef(null)
   const rafRef = useRef(0)
   const runningRef = useRef(false)
+  const viewRef = useRef(null)
   const brushingRef = useRef(false)
   const lastBrushRef = useRef({ i: -1, j: -1 })
   const showParticlesRef = useRef(!!showParticles)
@@ -222,11 +229,74 @@ export default function CanvasWind({
   }, [uAll, vAll])
 
   useEffect(() => {
+    const [xmin, xmax, ymin, ymax] = bbox
+    viewRef.current = { xmin, xmax, ymin, ymax }
+  }, [bbox])
+
+  useEffect(() => {
+    if (!viewportControlsRef) return undefined
+
+    const [xmin, xmax, ymin, ymax] = bbox
+    const clampView = (next) => {
+      const totalW = xmax - xmin
+      const totalH = ymax - ymin
+      const widthSpan = Math.max(totalW / 50, Math.min(totalW, next.xmax - next.xmin))
+      const heightSpan = Math.max(totalH / 50, Math.min(totalH, next.ymax - next.ymin))
+      const centerX = (next.xmin + next.xmax) / 2
+      const centerY = (next.ymin + next.ymax) / 2
+      const boundedXMin = Math.max(xmin, Math.min(xmax - widthSpan, centerX - widthSpan / 2))
+      const boundedYMin = Math.max(ymin, Math.min(ymax - heightSpan, centerY - heightSpan / 2))
+      viewRef.current = {
+        xmin: boundedXMin,
+        xmax: boundedXMin + widthSpan,
+        ymin: boundedYMin,
+        ymax: boundedYMin + heightSpan,
+      }
+    }
+
+    const zoomAboutCenter = (scale) => {
+      const current = viewRef.current || { xmin, xmax, ymin, ymax }
+      const cx = (current.xmin + current.xmax) / 2
+      const cy = (current.ymin + current.ymax) / 2
+      const nextW = (current.xmax - current.xmin) / scale
+      const nextH = (current.ymax - current.ymin) / scale
+      clampView({
+        xmin: cx - nextW / 2,
+        xmax: cx + nextW / 2,
+        ymin: cy - nextH / 2,
+        ymax: cy + nextH / 2,
+      })
+    }
+
+    const controls = {
+      zoomIn() {
+        zoomAboutCenter(1.2)
+      },
+      zoomOut() {
+        zoomAboutCenter(1 / 1.2)
+      },
+      reset() {
+        viewRef.current = { xmin, xmax, ymin, ymax }
+      },
+    }
+
+    if (typeof viewportControlsRef === 'function') {
+      viewportControlsRef(controls)
+      return () => viewportControlsRef(null)
+    }
+
+    viewportControlsRef.current = controls
+    return () => {
+      if (viewportControlsRef.current === controls) viewportControlsRef.current = null
+    }
+  }, [bbox, viewportControlsRef])
+
+  useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || !uSum || !vSum) return
     const ctx = canvas.getContext('2d')
     const [xmin, xmax, ymin, ymax] = bbox
-    const viewRef = { current: { xmin, xmax, ymin, ymax } }
+    if (!viewRef.current) viewRef.current = { xmin, xmax, ymin, ymax }
     const Wpx = canvas.width
     const Hpx = canvas.height
     const W = grid_res, H = grid_res
@@ -303,6 +373,75 @@ export default function CanvasWind({
       const sx = (x - v.xmin) / (v.xmax - v.xmin) * Wpx
       const sy = Hpx - (y - v.ymin) / (v.ymax - v.ymin) * Hpx
       return [sx, sy]
+    }
+    function drawArrowWorld(anchorX, anchorY, dx, dy, color, opts = {}) {
+      const lineWidth = opts.lineWidth ?? 2.2
+      const alpha = opts.alpha ?? 1.0
+      const dashed = opts.dashed ?? false
+      const endpointRadius = opts.endpointRadius ?? 0
+      const [sx, sy] = worldToScreen(anchorX, anchorY)
+      const [ex, ey] = worldToScreen(anchorX + dx, anchorY + dy)
+      const len = Math.hypot(ex - sx, ey - sy)
+      if (!Number.isFinite(len) || len < 2) return
+
+      ctx.save()
+      ctx.globalAlpha = alpha
+      ctx.strokeStyle = color
+      ctx.fillStyle = color
+      ctx.lineWidth = lineWidth
+      if (dashed) ctx.setLineDash([7, 5])
+      ctx.beginPath()
+      ctx.moveTo(sx, sy)
+      ctx.lineTo(ex, ey)
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      const angle = Math.atan2(ey - sy, ex - sx)
+      const headLen = Math.max(8, Math.min(14, len * 0.18))
+      const phi = Math.PI / 7
+      ctx.beginPath()
+      ctx.moveTo(ex, ey)
+      ctx.lineTo(ex - headLen * Math.cos(angle - phi), ey - headLen * Math.sin(angle - phi))
+      ctx.lineTo(ex - headLen * Math.cos(angle + phi), ey - headLen * Math.sin(angle + phi))
+      ctx.closePath()
+      ctx.fill()
+
+      if (endpointRadius > 0) {
+        ctx.beginPath()
+        ctx.arc(ex, ey, endpointRadius, 0, Math.PI * 2)
+        ctx.fillStyle = '#ffffff'
+        ctx.fill()
+        ctx.strokeStyle = color
+        ctx.lineWidth = Math.max(1, lineWidth * 0.6)
+        ctx.stroke()
+      }
+
+      ctx.restore()
+    }
+    function drawTrailWorld(anchor, trail, color) {
+      if (!anchor || !Array.isArray(trail) || trail.length === 0) return
+      ctx.save()
+      ctx.strokeStyle = color
+      ctx.fillStyle = color
+      ctx.globalAlpha = 0.6
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([5, 5])
+      ctx.beginPath()
+      const [sx0, sy0] = worldToScreen(anchor.x, anchor.y)
+      ctx.moveTo(sx0, sy0)
+      for (const point of trail) {
+        const [sx, sy] = worldToScreen(point.x, point.y)
+        ctx.lineTo(sx, sy)
+      }
+      ctx.stroke()
+      ctx.setLineDash([])
+      for (const point of trail) {
+        const [sx, sy] = worldToScreen(point.x, point.y)
+        ctx.beginPath()
+        ctx.arc(sx, sy, 3, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      ctx.restore()
     }
 
     // Frame counter for periodic behaviors
@@ -657,6 +796,59 @@ export default function CanvasWind({
           ctx.stroke()
         }
       }
+      }
+
+      if (analysisOverlay && analysisOverlay.centroid) {
+        const mainColor = analysisOverlay.color || '#2563eb'
+        if (showSelectionVectors && Array.isArray(analysisOverlay.pointVectors)) {
+          for (const item of analysisOverlay.pointVectors) {
+            if (!Array.isArray(item.anchor) || item.anchor.length !== 2) continue
+            drawArrowWorld(item.anchor[0], item.anchor[1], item.dx, item.dy, mainColor, {
+              lineWidth: 1.2,
+              alpha: 0.55,
+              endpointRadius: 2,
+            })
+          }
+        }
+        if (showPredictedTrail && Array.isArray(analysisOverlay.trail)) {
+          drawTrailWorld(analysisOverlay.centroid, analysisOverlay.trail, mainColor)
+        }
+        drawArrowWorld(
+          analysisOverlay.centroid.x,
+          analysisOverlay.centroid.y,
+          analysisOverlay.centroidVector?.dx ?? 0,
+          analysisOverlay.centroidVector?.dy ?? 0,
+          mainColor,
+          { lineWidth: 3.0, alpha: 0.95, endpointRadius: 5 },
+        )
+      }
+
+      if (validationOverlay && validationOverlay.centroid) {
+        const actualColor = validationOverlay.actualColor || '#f97316'
+        if (showSelectionVectors && Array.isArray(validationOverlay.points)) {
+          for (const item of validationOverlay.points) {
+            const anchor = item.anchor
+            const actual = item.actual
+            if (!Array.isArray(anchor) || anchor.length !== 2 || !Array.isArray(actual) || actual.length !== 2) continue
+            drawArrowWorld(anchor[0], anchor[1], actual[0], actual[1], actualColor, {
+              lineWidth: 1.1,
+              alpha: 0.5,
+              endpointRadius: 2,
+            })
+          }
+        }
+        const centroidAnchor = validationOverlay.centroid.anchor
+        const centroidActual = validationOverlay.centroid.actual
+        if (Array.isArray(centroidAnchor) && centroidAnchor.length === 2 && Array.isArray(centroidActual) && centroidActual.length === 2) {
+          drawArrowWorld(
+            centroidAnchor[0],
+            centroidAnchor[1],
+            centroidActual[0],
+            centroidActual[1],
+            actualColor,
+            { lineWidth: 3.0, alpha: 0.9, dashed: true, endpointRadius: 5 },
+          )
+        }
       }
 
       // Optional: aggregated gradients attached to each point (sum over selected features)
@@ -1086,7 +1278,7 @@ export default function CanvasWind({
           }
         }
         if (!pointBrushingRef.current) return
-        const R = 14
+        const R = pointBrushRadiusPxRef.current
         const R2 = R * R
         const indices = []
         for (let pIdx = 0; pIdx < positions.length; pIdx++) {
@@ -1147,7 +1339,7 @@ export default function CanvasWind({
         const rect = canvas.getBoundingClientRect()
         const cx = e.clientX - rect.left
         const cy = e.clientY - rect.top
-        const R = 14
+        const R = pointBrushRadiusPxRef.current
         const R2 = R*R
         let best = -1
         let bestD2 = Infinity
@@ -1236,6 +1428,10 @@ export default function CanvasWind({
     maxLifetime,
     speedScale,
     trailLineWidth,
+    analysisOverlay,
+    showPredictedTrail,
+    showSelectionVectors,
+    validationOverlay,
     showCellAggregatedGradients,
     showCellGradients,
     showPointGradients,
@@ -1249,7 +1445,13 @@ export default function CanvasWind({
       ref={canvasRef}
       width={canvasWidth}
       height={canvasHeight}
-      style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px`, border: '1px solid #ddd' }}
+      style={{
+        width: responsive ? '100%' : `${canvasWidth}px`,
+        height: responsive ? 'auto' : `${canvasHeight}px`,
+        aspectRatio: `${canvasWidth} / ${canvasHeight}`,
+        display: 'block',
+        border: '1px solid #ddd',
+      }}
     />
   )
 }

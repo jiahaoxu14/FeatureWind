@@ -154,7 +154,16 @@ def run_tangent_map_generation(feature_df, projection, perplexity: Optional[floa
         os.unlink(temp_csv_path)
 
 
-def add_labels_to_tangent_map(tmap_file, labels, feature_columns, output_name=None, input_csv_path=None):
+def add_labels_to_tangent_map(
+    tmap_file,
+    labels,
+    feature_columns,
+    output_name=None,
+    input_csv_path=None,
+    projection=None,
+    perplexity=None,
+    label_column=None,
+):
     """
     Add labels and column information to the tangent map.
     
@@ -187,7 +196,17 @@ def add_labels_to_tangent_map(tmap_file, labels, feature_columns, output_name=No
     # Create the final data structure
     final_data = {
         'tmap': tmap,
-        'Col_labels': feature_columns
+        'Col_labels': feature_columns,
+        'meta': {
+            'schemaVersion': 1,
+            'sourceCsv': str(input_csv_path) if input_csv_path else None,
+            'labelColumn': label_column,
+            'projection': {
+                'method': projection,
+                **({'perplexity': float(perplexity)} if perplexity is not None else {}),
+            },
+            'generatedBy': 'backend/src/generate_tangent_map.py',
+        },
     }
     
     # Determine output directory and filename
@@ -245,7 +264,16 @@ def main():
         tmap_file = run_tangent_map_generation(feature_df, args.projection, perplexity=args.perplexity)
         
         # Add labels back and save final result
-        output_file = add_labels_to_tangent_map(tmap_file, labels, feature_columns, args.output_name, args.csv_file)
+        output_file = add_labels_to_tangent_map(
+            tmap_file,
+            labels,
+            feature_columns,
+            args.output_name,
+            args.csv_file,
+            projection=args.projection,
+            perplexity=args.perplexity,
+            label_column=label_column,
+        )
         
         print(f"\n✓ Successfully generated tangent map: {output_file}")
         
