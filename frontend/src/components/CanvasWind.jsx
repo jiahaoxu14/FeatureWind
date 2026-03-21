@@ -100,6 +100,11 @@ export default function CanvasWind({
   const pointPointerDownRef = useRef(false)
   const pointBrushingRef = useRef(false)
   const pointDownPosRef = useRef({ x: 0, y: 0 })
+  const panPointerDownRef = useRef(false)
+  const panningRef = useRef(false)
+  const panStartPosRef = useRef({ x: 0, y: 0 })
+  const panStartViewRef = useRef(null)
+  const suppressClickRef = useRef(false)
   const gradientFeatureIndicesRef = useRef(Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [])
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
@@ -286,6 +291,21 @@ export default function CanvasWind({
       const sx = (x - v.xmin) / (v.xmax - v.xmin) * Wpx
       const sy = Hpx - (y - v.ymin) / (v.ymax - v.ymin) * Hpx
       return [sx, sy]
+    }
+
+    function clampView(nextXmin, nextXmax, nextYmin, nextYmax) {
+      const fullW = xmax - xmin
+      const fullH = ymax - ymin
+      const viewW = nextXmax - nextXmin
+      const viewH = nextYmax - nextYmin
+      return {
+        xmin: Math.max(xmin, Math.min(xmax - viewW, nextXmin)),
+        xmax: Math.min(xmax, Math.max(xmin + viewW, nextXmax)),
+        ymin: Math.max(ymin, Math.min(ymax - viewH, nextYmin)),
+        ymax: Math.min(ymax, Math.max(ymin + viewH, nextYmax)),
+        fullW,
+        fullH,
+      }
     }
 
     function dominantFeatureForCell(i, j) {
@@ -1308,17 +1328,22 @@ export default function CanvasWind({
       const nymin = wy - tY * clampedH
       const nymax = nymin + clampedH
       // Clamp to global bbox
+      const clamped = clampView(nxmin, nxmax, nymin, nymax)
       viewRef.current = {
-        xmin: Math.max(xmin, Math.min(xmax - clampedW, nxmin)),
-        xmax: Math.min(xmax, Math.max(xmin + clampedW, nxmax)),
-        ymin: Math.max(ymin, Math.min(ymax - clampedH, nymin)),
-        ymax: Math.min(ymax, Math.max(ymin + clampedH, nymax)),
+        xmin: clamped.xmin,
+        xmax: clamped.xmax,
+        ymin: clamped.ymin,
+        ymax: clamped.ymax,
       }
     }
     canvas.addEventListener('wheel', handleWheel, { passive: false })
 
     // Click handler to select grid cell
     function handleClick(e) {
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false
+        return
+      }
       if (selectPointsModeRef.current && typeof onSelectPoint === 'function') {
         const rect = canvas.getBoundingClientRect()
         const cx = e.clientX - rect.left
@@ -1376,14 +1401,25 @@ export default function CanvasWind({
 
     // Brush handlers
     function handleDown(e) {
+      if (e.button !== 0) return
       const rect = canvas.getBoundingClientRect()
       const cx = e.clientX - rect.left
       const cy = e.clientY - rect.top
       pointPointerDownRef.current = true
       pointBrushingRef.current = false
       pointDownPosRef.current = { x: cx, y: cy }
+      panPointerDownRef.current = false
+      panningRef.current = false
+      panStartViewRef.current = null
       if (selectPointsModeRef.current) {
         // Do not start grid brushing in point-select mode
+        return
+      }
+      if (!e.shiftKey) {
+        panPointerDownRef.current = true
+        panStartPosRef.current = { x: cx, y: cy }
+        panStartViewRef.current = { ...viewRef.current }
+        canvas.style.cursor = 'grabbing'
         return
       }
       const x = xmin + (cx / Wpx) * (xmax - xmin)
@@ -1399,17 +1435,57 @@ export default function CanvasWind({
     function handleUp() {
       pointPointerDownRef.current = false
       pointBrushingRef.current = false
+      panPointerDownRef.current = false
+      panningRef.current = false
+      panStartViewRef.current = null
       brushingRef.current = false
       lastBrushRef.current = { i: -1, j: -1 }
+      canvas.style.cursor = 'grab'
+    }
+    canvas.style.cursor = 'grab'
+    const PAN_THRESHOLD2 = 36
+    const originalHandleMove = handleMove
+    function handleMoveWithPan(e) {
+      const rect = canvas.getBoundingClientRect()
+      const cx = e.clientX - rect.left
+      const cy = e.clientY - rect.top
+      if (panPointerDownRef.current && panStartViewRef.current) {
+        const dx = cx - panStartPosRef.current.x
+        const dy = cy - panStartPosRef.current.y
+        const d2 = dx * dx + dy * dy
+        if (!panningRef.current && d2 > PAN_THRESHOLD2) {
+          panningRef.current = true
+          suppressClickRef.current = true
+        }
+        if (panningRef.current) {
+          const startView = panStartViewRef.current
+          const viewW = startView.xmax - startView.xmin
+          const viewH = startView.ymax - startView.ymin
+          const nextXmin = startView.xmin - (dx / Wpx) * viewW
+          const nextXmax = startView.xmax - (dx / Wpx) * viewW
+          const nextYmin = startView.ymin + (dy / Hpx) * viewH
+          const nextYmax = startView.ymax + (dy / Hpx) * viewH
+          const clamped = clampView(nextXmin, nextXmax, nextYmin, nextYmax)
+          viewRef.current = {
+            xmin: clamped.xmin,
+            xmax: clamped.xmax,
+            ymin: clamped.ymin,
+            ymax: clamped.ymax,
+          }
+        }
+      }
+      originalHandleMove(e)
     }
     canvas.addEventListener('mousedown', handleDown)
     window.addEventListener('mouseup', handleUp)
     canvas.addEventListener('mouseleave', handleUp)
+    canvas.removeEventListener('mousemove', handleMove)
+    canvas.addEventListener('mousemove', handleMoveWithPan)
 
     return () => {
       runningRef.current = false
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
-      canvas.removeEventListener('mousemove', handleMove)
+      canvas.removeEventListener('mousemove', handleMoveWithPan)
       canvas.removeEventListener('wheel', handleWheel)
       canvas.removeEventListener('click', handleClick)
       canvas.removeEventListener('mousedown', handleDown)
