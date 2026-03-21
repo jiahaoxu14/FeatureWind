@@ -1,260 +1,219 @@
-import React, { useMemo } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 
-import { useState, useEffect } from 'react'
-export default function ColorLegend({ payload, dataset, onApplyFamilies, visible, selectedFeatures = [], onChangeSelectedFeatures, onSwapFamilyColors }) {
-  const { col_labels = [], colors = [], selection = {}, family_assignments = null } = payload || {}
+const MODE_META = {
+  default: { label: 'Default', hint: 'Single feature, single hue.' },
+  compare: { label: 'Compare', hint: 'Select up to 4 features.' },
+}
 
-  const visibleSet = useMemo(() => {
-    if (visible && typeof visible.has === 'function') return visible
-    // Fallback to selection if visible set not provided
-    if (!selection) return new Set()
-    if (Array.isArray(selection.topKIndices)) return new Set(selection.topKIndices)
-    if (typeof selection.featureIndex === 'number') return new Set([selection.featureIndex])
-    return new Set()
-  }, [visible, selection])
+export default function ColorLegend({
+  payload,
+  mode = 'default',
+  onChangeMode,
+  defaultFeatureIndex = null,
+  compareFeatureIndices = [],
+  onSelectFeature,
+  onSelectAll,
+  onToggleCompareFeature,
+  onClearCompare,
+  compareCap = 4,
+  message = '',
+  activeFeatureColorMap = {},
+}) {
+  const { col_labels = [], featureRanking = null } = payload || {}
+  const [query, setQuery] = useState('')
+  const isOverviewMode = mode === 'overview'
+  const isCompareMode = mode === 'compare'
+  const defaultTabActive = mode === 'default' || isOverviewMode
 
-  const [editMode, setEditMode] = useState(false)
-  const [families, setFamilies] = useState(family_assignments || [])
-  useEffect(() => { setFamilies(family_assignments || []) }, [family_assignments])
-  const [dragFeature, setDragFeature] = useState(null)
-  const [dragOverFam, setDragOverFam] = useState(null)
+  useEffect(() => {
+    setQuery('')
+  }, [payload?.datasetId])
 
-  // Effective selection reflects current visualization: manual selection first,
-  // otherwise fall back to backend-provided selection (Top-K or single feature)
-  const effectiveSelectedArray = useMemo(() => {
-    // If parent provides an array (even empty), treat it as authoritative manual selection
-    if (Array.isArray(selectedFeatures)) return selectedFeatures
-    // Otherwise fall back to backend-provided selection (Top-K or single feature)
-    if (selection && Array.isArray(selection.topKIndices)) return selection.topKIndices
-    if (selection && typeof selection.featureIndex === 'number') return [selection.featureIndex]
-    return []
-  }, [selectedFeatures, selection])
-  const selectedSet = useMemo(() => new Set(effectiveSelectedArray), [effectiveSelectedArray])
+  const compareSet = useMemo(() => new Set(Array.isArray(compareFeatureIndices) ? compareFeatureIndices : []), [compareFeatureIndices])
 
-  function setSelected(next) {
-    if (typeof onChangeSelectedFeatures === 'function') {
-      const arr = Array.from(new Set(next)).sort((a, b) => a - b)
-      onChangeSelectedFeatures(arr)
-    }
-  }
-
-  // Build a ranking of features to support a Top-K selection slider inside the legend
   const ranking = useMemo(() => {
     const n = Array.isArray(col_labels) ? col_labels.length : 0
-    const tk = (selection && Array.isArray(selection.topKIndices)) ? selection.topKIndices : null
-    if (!n) return []
-    if (Array.isArray(tk) && tk.length === n) return tk.slice()
-    if (Array.isArray(tk) && tk.length > 0) {
-      const set = new Set(tk)
-      const rest = []
-      for (let i = 0; i < n; i++) if (!set.has(i)) rest.push(i)
-      return tk.concat(rest)
+    const fallback = [...Array(n).keys()]
+    if (!Array.isArray(featureRanking)) return fallback
+    const seen = new Set()
+    const ordered = []
+    for (const raw of featureRanking) {
+      const idx = Number(raw)
+      if (!Number.isInteger(idx) || idx < 0 || idx >= n || seen.has(idx)) continue
+      seen.add(idx)
+      ordered.push(idx)
     }
-    return [...Array(n).keys()]
-  }, [selection, col_labels])
+    for (let idx = 0; idx < n; idx++) {
+      if (!seen.has(idx)) ordered.push(idx)
+    }
+    return ordered
+  }, [col_labels, featureRanking])
 
-  function handleDragStartFeature(idx, e) {
-    setDragFeature(idx)
-    try { e.dataTransfer.setData('text/plain', String(idx)); e.dataTransfer.effectAllowed = 'move' } catch {}
-  }
-  function handleDragOverFamily(famId, e) { e.preventDefault(); setDragOverFam(famId); try { e.dataTransfer.dropEffect = 'move' } catch {} }
-  function handleDragLeaveFamily() { setDragOverFam(null) }
-  function handleDropToFamily(famId, e) {
-    e.preventDefault()
-    let idx = dragFeature
-    try {
-      const t = parseInt(e.dataTransfer.getData('text/plain'), 10)
-      if (Number.isFinite(t)) idx = t
-    } catch {}
-    if (idx === null || idx === undefined) return
-    setFamilies((prev) => {
-      const next = [...prev]
-      next[idx] = famId
-      return next
-    })
-    setDragOverFam(null)
-    setDragFeature(null)
-  }
-  function handleDropToNewFamily(e) {
-    e.preventDefault()
-    let idx = dragFeature
-    try {
-      const t = parseInt(e.dataTransfer.getData('text/plain'), 10)
-      if (Number.isFinite(t)) idx = t
-    } catch {}
-    if (idx === null || idx === undefined) return
-    const nextFam = families.length ? Math.max(...families.map((f) => parseInt(f, 10))) + 1 : 0
-    setFamilies((prev) => {
-      const next = [...prev]
-      next[idx] = nextFam
-      return next
-    })
-    setDragOverFam(null)
-    setDragFeature(null)
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return ranking
+    return ranking.filter((idx) => String(col_labels[idx] || '').toLowerCase().includes(q))
+  }, [ranking, query, col_labels])
+
+  const compareSelected = useMemo(() => {
+    return (Array.isArray(compareFeatureIndices) ? compareFeatureIndices : [])
+      .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < col_labels.length)
+  }, [compareFeatureIndices, col_labels.length])
+
+  function handleMode(nextMode) {
+    if (typeof onChangeMode === 'function') onChangeMode(nextMode)
   }
 
-  if (Array.isArray(families) && families.length === col_labels.length) {
-    // Group features by family id
-    const famMap = new Map()
-    families.forEach((fam, idx) => {
-      if (!famMap.has(fam)) famMap.set(fam, [])
-      famMap.get(fam).push(idx)
-    })
-    const famIds = Array.from(famMap.keys()).sort((a, b) => a - b)
-    return (
-      <div className="legend-list">
-        {/* Swap colors between families */}
-        <div className="legend-item" style={{ gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 12, color: '#6b7280' }}>Swap Colors</span>
-          <select id="swapFamA" defaultValue={famIds[0] ?? ''} style={{ height: 26 }}>
-            {famIds.map((id) => (<option key={`fa-${id}`} value={id}>{`Family ${id}`}</option>))}
-          </select>
-          <span style={{ color: '#9ca3af' }}>↔</span>
-          <select id="swapFamB" defaultValue={famIds[1] ?? famIds[0] ?? ''} style={{ height: 26 }}>
-            {famIds.map((id) => (<option key={`fb-${id}`} value={id}>{`Family ${id}`}</option>))}
-          </select>
+  function handleFeatureAction(idx) {
+    if (isCompareMode) {
+      if (typeof onToggleCompareFeature === 'function') onToggleCompareFeature(idx)
+      return
+    }
+    if (typeof onSelectFeature === 'function') onSelectFeature(idx)
+  }
+
+  function isSelected(idx) {
+    if (mode === 'default') return idx === defaultFeatureIndex
+    if (isCompareMode) return compareSet.has(idx)
+    return false
+  }
+
+  function rowActionLabel(idx) {
+    if (isCompareMode) return compareSet.has(idx) ? 'Selected' : 'Add'
+    if (isOverviewMode) return 'Open'
+    return 'Select'
+  }
+
+  return (
+    <div className="feature-panel">
+      <div className="mode-tabs" role="tablist" aria-label="Feature view mode">
+        <button
+          type="button"
+          className={`mode-tab${defaultTabActive ? ' active' : ''}`}
+          onClick={() => handleMode('default')}
+        >
+          {MODE_META.default.label}
+        </button>
+        <button
+          type="button"
+          className={`mode-tab${isCompareMode ? ' active' : ''}`}
+          onClick={() => handleMode('compare')}
+        >
+          {MODE_META.compare.label}
+        </button>
+      </div>
+
+      <p className="feature-mode-hint">
+        {isCompareMode
+          ? MODE_META.compare.hint
+          : isOverviewMode
+            ? 'All features aggregated in grayscale. Choose a feature to return to single-feature view.'
+            : MODE_META.default.hint}
+      </p>
+
+      <div className="feature-toolbar">
+        {!isCompareMode && (
           <button
+            type="button"
             className="btn"
-            onClick={() => {
-              try {
-                const a = document.getElementById('swapFamA').value
-                const b = document.getElementById('swapFamB').value
-                if (typeof onSwapFamilyColors === 'function' && a !== '' && b !== '' && a !== b) {
-                  onSwapFamilyColors(String(a), String(b))
-                }
-              } catch {}
-            }}
-          >Swap</button>
-        </div>
-        {/* Top-K selection slider inside color family panel; updates legend checkboxes */}
-        <div className="legend-item" style={{ gap: 10 }}>
-          <label style={{ fontSize: 12, color: '#6b7280' }}>Top-K</label>
-          <div className="slider-row" style={{ flex: 1 }}>
-            <input
-              type="range"
-              min={0}
-              max={col_labels.length || 0}
-              step={1}
-              value={effectiveSelectedArray.length}
-              onChange={(e) => {
-                const k = Math.max(0, Math.min((col_labels.length || 0), Number(e.target.value)))
-                const next = ranking.slice(0, k)
-                setSelected(next)
-              }}
-            />
-            <span className="control-val">{effectiveSelectedArray.length}</span>
-          </div>
-        </div>
-        {null}
-        {famIds.map((famId) => {
-          const indices = famMap.get(famId)
-          const repIdx = indices && indices.length ? indices[0] : 0
-          const famColor = colors[repIdx] || '#888'
-          const selInFam = indices.filter((i) => selectedSet.has(i))
-          const allSelected = selInFam.length === indices.length
-          return (
-            <div key={`fam-${famId}`} style={{ marginBottom: 8 }}
-                 onDragOver={editMode ? (e) => handleDragOverFamily(famId, e) : undefined}
-                 onDragLeave={editMode ? handleDragLeaveFamily : undefined}
-                 onDrop={editMode ? (e) => handleDropToFamily(famId, e) : undefined}
-                 className={dragOverFam === famId ? 'drop-target' : ''}
+            onClick={() => typeof onSelectAll === 'function' && onSelectAll()}
+            disabled={isOverviewMode}
+          >
+            {isOverviewMode ? 'Showing All' : 'Select All'}
+          </button>
+        )}
+        {isCompareMode && (
+          <button
+            type="button"
+            className="btn"
+            onClick={() => typeof onClearCompare === 'function' && onClearCompare()}
+            disabled={compareSelected.length === 0}
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      <div className="feature-search-row">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search features"
+          className="feature-search"
+        />
+      </div>
+
+      {isCompareMode && compareSelected.length > 0 && (
+        <div className="feature-chip-list">
+          {compareSelected.map((idx) => (
+            <button
+              key={`chip-${idx}`}
+              type="button"
+              className="feature-chip"
+              onClick={() => handleFeatureAction(idx)}
             >
-              <div className="legend-item family-header" style={{ fontWeight: 600, gap: 8 }}>
-                <span className="legend-swatch" style={{ background: famColor }} />
-                <span>Family {famId}</span>
-                <span style={{ flex: 1 }} />
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <button title="Add all in family" onClick={() => setSelected([...selectedSet, ...indices])} style={{ height: 22, padding: '0 6px', borderRadius: 4, border: '1px solid #e5e7eb', background: '#fff' }}>All+</button>
-                  <button title="Select only this family" onClick={() => setSelected(indices)} style={{ height: 22, padding: '0 6px', borderRadius: 4, border: '1px solid #e5e7eb', background: '#fff' }}>Only</button>
-                  <button title="Clear this family" onClick={() => setSelected([...Array.from(selectedSet)].filter(i => !indices.includes(i)))} style={{ height: 22, padding: '0 6px', borderRadius: 4, border: '1px solid #e5e7eb', background: '#fff' }}>Clear</button>
-                </div>
-              </div>
-              {indices.map((idx) => (
-                <label key={idx}
-                       className={`legend-item feature${visibleSet.has(idx) ? ' visible' : ''} ${editMode ? 'draggable' : ''}`}
-                       style={{ paddingLeft: 22, gap: 8 }}
-                       draggable={!!editMode}
-                       onDragStart={editMode ? (e) => handleDragStartFeature(idx, e) : undefined}
-                >
+              <span
+                className="legend-swatch"
+                style={{ background: activeFeatureColorMap[idx] || '#d1d5db' }}
+              />
+              <span>{col_labels[idx]}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {message && <div className="hint" style={{ color: '#b45309', marginTop: 0 }}>{message}</div>}
+
+      <div className="feature-summary">
+        {mode === 'default' && defaultFeatureIndex !== null && defaultFeatureIndex >= 0 && defaultFeatureIndex < col_labels.length
+          ? `Active feature: ${col_labels[defaultFeatureIndex]}`
+          : null}
+        {isCompareMode ? `Selected: ${compareSelected.length}/${compareCap}` : null}
+        {isOverviewMode ? 'All features selected.' : null}
+      </div>
+
+      <div className="legend-list">
+        {filtered.map((idx) => {
+          const selected = isSelected(idx)
+          const disabled = isCompareMode && !selected && compareSelected.length >= compareCap
+          const controlType = isCompareMode ? 'checkbox' : 'radio'
+          return (
+            <button
+              key={idx}
+              type="button"
+              className={`feature-row${selected ? ' active' : ''}`}
+              onClick={() => handleFeatureAction(idx)}
+              disabled={disabled}
+            >
+              <span className="feature-row-main">
+                {isOverviewMode ? (
+                  <span className="feature-open-indicator">Open</span>
+                ) : (
                   <input
-                    type="checkbox"
-                    checked={selectedSet.has(idx)}
-                    onChange={(e) => {
-                      const next = new Set(selectedSet)
-                      if (e.target.checked) next.add(idx); else next.delete(idx)
-                      setSelected(Array.from(next))
-                    }}
-                    style={{ margin: 0 }}
+                    type={controlType}
+                    readOnly
+                    checked={selected}
+                    disabled={disabled}
+                    tabIndex={-1}
                   />
-                  <span className="legend-swatch" style={{ background: colors[idx] || famColor }} />
-                  <span title={col_labels[idx]} style={{ flex: 1 }}>{col_labels[idx]}</span>
-                </label>
-              ))}
-            </div>
+                )}
+                <span
+                  className="legend-swatch"
+                  style={{ background: activeFeatureColorMap[idx] || '#f3f4f6' }}
+                />
+                <span className="feature-label" title={col_labels[idx]}>
+                  {col_labels[idx]}
+                </span>
+              </span>
+              <span className="feature-row-action">{rowActionLabel(idx)}</span>
+            </button>
           )
         })}
-        {editMode && (
-          <div className={`new-family ${dragOverFam === '__new__' ? 'drop-target' : ''}`}
-               onDragOver={(e) => handleDragOverFamily('__new__', e)}
-               onDragLeave={handleDragLeaveFamily}
-               onDrop={handleDropToNewFamily}
-          >
-            + New Family (drop feature here)
-          </div>
+        {filtered.length === 0 && (
+          <div className="hint">No features match “{query}”.</div>
         )}
-        <div className="legend-item" style={{ justifyContent: 'space-between', marginTop: 8 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="checkbox" checked={editMode} onChange={(e) => setEditMode(e.target.checked)} />
-            Edit families
-          </label>
-          <button
-            disabled={!editMode || !dataset}
-            onClick={() => onApplyFamilies && onApplyFamilies(families)}
-            style={{ height: 28, padding: '0 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: editMode ? '#fff' : '#f3f4f6' }}
-          >Apply</button>
-        </div>
       </div>
-    )
-  }
-  // Fallback: flat list
-  return (
-    <div className="legend-list">
-      {/* Top-K selection slider for fallback list as well */}
-      <div className="legend-item" style={{ gap: 10 }}>
-        <label style={{ fontSize: 12, color: '#6b7280' }}>Top-K</label>
-        <div className="slider-row" style={{ flex: 1 }}>
-          <input
-            type="range"
-            min={0}
-            max={col_labels.length || 0}
-            step={1}
-            value={effectiveSelectedArray.length}
-            onChange={(e) => {
-              const k = Math.max(0, Math.min((col_labels.length || 0), Number(e.target.value)))
-              const next = ranking.slice(0, k)
-              setSelected(next)
-            }}
-          />
-          <span className="control-val">{effectiveSelectedArray.length}</span>
-        </div>
-      </div>
-      {null}
-      {col_labels.map((name, idx) => (
-        <label key={idx} className={`legend-item${visibleSet.has(idx) ? ' visible' : ''}`} style={{ gap: 8 }}>
-          <input
-            type="checkbox"
-            checked={selectedSet.has(idx)}
-            onChange={(e) => {
-              const next = new Set(selectedSet)
-              if (e.target.checked) next.add(idx); else next.delete(idx)
-              setSelected(Array.from(next))
-            }}
-            style={{ margin: 0 }}
-          />
-          <span className="legend-swatch" style={{ background: colors[idx] || '#888' }} />
-          <span title={name}>{name}</span>
-        </label>
-      ))}
     </div>
   )
 }

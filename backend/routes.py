@@ -181,13 +181,6 @@ def compute():
     grid_res = int(body.get("gridRes") or getattr(fw_config, "DEFAULT_GRID_RES", 25))
     include_raw = bool(body.get("includeRawGradients", False))
     cfg_overrides = body.get("config") or {}
-    manual_families = None
-    try:
-        mf = cfg_overrides.get("familyAssignments") if isinstance(cfg_overrides, dict) else None
-        if isinstance(mf, list):
-            manual_families = [int(x) for x in mf]
-    except Exception:
-        manual_families = None
 
     if not dataset_id or dataset_id not in DATASETS:
         return jsonify({"error": "Unknown dataset_id"}), 404
@@ -274,6 +267,13 @@ def compute():
     # Selection (topK or single feature)
     import numpy as _np
     n_features = len(col_labels)
+    try:
+        feature_ranking_arr, avg_magnitudes = fw_data.pick_top_k_features(all_grad_vectors, k=n_features)
+        feature_ranking = [int(x) for x in _np.array(feature_ranking_arr).tolist()]
+    except Exception:
+        feature_ranking = list(range(n_features))
+        avg_magnitudes = _np.zeros((n_features,), dtype=float)
+    default_feature_index = int(feature_ranking[0]) if feature_ranking else 0
     if feature_index is not None:
         try:
             fi = int(feature_index)
@@ -294,8 +294,7 @@ def compute():
             except Exception:
                 return jsonify({"error": "topK must be an integer or 'all'"}), 400
             top_k = max(1, min(top_k, n_features))
-            tk_indices, _ = fw_data.pick_top_k_features(all_grad_vectors, k=top_k)
-            top_k_indices = _np.array(tk_indices).tolist()
+            top_k_indices = feature_ranking[:top_k]
             selection_obj = {"topKIndices": top_k_indices}
 
     # Apply per-request config overrides safely
@@ -331,57 +330,11 @@ def compute():
         except Exception:
             pass
 
-    # Family colors to match original createwind.py behavior
-    family_assignments = None
+    # Stable per-feature colors for optional frontend use. The redesigned web app
+    # owns mode-specific coloring and does not rely on family/group metadata.
     try:
-        use_per_feature = bool(getattr(fw_config, 'USE_PER_FEATURE_COLORS', False))
-        if use_per_feature:
-            # Ignore families; assign distinct colors to each feature
-            palette = list(getattr(fw_config, 'GLASBEY_COLORS', [])) or ['#1f77b4']
-            colors = [palette[i % len(palette)] for i in range(n_features)]
-            # Treat each feature as its own family for legend consistency
-            family_assignments = list(range(n_features))
-        else:
-            from featurewind.analysis import feature_clustering
-            from featurewind.visualization import color_system
-            n_families = min(n_features, int(getattr(fw_config, 'MAX_FEATURE_FAMILIES', 4)))
-            if manual_families and len(manual_families) == n_features:
-                family_assignments = manual_families
-            else:
-                family_assignments, _, _ = feature_clustering.cluster_features_by_direction(
-                    grid_u_all_feats, grid_v_all_feats, n_families=n_families
-                )
-            # Assign family colors (same color within a family)
-            colors = color_system.assign_family_colors(family_assignments)
-            # Distinct colors when few are selected — applied per FAMILY to keep same-family colors identical
-            try:
-                n_selected = len(top_k_indices) if feature_index is None else 1
-                if (bool(getattr(fw_config, 'COLOR_BY_FEATURE_WHEN_FEW', True))
-                    and n_selected <= int(getattr(fw_config, 'FEATURE_COLOR_DISTINCT_THRESHOLD', 5))):
-                    palette = list(getattr(fw_config, 'GLASBEY_COLORS', [])) or ['#1f77b4']
-                    # Determine families present among the selected features
-                    sel_feats = (top_k_indices if feature_index is None else [feature_index])
-                    sel_families_ordered = []
-                    fam_to_color = {}
-                    for feat_idx in sel_feats:
-                        fam_id = int(family_assignments[feat_idx]) if family_assignments is not None else feat_idx
-                        if fam_id not in fam_to_color:
-                            # Assign next palette color to this family
-                            color = palette[len(fam_to_color) % len(palette)]
-                            fam_to_color[fam_id] = color
-                            sel_families_ordered.append(fam_id)
-                    # Apply family color to all features, preserving same color within each family
-                    for idx, fam_id in enumerate(family_assignments):
-                        if fam_id in fam_to_color:
-                            colors[idx] = fam_to_color[fam_id]
-            except Exception:
-                pass
-        # Single feature override color
-        try:
-            if feature_index is not None and 0 <= feature_index < len(colors):
-                colors[feature_index] = getattr(fw_config, 'SINGLE_FEATURE_COLOR', '#EE6677')
-        except Exception:
-            pass
+        palette = list(getattr(fw_config, "GLASBEY_COLORS", [])) or ["#1f77b4"]
+        colors = [palette[i % len(palette)] for i in range(n_features)]
     except Exception:
         # Fallback: simple distinct palette
         palette = list(getattr(fw_config, "GLASBEY_COLORS", [])) or ["#1f77b4"]
@@ -419,10 +372,11 @@ def compute():
         "vAll": tolist(grid_v_all_feats),
         "dominant": tolist(cell_dominant_features),
         "colors": colors,
+        "featureRanking": feature_ranking,
+        "defaultFeatureIndex": default_feature_index,
+        "featureMagnitudes": tolist(avg_magnitudes),
         # Per-point labels (for marker shapes). Strings or numbers as provided.
         **({"point_labels": tolist(point_labels)} if point_labels is not None else {}),
-        # Return family assignments when available
-        **({"family_assignments": tolist(family_assignments)} if 'family_assignments' in locals() else {}),
         "global_sum_magnitude_max": global_sum_magnitude_max,
         "selection": selection_obj,
         "meta": {"dtypeHint": "float32", "order": "row-major"},
@@ -449,26 +403,5 @@ def compute():
 
 @api_bp.post("/colors")
 def recolor():
-    """Assign colors from provided family assignments without recomputing grids.
-
-    Body JSON:
-      { dataset_id: str, familyAssignments: number[] }
-    Returns:
-      { colors: string[], family_assignments: number[] }
-    """
-    body = request.get_json(silent=True) or {}
-    dataset_id = body.get("dataset_id")
-    fams = body.get("familyAssignments")
-    if not dataset_id or dataset_id not in DATASETS:
-        return jsonify({"error": "Unknown dataset_id"}), 404
-    entry = DATASETS[dataset_id]
-    labels = entry.get("labels") or []
-    if not isinstance(fams, list) or len(fams) != len(labels):
-        return jsonify({"error": "familyAssignments must be a list of length equal to number of features"}), 400
-    try:
-        fams_int = [int(x) for x in fams]
-        from featurewind.visualization import color_system
-        colors = color_system.assign_family_colors(fams_int)
-        return jsonify({"colors": colors, "family_assignments": fams_int})
-    except Exception as e:
-        return jsonify({"error": f"Failed to assign colors: {e}"}), 500
+    """Deprecated: feature-family recoloring has been removed from the web app flow."""
+    return jsonify({"error": "Feature-family recoloring is deprecated in the web app API."}), 410

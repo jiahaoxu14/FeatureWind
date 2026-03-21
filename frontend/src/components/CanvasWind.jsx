@@ -34,6 +34,9 @@ function bilinearSample(grid, gx, gy) {
 
 export default function CanvasWind({
   payload,
+  mode = 'default',
+  featureColorMap = null,
+  neutralColor = '#4b5563',
   particleCount = 1000,
   onHover,
   onSelectCell,
@@ -91,6 +94,8 @@ export default function CanvasWind({
   const selectPointsModeRef = useRef(!!selectPointsMode)
   const pointBrushRadiusPxRef = useRef(Math.max(4, Math.floor(pointBrushRadiusPx || 14)))
   const selectedPointIndicesRef = useRef(Array.isArray(selectedPointIndices) ? selectedPointIndices : [])
+  const staticTrailSeedRef = useRef(null)
+  const staticTrailRef = useRef(null)
   // Point brushing state: only becomes true after movement threshold
   const pointPointerDownRef = useRef(false)
   const pointBrushingRef = useRef(false)
@@ -240,6 +245,7 @@ export default function CanvasWind({
 
     // Optional mask helpers
     let hasMask = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
+    const isOverviewMode = mode === 'overview'
 
     // Precompute list of unmasked cells for efficient respawn
     let unmaskedList = []
@@ -250,6 +256,150 @@ export default function CanvasWind({
         }
       }
       if (unmaskedList.length === 0) hasMask = false
+    }
+    const dxWorld = (xmax - xmin) / W
+    const dyWorld = (ymax - ymin) / H
+
+    function hexToRgb(hex) {
+      if (!hex || typeof hex !== 'string') return [20, 20, 20]
+      const m = hex.match(/^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i)
+      if (!m) return [20, 20, 20]
+      return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+    }
+
+    function worldToCell(x, y) {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+      if (x < xmin || x > xmax || y < ymin || y > ymax) return null
+      const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
+      const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
+      return { i, j }
+    }
+
+    function worldToGrid(x, y) {
+      const gx = (x - xmin) / (xmax - xmin) * (W - 1)
+      const gy = (y - ymin) / (ymax - ymin) * (H - 1)
+      return [gx, gy]
+    }
+
+    function worldToScreen(x, y) {
+      const v = viewRef.current
+      const sx = (x - v.xmin) / (v.xmax - v.xmin) * Wpx
+      const sy = Hpx - (y - v.ymin) / (v.ymax - v.ymin) * Hpx
+      return [sx, sy]
+    }
+
+    function dominantFeatureForCell(i, j) {
+      if (Array.isArray(featureIndices) && featureIndices.length > 1) {
+        let bestIdx = -1
+        let bestMag2 = -1
+        for (const fi of featureIndices) {
+          const u = (uAll[fi]?.[i]?.[j] ?? 0)
+          const v = (vAll[fi]?.[i]?.[j] ?? 0)
+          const mag2 = u * u + v * v
+          if (mag2 > bestMag2) { bestMag2 = mag2; bestIdx = fi }
+        }
+        return bestIdx
+      }
+      if (Array.isArray(featureIndices) && featureIndices.length === 1) return featureIndices[0]
+      const fid = dominant?.[i]?.[j]
+      return (typeof fid === 'number') ? fid : -1
+    }
+
+    function featureHex(fid) {
+      if (isOverviewMode) return neutralColor
+      if (featureColorMap && typeof featureColorMap === 'object' && typeof featureColorMap[fid] === 'string') {
+        return featureColorMap[fid]
+      }
+      if (Array.isArray(colors) && fid >= 0 && fid < colors.length && typeof colors[fid] === 'string') {
+        return colors[fid]
+      }
+      return neutralColor
+    }
+
+    function colorForCell(i, j) {
+      if (isOverviewMode) return hexToRgb(neutralColor)
+      const fid = dominantFeatureForCell(i, j)
+      if (typeof fid === 'number' && fid >= 0) {
+        return hexToRgb(featureHex(fid))
+      }
+      return hexToRgb(neutralColor)
+    }
+
+    function isMaskedCell(i, j) {
+      if (i < 0 || i >= H || j < 0 || j >= W) return true
+      if (hasMask) return !unmasked[i][j]
+      return false
+    }
+
+    function isMaskedAt(x, y) {
+      const MASK_THRESHOLD = 1e-6
+      const cell = worldToCell(x, y)
+      if (!cell) return true
+      const { i, j } = cell
+      if (hasMask) return !unmasked[i][j]
+      const [gx, gy] = worldToGrid(x, y)
+      const u = bilinearSample(uSum, gx, gy)
+      const v = bilinearSample(vSum, gx, gy)
+      if (Math.hypot(u, v) <= MASK_THRESHOLD) return true
+      if (dominant && dominant[i] && typeof dominant[i][j] === 'number') {
+        return dominant[i][j] === -1
+      }
+      return false
+    }
+
+    function resolveStaticTrailStart(seed) {
+      if (!seed || typeof seed !== 'object') return null
+      if (typeof seed.pointIndex === 'number' && seed.pointIndex >= 0 && seed.pointIndex < positions.length) {
+        const pt = positions[seed.pointIndex]
+        if (Array.isArray(pt) && pt.length >= 2) return { x: pt[0], y: pt[1] }
+      }
+      if (typeof seed.x === 'number' && typeof seed.y === 'number') return { x: seed.x, y: seed.y }
+      return null
+    }
+
+    function buildStaticTrail(startX, startY) {
+      const startCell = worldToCell(startX, startY)
+      if (!startCell || isMaskedCell(startCell.i, startCell.j)) return null
+      const points = [{ x: startX, y: startY }]
+      const segments = []
+      const stepSize = 0.45 * Math.min(dxWorld, dyWorld)
+      const maxSteps = Math.max(64, Math.min(4000, W * H * 4))
+      const visitCounts = new Map()
+      let x = startX
+      let y = startY
+      for (let step = 0; step < maxSteps; step++) {
+        const cell = worldToCell(x, y)
+        if (!cell || isMaskedCell(cell.i, cell.j)) break
+        const key = `${cell.i}:${cell.j}`
+        const visits = (visitCounts.get(key) || 0) + 1
+        visitCounts.set(key, visits)
+        if (visits > 24) break
+
+        const u = (uSum?.[cell.i]?.[cell.j] ?? 0)
+        const v = (vSum?.[cell.i]?.[cell.j] ?? 0)
+        const mag = Math.hypot(u, v)
+        if (!(mag > 1e-10)) break
+
+        const scale = stepSize / mag
+        const nx = x + u * scale
+        const ny = y + v * scale
+        if (!Number.isFinite(nx) || !Number.isFinite(ny)) break
+
+        const nextCell = worldToCell(nx, ny)
+        if (!nextCell || isMaskedCell(nextCell.i, nextCell.j)) break
+
+        segments.push({
+          x0: x,
+          y0: y,
+          x1: nx,
+          y1: ny,
+          rgb: colorForCell(cell.i, cell.j),
+        })
+        points.push({ x: nx, y: ny })
+        x = nx
+        y = ny
+      }
+      return { points, segments, start: { x: startX, y: startY } }
     }
 
     function randomSpawn() {
@@ -293,44 +443,15 @@ export default function CanvasWind({
       return { x, y, age: 0, hist, initX: x, initY: y }
     })
 
-    function worldToGrid(x, y) {
-      const gx = (x - xmin) / (xmax - xmin) * (W - 1)
-      const gy = (y - ymin) / (ymax - ymin) * (H - 1)
-      return [gx, gy]
-    }
-    function worldToScreen(x, y) {
-      const v = viewRef.current
-      const sx = (x - v.xmin) / (v.xmax - v.xmin) * Wpx
-      const sy = Hpx - (y - v.ymin) / (v.ymax - v.ymin) * Hpx
-      return [sx, sy]
-    }
-
     // Frame counter for periodic behaviors
     let frameCounter = 0
 
-    function step(dt) {
-      const MASK_THRESHOLD = 1e-6
-      function isMaskedAt(x, y) {
-        // Convert to grid indices
-        const gx = (x - xmin) / (xmax - xmin) * (W - 1)
-        const gy = (y - ymin) / (ymax - ymin) * (H - 1)
-        const mi = Math.max(0, Math.min(H - 1, Math.round(gy)))
-        const mj = Math.max(0, Math.min(W - 1, Math.round(gx)))
-        // 1) Use explicit unmasked grid when available
-        if (hasMask) {
-          return !unmasked[mi][mj]
-        }
-        // 2) Fallback: use field magnitude threshold
-        const u = bilinearSample(uSum, gx, gy)
-        const v = bilinearSample(vSum, gx, gy)
-        if (Math.hypot(u, v) <= MASK_THRESHOLD) return true
-        // 3) Last resort: dominance grid -1 means masked
-        if (dominant && dominant[mi] && typeof dominant[mi][mj] === 'number') {
-          return dominant[mi][mj] === -1
-        }
-        return false
-      }
+    const currentStaticTrailStart = resolveStaticTrailStart(staticTrailSeedRef.current)
+    staticTrailRef.current = currentStaticTrailStart
+      ? buildStaticTrail(currentStaticTrailStart.x, currentStaticTrailStart.y)
+      : null
 
+    function step(dt) {
       for (const p of particles) {
         const [gx, gy] = worldToGrid(p.x, p.y)
         let u = bilinearSample(uSum, gx, gy)
@@ -401,7 +522,7 @@ export default function CanvasWind({
 
       // If aggregated cell gradients are shown, also color each cell by its dominant feature
       // Also apply when showing particle init overlays
-      if ((showCellAggregatedGradientsRef.current || showParticleInitsRef.current) && colors && colors.length) {
+      if (!isOverviewMode && (showCellAggregatedGradientsRef.current || showParticleInitsRef.current)) {
         const cellWpx = Wpx / W
         const cellHpx = Hpx / H
         for (let i = 0; i < H; i++) {
@@ -424,8 +545,8 @@ export default function CanvasWind({
             } else if (dominant && dominant[i] && typeof dominant[i][j] === 'number') {
               fid = dominant[i][j]
             }
-            if (typeof fid !== 'number' || fid < 0 || fid >= colors.length) continue
-            const rgb = hexToRgb(colors[fid])
+            if (typeof fid !== 'number' || fid < 0) continue
+            const rgb = colorForCell(i, j)
             const sx0 = j * cellWpx
             const sy1 = Hpx - (i + 1) * cellHpx
             ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.28)`
@@ -711,7 +832,7 @@ export default function CanvasWind({
       if (showPointGradientsRef.current && positions) {
         // Use manually checked features when provided; otherwise fall back to current selection indices
         const provided = gradientFeatureIndicesRef.current
-        const featList = (Array.isArray(provided) && provided.length > 0) ? provided : indices
+        const featList = Array.isArray(provided) ? provided : indices
         if (Array.isArray(featList) && featList.length > 0) {
           const p99Sum = magInfo?.p99 || 1.0
           const sxScale = Wpx / (xmax - xmin)
@@ -744,7 +865,7 @@ export default function CanvasWind({
               const ex = sx + dirx * len
               const ey = sy + diry * len
               // Stroke color with field-strength alpha
-              const col = (colors && fi >= 0 && fi < colors.length) ? colors[fi] : '#222222'
+              const col = featureHex(fi)
               ctx.strokeStyle = col
               ctx.globalAlpha = 0.9
               // Main shaft
@@ -773,7 +894,7 @@ export default function CanvasWind({
       // Optional: per-feature gradients at each grid cell center
       if (showCellGradientsRef.current) {
         const provided = gradientFeatureIndicesRef.current
-        const featList = (Array.isArray(provided) && provided.length > 0) ? provided : indices
+        const featList = Array.isArray(provided) ? provided : indices
         if (Array.isArray(featList) && featList.length > 0) {
           const p99Sum = magInfo?.p99 || 1.0
           const sxScale = Wpx / (xmax - xmin)
@@ -808,7 +929,7 @@ export default function CanvasWind({
                 const len = aField * baseLen
                 const ex = sx + dirx * len
                 const ey = sy + diry * len
-                const col = (colors && fi >= 0 && fi < colors.length) ? colors[fi] : '#222222'
+                const col = featureHex(fi)
                 ctx.strokeStyle = col
                 ctx.globalAlpha = 0.9
                 ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke()
@@ -873,24 +994,11 @@ export default function CanvasWind({
       ctx.lineWidth = Math.max(0.5, Number(trailLineWidth) || 1.2)
       ctx.lineCap = 'round'
       const p99 = magInfo?.p99 || 1.0
-
-      function hexToRgb(hex) {
-        if (!hex || typeof hex !== 'string') return [20, 20, 20]
-        const m = hex.match(/^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i)
-        if (!m) return [20, 20, 20]
-        return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
-      }
       // If exactly one feature is manually selected, force its color globally
       const singleColorOverride = (Array.isArray(featureIndices) && featureIndices.length === 1)
         ? (function () {
             const idx = featureIndices[0]
-            function hexToRgb(hex) {
-              if (!hex || typeof hex !== 'string') return [20, 20, 20]
-              const m = hex.match(/^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i)
-              if (!m) return [20, 20, 20]
-              return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
-            }
-            const c = (colors && idx >= 0 && idx < colors.length) ? colors[idx] : '#141414'
+            const c = featureHex(idx)
             return hexToRgb(c)
           })()
         : null
@@ -916,8 +1024,10 @@ export default function CanvasWind({
           const aField = Math.max(0, Math.min(1, m / p99))
 
           // Determine segment color by family
-          let rgb = [20, 20, 20]
-          if (singleColorOverride) {
+          let rgb = hexToRgb(neutralColor)
+          if (isOverviewMode) {
+            rgb = hexToRgb(neutralColor)
+          } else if (singleColorOverride) {
             rgb = singleColorOverride
           } else {
             const mi = Math.max(0, Math.min(H - 1, Math.round(gy0)))
@@ -932,12 +1042,12 @@ export default function CanvasWind({
                 const mag2 = u*u + v*v
                 if (mag2 > bestMag2) { bestMag2 = mag2; bestIdx = fi }
               }
-              if (bestIdx >= 0) rgb = hexToRgb(colors[bestIdx] || '#141414')
-            } else if (dominant && colors && colors.length) {
+              if (bestIdx >= 0) rgb = hexToRgb(featureHex(bestIdx))
+            } else if (dominant) {
               // Fallback to backend-provided dominant feature
               const fid = dominant[mi]?.[mj]
-              if (typeof fid === 'number' && fid >= 0 && fid < colors.length) {
-                rgb = hexToRgb(colors[fid])
+              if (typeof fid === 'number' && fid >= 0) {
+                rgb = hexToRgb(featureHex(fid))
               }
             }
           }
@@ -993,6 +1103,72 @@ export default function CanvasWind({
         }
       }
 
+      const staticTrail = staticTrailRef.current
+      if (staticTrail && Array.isArray(staticTrail.points) && staticTrail.points.length > 0) {
+        const points = staticTrail.points
+        const segments = Array.isArray(staticTrail.segments) ? staticTrail.segments : []
+        if (points.length >= 2) {
+          ctx.lineJoin = 'round'
+          ctx.lineCap = 'round'
+          ctx.strokeStyle = 'rgba(255,255,255,0.96)'
+          ctx.lineWidth = Math.max(2.5, Number(trailLineWidth) + 2.0)
+          ctx.beginPath()
+          const [sxStart, syStart] = worldToScreen(points[0].x, points[0].y)
+          ctx.moveTo(sxStart, syStart)
+          for (let k = 1; k < points.length; k++) {
+            const [sx, sy] = worldToScreen(points[k].x, points[k].y)
+            ctx.lineTo(sx, sy)
+          }
+          ctx.stroke()
+
+          ctx.lineWidth = Math.max(1.5, Number(trailLineWidth) + 0.8)
+          for (const seg of segments) {
+            const rgb = Array.isArray(seg.rgb) ? seg.rgb : [20, 20, 20]
+            const [sx0, sy0] = worldToScreen(seg.x0, seg.y0)
+            const [sx1, sy1] = worldToScreen(seg.x1, seg.y1)
+            ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.98)`
+            ctx.beginPath()
+            ctx.moveTo(sx0, sy0)
+            ctx.lineTo(sx1, sy1)
+            ctx.stroke()
+          }
+
+          const lastSeg = segments[segments.length - 1]
+          if (lastSeg) {
+            const rgb = Array.isArray(lastSeg.rgb) ? lastSeg.rgb : [20, 20, 20]
+            const [sx0, sy0] = worldToScreen(lastSeg.x0, lastSeg.y0)
+            const [sx1, sy1] = worldToScreen(lastSeg.x1, lastSeg.y1)
+            const ang = Math.atan2(sy1 - sy0, sx1 - sx0)
+            const headLen = Math.max(8, Math.min(16, Math.floor(Math.min(Wpx, Hpx) * 0.02)))
+            const phi = Math.PI / 7
+            ctx.lineWidth = Math.max(1.5, Number(trailLineWidth) + 0.8)
+            ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.98)`
+            ctx.beginPath()
+            ctx.moveTo(sx1, sy1)
+            ctx.lineTo(sx1 - headLen * Math.cos(ang - phi), sy1 - headLen * Math.sin(ang - phi))
+            ctx.moveTo(sx1, sy1)
+            ctx.lineTo(sx1 - headLen * Math.cos(ang + phi), sy1 - headLen * Math.sin(ang + phi))
+            ctx.stroke()
+          }
+        }
+
+        const start = staticTrail.start || points[0]
+        if (start) {
+          const cell = worldToCell(start.x, start.y)
+          const rgb = cell ? colorForCell(cell.i, cell.j) : [20, 20, 20]
+          const [sx, sy] = worldToScreen(start.x, start.y)
+          ctx.fillStyle = 'rgba(255,255,255,0.98)'
+          ctx.beginPath()
+          ctx.arc(sx, sy, 5.2, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.98)`
+          ctx.lineWidth = 2.0
+          ctx.beginPath()
+          ctx.arc(sx, sy, 4.2, 0, Math.PI * 2)
+          ctx.stroke()
+        }
+      }
+
       // Draw particle initialization places and their driving vectors (from summed field)
       if (showParticleInitsRef.current) {
         const p99 = magInfo?.p99 || 1.0
@@ -1018,23 +1194,23 @@ export default function CanvasWind({
           const aField = Math.max(0, Math.min(1, m / p99))
           const [sx0, sy0] = worldToScreen(x0, y0)
           // Choose color by dominant feature at init cell (respect current selection if provided)
-          let colorHex = '#000'
+          let colorHex = neutralColor
           const mi = Math.max(0, Math.min(H - 1, Math.round(gy0)))
           const mj = Math.max(0, Math.min(W - 1, Math.round(gx0)))
-          if (Array.isArray(featureIndices) && featureIndices.length > 1) {
+          if (!isOverviewMode && Array.isArray(featureIndices) && featureIndices.length > 1) {
             let bestIdx = -1, bestMag2 = -1
             for (const fi of featureIndices) {
               const uu = (uAll[fi]?.[mi]?.[mj] ?? 0), vv = (vAll[fi]?.[mi]?.[mj] ?? 0)
               const mag2 = uu*uu + vv*vv
               if (mag2 > bestMag2) { bestMag2 = mag2; bestIdx = fi }
             }
-            if (bestIdx >= 0 && colors && bestIdx < colors.length) colorHex = colors[bestIdx]
-          } else if (Array.isArray(featureIndices) && featureIndices.length === 1) {
+            if (bestIdx >= 0) colorHex = featureHex(bestIdx)
+          } else if (!isOverviewMode && Array.isArray(featureIndices) && featureIndices.length === 1) {
             const idx = featureIndices[0]
-            if (colors && idx >= 0 && idx < colors.length) colorHex = colors[idx]
-          } else if (dominant && colors && colors.length) {
+            colorHex = featureHex(idx)
+          } else if (!isOverviewMode && dominant) {
             const fid = dominant[mi]?.[mj]
-            if (typeof fid === 'number' && fid >= 0 && fid < colors.length) colorHex = colors[fid]
+            if (typeof fid === 'number' && fid >= 0) colorHex = featureHex(fid)
           }
           ctx.fillStyle = colorHex
           ctx.strokeStyle = colorHex
@@ -1168,6 +1344,29 @@ export default function CanvasWind({
       const v = viewRef.current
       const x = v.xmin + (cx / Wpx) * (v.xmax - v.xmin)
       const y = v.ymin + ((Hpx - cy) / Hpx) * (v.ymax - v.ymin)
+      const clickRadius = Math.max(6, pointBrushRadiusPxRef.current || 14)
+      const clickRadius2 = clickRadius * clickRadius
+      let clickedPointIdx = -1
+      let bestPointD2 = Infinity
+      for (let pIdx = 0; pIdx < positions.length; pIdx++) {
+        const [px, py] = positions[pIdx]
+        const [sx, sy] = worldToScreen(px, py)
+        const dx = sx - cx
+        const dy = sy - cy
+        const d2 = dx * dx + dy * dy
+        if (d2 <= clickRadius2 && d2 < bestPointD2) {
+          bestPointD2 = d2
+          clickedPointIdx = pIdx
+        }
+      }
+      if (clickedPointIdx >= 0) {
+        const [px, py] = positions[clickedPointIdx]
+        staticTrailSeedRef.current = { x: px, y: py, pointIndex: clickedPointIdx }
+        staticTrailRef.current = buildStaticTrail(px, py)
+      } else {
+        staticTrailSeedRef.current = null
+        staticTrailRef.current = null
+      }
       // grid indices
       const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
       const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
@@ -1219,6 +1418,7 @@ export default function CanvasWind({
     }
   }, [
     bbox,
+    mode,
     grid_res,
     uSum,
     vSum,
@@ -1227,6 +1427,8 @@ export default function CanvasWind({
     point_labels,
     colors,
     dominant,
+    featureColorMap,
+    neutralColor,
     featureIndices,
     pointColorStats,
     particleCount,

@@ -16,7 +16,20 @@ function bilinear(grid, gx, gy) {
   return top * (1 - b) + bot * b
 }
 
-export default function WindVane({ payload, focus, selectedCells = [], size = null, useConvexHull = true, showHull = false, showLabels = false, featureIndices = null, onCanvasElement = null }) {
+export default function WindVane({
+  payload,
+  mode = 'default',
+  focus,
+  selectedCells = [],
+  size = null,
+  useConvexHull = true,
+  showHull = false,
+  showLabels = false,
+  featureIndices = null,
+  featureColorMap = null,
+  neutralColor = '#4b5563',
+  onCanvasElement = null,
+}) {
   const containerRef = useRef(null)
   const canvasRef = useRef(null)
   const [canvasSize, setCanvasSize] = useState(typeof size === 'number' && size > 0 ? size : 220)
@@ -43,6 +56,7 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
   const { bbox = [0, 1, 0, 1], grid_res = 25, uAll = [], vAll = [], colors = [], selection = {}, unmasked = null, dominant = null, col_labels = [] } = payload || {}
   const [xmin, xmax, ymin, ymax] = bbox
   const H = grid_res, W = grid_res
+  const isOverviewMode = mode === 'overview'
 
   const indices = useMemo(() => {
     if (Array.isArray(featureIndices)) return featureIndices // honor manual array even if empty
@@ -86,6 +100,16 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
     const hasUnmasked = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
     const hasDominant = Array.isArray(dominant) && dominant.length === H && dominant[0].length === W
     const useSelection = Array.isArray(selectedCells) && selectedCells.length > 0
+    function featureHex(idx) {
+      if (isOverviewMode) return neutralColor
+      if (featureColorMap && typeof featureColorMap === 'object' && typeof featureColorMap[idx] === 'string') {
+        return featureColorMap[idx]
+      }
+      if (Array.isArray(colors) && idx >= 0 && idx < colors.length && typeof colors[idx] === 'string') {
+        return colors[idx]
+      }
+      return neutralColor
+    }
     // Compute grid indices using Python's floor mapping from world coordinates
     let xCoord = (xmin + xmax) / 2
     let yCoord = (ymin + ymax) / 2
@@ -138,7 +162,7 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
       maxMag = Math.max(maxMag, mag)
       sumUx += u
       sumVy += v
-      const color = colors[idx % colors.length] || '#888888'
+      const color = featureHex(idx)
       featureVectors.push({ u, v, mag, color })
     }
     // Fallback mask check by magnitude if we didn't have mask grids
@@ -238,95 +262,89 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
         } catch (e) { hullSet = null }
       }
 
-      // Draw per-feature arrows (filtered by hull if enabled) with arrow heads
-      featureVectors.forEach((fv, i) => {
-        if (hullSet && !hullSet.has(i)) return
-        const scale = fv.mag > 0 ? (ringR * 0.9 * (fv.mag / (maxMag || 1))) : 0
-        const ux = fv.mag > 0 ? (fv.u / fv.mag) : 0
-        const uy = fv.mag > 0 ? (fv.v / fv.mag) : 0
-        const x2 = cx + ux * scale
-        const y2 = cy - uy * scale
-        ctx.strokeStyle = fv.color
-        ctx.lineWidth = 2
-        ctx.beginPath()
-        ctx.moveTo(cx, cy)
-        ctx.lineTo(x2, y2)
-        ctx.stroke()
-        // Arrow head at endpoint (simple V-shape)
-        try {
-          const angle = Math.atan2(y2 - cy, x2 - cx)
-          const headLen = Math.max(6, ringR * 0.06) // pixels
-          const phi = Math.PI / 8 // 22.5 degrees
-          const xh1 = x2 - headLen * Math.cos(angle - phi)
-          const yh1 = y2 - headLen * Math.sin(angle - phi)
-          const xh2 = x2 - headLen * Math.cos(angle + phi)
-          const yh2 = y2 - headLen * Math.sin(angle + phi)
+      if (!isOverviewMode) {
+        // Draw per-feature arrows (filtered by hull if enabled) with arrow heads
+        featureVectors.forEach((fv, i) => {
+          if (hullSet && !hullSet.has(i)) return
+          const scale = fv.mag > 0 ? (ringR * 0.9 * (fv.mag / (maxMag || 1))) : 0
+          const ux = fv.mag > 0 ? (fv.u / fv.mag) : 0
+          const uy = fv.mag > 0 ? (fv.v / fv.mag) : 0
+          const x2 = cx + ux * scale
+          const y2 = cy - uy * scale
+          ctx.strokeStyle = fv.color
+          ctx.lineWidth = 2
           ctx.beginPath()
-          ctx.moveTo(x2, y2)
-          ctx.lineTo(xh1, yh1)
-          ctx.moveTo(x2, y2)
-          ctx.lineTo(xh2, yh2)
+          ctx.moveTo(cx, cy)
+          ctx.lineTo(x2, y2)
           ctx.stroke()
-        } catch (e) { /* ignore arrow head errors */ }
-
-        // Optional: feature label at the end of the vector
-        if (showLabels) {
           try {
-            const featIdx = indices[i]
-            const label = (Array.isArray(col_labels) && featIdx >= 0 && featIdx < col_labels.length) ? String(col_labels[featIdx]) : String(featIdx)
-            // Offset label forward along the arrow and slightly perpendicular to avoid overlap
-            const forward = Math.max(14, ringR * 0.10)
-            const normalOff = Math.max(6, ringR * 0.04)
-            // On-screen radial dir is (ux, -uy); a left normal is (uy, ux)
-            const lx = x2 + ux * forward + (uy) * normalOff
-            const ly = y2 - uy * forward + (ux) * normalOff
-            ctx.font = `${Math.max(10, Math.floor(ringR * 0.10))}px sans-serif`
-            ctx.textAlign = 'left'
-            ctx.textBaseline = 'middle'
-            // White halo for readability
-            ctx.lineWidth = 3
-            ctx.strokeStyle = '#ffffff'
-            ctx.strokeText(label, lx, ly)
-            // Colored text matching the vector color
-            ctx.fillStyle = fv.color || '#111'
-            ctx.fillText(label, lx, ly)
-          } catch (e) { /* ignore */ }
-        }
-      })
+            const angle = Math.atan2(y2 - cy, x2 - cx)
+            const headLen = Math.max(6, ringR * 0.06)
+            const phi = Math.PI / 8
+            const xh1 = x2 - headLen * Math.cos(angle - phi)
+            const yh1 = y2 - headLen * Math.sin(angle - phi)
+            const xh2 = x2 - headLen * Math.cos(angle + phi)
+            const yh2 = y2 - headLen * Math.sin(angle + phi)
+            ctx.beginPath()
+            ctx.moveTo(x2, y2)
+            ctx.lineTo(xh1, yh1)
+            ctx.moveTo(x2, y2)
+            ctx.lineTo(xh2, yh2)
+            ctx.stroke()
+          } catch (e) { /* ignore arrow head errors */ }
 
-      // Hover label (single): show nearest endpoint within threshold
-      if (hoverPt && endpoints && endpoints.length) {
-        let best = -1
-        let bestD2 = Infinity
-        for (let i = 0; i < endpoints.length; i++) {
-          if (hullSet && !hullSet.has(i)) continue
-          const ep = endpoints[i]
-          const dx = ep.x2 - hoverPt.x
-          const dy = ep.y2 - hoverPt.y
-          const d2 = dx*dx + dy*dy
-          if (d2 < bestD2) { bestD2 = d2; best = i }
-        }
-        if (best >= 0) {
-          const T = Math.max(10, ringR * 0.08)
-          if (Math.sqrt(bestD2) <= T) {
-            const ep = endpoints[best]
-            const featIdx = ep.idx
-            const label = (Array.isArray(col_labels) && featIdx >= 0 && featIdx < col_labels.length) ? String(col_labels[featIdx]) : String(featIdx)
-            // Offset past the head and a bit perpendicular to avoid overlap
-            const forward = Math.max(14, ringR * 0.10)
-            const normalOff = Math.max(6, ringR * 0.04)
-            const nux = ep.ux || 0
-            const nuy = ep.uy || 0
-            const lx = ep.x2 + nux * forward + (nuy) * normalOff
-            const ly = ep.y2 - nuy * forward + (nux) * normalOff
-            ctx.font = `${Math.max(10, Math.floor(ringR * 0.10))}px sans-serif`
-            ctx.textAlign = 'left'
-            ctx.textBaseline = 'middle'
-            ctx.lineWidth = 3
-            ctx.strokeStyle = '#ffffff'
-            ctx.strokeText(label, lx, ly)
-            ctx.fillStyle = ep.color || '#111'
-            ctx.fillText(label, lx, ly)
+          if (showLabels) {
+            try {
+              const featIdx = indices[i]
+              const label = (Array.isArray(col_labels) && featIdx >= 0 && featIdx < col_labels.length) ? String(col_labels[featIdx]) : String(featIdx)
+              const forward = Math.max(14, ringR * 0.10)
+              const normalOff = Math.max(6, ringR * 0.04)
+              const lx = x2 + ux * forward + (uy) * normalOff
+              const ly = y2 - uy * forward + (ux) * normalOff
+              ctx.font = `${Math.max(10, Math.floor(ringR * 0.10))}px sans-serif`
+              ctx.textAlign = 'left'
+              ctx.textBaseline = 'middle'
+              ctx.lineWidth = 3
+              ctx.strokeStyle = '#ffffff'
+              ctx.strokeText(label, lx, ly)
+              ctx.fillStyle = fv.color || '#111'
+              ctx.fillText(label, lx, ly)
+            } catch (e) { /* ignore */ }
+          }
+        })
+
+        if (hoverPt && endpoints && endpoints.length) {
+          let best = -1
+          let bestD2 = Infinity
+          for (let i = 0; i < endpoints.length; i++) {
+            if (hullSet && !hullSet.has(i)) continue
+            const ep = endpoints[i]
+            const dx = ep.x2 - hoverPt.x
+            const dy = ep.y2 - hoverPt.y
+            const d2 = dx*dx + dy*dy
+            if (d2 < bestD2) { bestD2 = d2; best = i }
+          }
+          if (best >= 0) {
+            const T = Math.max(10, ringR * 0.08)
+            if (Math.sqrt(bestD2) <= T) {
+              const ep = endpoints[best]
+              const featIdx = ep.idx
+              const label = (Array.isArray(col_labels) && featIdx >= 0 && featIdx < col_labels.length) ? String(col_labels[featIdx]) : String(featIdx)
+              const forward = Math.max(14, ringR * 0.10)
+              const normalOff = Math.max(6, ringR * 0.04)
+              const nux = ep.ux || 0
+              const nuy = ep.uy || 0
+              const lx = ep.x2 + nux * forward + (nuy) * normalOff
+              const ly = ep.y2 - nuy * forward + (nux) * normalOff
+              ctx.font = `${Math.max(10, Math.floor(ringR * 0.10))}px sans-serif`
+              ctx.textAlign = 'left'
+              ctx.textBaseline = 'middle'
+              ctx.lineWidth = 3
+              ctx.strokeStyle = '#ffffff'
+              ctx.strokeText(label, lx, ly)
+              ctx.fillStyle = ep.color || '#111'
+              ctx.fillText(label, lx, ly)
+            }
           }
         }
       }
@@ -348,9 +366,9 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
           const proj = fv.u * dirX + fv.v * dirY
           if (proj > bestProj) { bestProj = proj; bestIdx = indices[i] }
         })
-        let dotColor = '#333'
-        if (bestIdx !== null && bestIdx >= 0 && bestIdx < colors.length) {
-          dotColor = colors[bestIdx]
+        let dotColor = neutralColor
+        if (!isOverviewMode && bestIdx !== null && bestIdx >= 0) {
+          dotColor = featureHex(bestIdx)
         }
 
         // Opacity: field-based relative to global maximum sum magnitude
@@ -383,7 +401,7 @@ export default function WindVane({ payload, focus, selectedCells = [], size = nu
     ctx.beginPath()
     ctx.arc(cx, cy, 3, 0, Math.PI * 2)
     ctx.fill()
-  }, [uAll, vAll, colors, indices, gx, gy, unmasked, dominant, selectedCells, useConvexHull, showHull, canvasSize, showLabels, col_labels, hoverPt])
+  }, [uAll, vAll, colors, indices, gx, gy, unmasked, dominant, selectedCells, useConvexHull, showHull, canvasSize, showLabels, col_labels, hoverPt, mode, featureColorMap, neutralColor])
 
   // Expose canvas element to parent for saving snapshots
   useEffect(() => {

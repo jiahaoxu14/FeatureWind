@@ -18,13 +18,3 @@ export async function compute(payload) {
   if (!res.ok) throw new Error(`Compute failed: ${res.status}`)
   return res.json()
 }
-
-export async function recolor(datasetId, familyAssignments) {
-  const res = await fetch('/api/colors', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dataset_id: datasetId, familyAssignments }),
-  })
-  if (!res.ok) throw new Error(`Recolor failed: ${res.status}`)
-  return res.json()
-}

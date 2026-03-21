@@ -1,21 +1,70 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import './styles.css'
-import { uploadFile, compute, recolor } from './services/api'
+import { uploadFile, compute } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
 import WindVane from './components/WindVane.jsx'
 import ColorLegend from './components/ColorLegend.jsx'
 
+const MODE_DEFAULT = 'default'
+const MODE_COMPARE = 'compare'
+const MODE_OVERVIEW = 'overview'
+const COMPARE_MAX = 4
+const DEFAULT_FEATURE_HUE = '#0f766e'
+const COMPARE_PALETTE = ['#0f766e', '#c2410c', '#7c3aed', '#dc2626']
+const OVERVIEW_NEUTRAL = '#4b5563'
+
+function sanitizeFeatureIndices(indices, count, cap = Infinity) {
+  if (!Array.isArray(indices)) return []
+  const seen = new Set()
+  const out = []
+  for (const raw of indices) {
+    const idx = Number(raw)
+    if (!Number.isInteger(idx) || idx < 0 || idx >= count || seen.has(idx)) continue
+    seen.add(idx)
+    out.push(idx)
+    if (out.length >= cap) break
+  }
+  return out
+}
+
+function resolveFeatureRanking(payload, count) {
+  if (!payload || !Array.isArray(payload.featureRanking)) return [...Array(count).keys()]
+  const seen = new Set()
+  const ordered = []
+  for (const raw of payload.featureRanking) {
+    const idx = Number(raw)
+    if (!Number.isInteger(idx) || idx < 0 || idx >= count || seen.has(idx)) continue
+    seen.add(idx)
+    ordered.push(idx)
+  }
+  for (let idx = 0; idx < count; idx++) {
+    if (!seen.has(idx)) ordered.push(idx)
+  }
+  return ordered
+}
+
+function coerceFeatureIndex(value, count) {
+  const idx = Number(value)
+  if (!Number.isInteger(idx) || idx < 0 || idx >= count) return null
+  return idx
+}
+
 export default function App() {
   const fileInputRef = useRef(null)
+  const lastDatasetIdRef = useRef(null)
   const [file, setFile] = useState(null)
   const [dataset, setDataset] = useState(null)
-  const [topK, setTopK] = useState(0)
   const [gridRes, setGridRes] = useState(25)
   const [payload, setPayload] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [hoverPos, setHoverPos] = useState(null)
-  const [selectedCells, setSelectedCells] = useState([]) // array of {i,j}
+  const [selectedCells, setSelectedCells] = useState([])
+  const [mode, setMode] = useState(MODE_DEFAULT)
+  const [defaultFeatureIndex, setDefaultFeatureIndex] = useState(null)
+  const [compareFeatureIndices, setCompareFeatureIndices] = useState([])
+  const [featureMessage, setFeatureMessage] = useState('')
+
   // Interactive config (frontend + backend overrides)
   const [showGrid, setShowGrid] = useState(true)
   const [particleCount, setParticleCount] = useState(1000)
@@ -30,7 +79,7 @@ export default function App() {
   const [showVectorLabels, setShowVectorLabels] = useState(false)
   const [showAllVectors, setShowAllVectors] = useState(false)
   const [hideParticles, setHideParticles] = useState(false)
-  const [pointColorFeature, setPointColorFeature] = useState('') // '' or feature index string
+  const [pointColorFeature, setPointColorFeature] = useState('')
   const [showPointGradients, setShowPointGradients] = useState(false)
   const [showPointAggGradients, setShowPointAggGradients] = useState(false)
   const [showCellGradients, setShowCellGradients] = useState(false)
@@ -41,12 +90,7 @@ export default function App() {
   const [restrictSpawnToSelection, setRestrictSpawnToSelection] = useState(false)
   const [autoRespawnEnabled, setAutoRespawnEnabled] = useState(false)
   const [assessAllCells, setAssessAllCells] = useState(false)
-  const [brushRadius, setBrushRadius] = useState(1)
-  // Manual feature selection (overrides Top-K when enabled)
-  const [selectedFeatureIndices, setSelectedFeatureIndices] = useState([])
-  const [useManualFeatures, setUseManualFeatures] = useState(false)
 
-  // Refs to canvases for exporting PNGs
   const windMapCanvasRef = useRef(null)
   const windVaneCanvasRef = useRef(null)
 
@@ -63,31 +107,66 @@ export default function App() {
     } catch (e) { /* ignore */ }
   }
 
-  // Controls update live; no separate "Apply/Update" states
+  const featureCount = Array.isArray(payload?.col_labels) ? payload.col_labels.length : 0
+  const allFeatureIndices = useMemo(() => [...Array(featureCount).keys()], [featureCount])
+  const featureRanking = useMemo(() => resolveFeatureRanking(payload, featureCount), [payload, featureCount])
 
-  // Clamp manual feature selection when payload changes (e.g., new dataset)
-  useEffect(() => {
-    const n = (payload?.col_labels?.length) || 0
-    if (!n) { setSelectedFeatureIndices([]); return }
-    setSelectedFeatureIndices((prev) => prev.filter((i) => i >= 0 && i < n))
-    setUseManualFeatures(false)
-  }, [payload?.col_labels])
+  const effectiveDefaultFeatureIndex = useMemo(() => {
+    if (Number.isInteger(defaultFeatureIndex) && defaultFeatureIndex >= 0 && defaultFeatureIndex < featureCount) {
+      return defaultFeatureIndex
+    }
+    const fromPayload = coerceFeatureIndex(payload?.defaultFeatureIndex, featureCount)
+    if (fromPayload !== null) return fromPayload
+    if (featureRanking.length > 0) return featureRanking[0]
+    return null
+  }, [defaultFeatureIndex, payload?.defaultFeatureIndex, featureCount, featureRanking])
+
+  const effectiveCompareFeatureIndices = useMemo(() => {
+    return sanitizeFeatureIndices(compareFeatureIndices, featureCount, COMPARE_MAX)
+  }, [compareFeatureIndices, featureCount])
+
+  const activeFeatureIndices = useMemo(() => {
+    if (!payload) return []
+    if (mode === MODE_OVERVIEW) return allFeatureIndices
+    if (mode === MODE_COMPARE) return effectiveCompareFeatureIndices
+    return effectiveDefaultFeatureIndex !== null ? [effectiveDefaultFeatureIndex] : []
+  }, [payload, mode, allFeatureIndices, effectiveCompareFeatureIndices, effectiveDefaultFeatureIndex])
+
+  const activeFeatureColorMap = useMemo(() => {
+    const out = {}
+    if (mode === MODE_DEFAULT) {
+      if (effectiveDefaultFeatureIndex !== null) out[effectiveDefaultFeatureIndex] = DEFAULT_FEATURE_HUE
+      return out
+    }
+    if (mode === MODE_COMPARE) {
+      effectiveCompareFeatureIndices.forEach((idx, order) => {
+        out[idx] = COMPARE_PALETTE[order % COMPARE_PALETTE.length]
+      })
+    }
+    return out
+  }, [mode, effectiveDefaultFeatureIndex, effectiveCompareFeatureIndices])
+
+  const vaneFeatureIndices = useMemo(() => {
+    if (mode === MODE_OVERVIEW) return allFeatureIndices
+    return activeFeatureIndices
+  }, [mode, activeFeatureIndices, allFeatureIndices])
+
+  const gradientFeatureIndices = useMemo(() => {
+    if (mode === MODE_OVERVIEW) return []
+    return activeFeatureIndices
+  }, [mode, activeFeatureIndices])
 
   async function handleUpload(selected) {
     const f = selected || file
     if (!f) return
     setError('')
     try {
-      // Only accept .tmap or .json uploads
       const lower = (f.name || '').toLowerCase()
       if (!(lower.endsWith('.tmap') || lower.endsWith('.json'))) {
         setError('Please upload a .tmap (or JSON with tmap structure).')
         return
       }
       const res = await uploadFile(f)
-      // Default Top-K to all features in the dataset
-      const m = Array.isArray(res.col_labels) ? res.col_labels.length : 0
-      if (m > 0) { setTopK(m) }
       setDataset(res)
     } catch (e) {
       setError(e.message)
@@ -95,18 +174,41 @@ export default function App() {
   }
 
   async function handleCompute(forDatasetId) {
-    const dsId = forDatasetId || (dataset && dataset.datasetId)
+    const dsId = forDatasetId || dataset?.datasetId
     if (!dsId) return
     setBusy(true)
     setError('')
     try {
       const res = await compute({
         dataset_id: dsId,
-        topK: Number(topK),
         gridRes: Number(gridRes),
         config: { maskBufferFactor: Number(maskBufferFactor) }
       })
+
+      const nextCount = Array.isArray(res.col_labels) ? res.col_labels.length : 0
+      const nextRanking = resolveFeatureRanking(res, nextCount)
+      const nextDefault = coerceFeatureIndex(res.defaultFeatureIndex, nextCount) ?? (nextRanking[0] ?? null)
+      const isNewDataset = lastDatasetIdRef.current !== dsId
+
       setPayload(res)
+      setFeatureMessage('')
+
+      setDefaultFeatureIndex((prev) => {
+        if (isNewDataset) return nextDefault
+        if (Number.isInteger(prev) && prev >= 0 && prev < nextCount) return prev
+        return nextDefault
+      })
+
+      setCompareFeatureIndices((prev) => {
+        if (isNewDataset) return nextDefault !== null ? [nextDefault] : []
+        if (Array.isArray(prev) && prev.length === 0) return []
+        const cleaned = sanitizeFeatureIndices(prev, nextCount, COMPARE_MAX)
+        if (cleaned.length > 0) return cleaned
+        return nextDefault !== null ? [nextDefault] : []
+      })
+
+      if (isNewDataset) setMode(MODE_DEFAULT)
+      lastDatasetIdRef.current = dsId
     } catch (e) {
       setError(e.message)
     } finally {
@@ -114,18 +216,38 @@ export default function App() {
     }
   }
 
-  // Auto compute whenever dataset or server-affecting options change
   useEffect(() => {
-    const dsId = dataset && dataset.datasetId
+    const dsId = dataset?.datasetId
     if (!dsId) return
     const t = setTimeout(() => {
       handleCompute(dsId)
     }, 200)
     return () => clearTimeout(t)
-  // Only recompute when applied values change or dataset changes
-  }, [dataset?.datasetId, topK, gridRes, maskBufferFactor])
+  }, [dataset?.datasetId, gridRes, maskBufferFactor])
 
-  // Selection handlers
+  useEffect(() => {
+    const n = Array.isArray(payload?.col_labels) ? payload.col_labels.length : 0
+    if (!n) {
+      setDefaultFeatureIndex(null)
+      setCompareFeatureIndices([])
+      return
+    }
+    setDefaultFeatureIndex((prev) => {
+      if (Number.isInteger(prev) && prev >= 0 && prev < n) return prev
+      const fallback = coerceFeatureIndex(payload?.defaultFeatureIndex, n)
+      if (fallback !== null) return fallback
+      return featureRanking[0] ?? 0
+    })
+    setCompareFeatureIndices((prev) => {
+      if (Array.isArray(prev) && prev.length === 0) return []
+      const cleaned = sanitizeFeatureIndices(prev, n, COMPARE_MAX)
+      if (cleaned.length > 0) return cleaned
+      const fallback = coerceFeatureIndex(payload?.defaultFeatureIndex, n)
+      if (fallback !== null) return [fallback]
+      return featureRanking.length > 0 ? [featureRanking[0]] : []
+    })
+  }, [payload?.col_labels, payload?.defaultFeatureIndex, featureRanking])
+
   function toggleCell(i, j) {
     setSelectedCells((prev) => {
       const exists = prev.some((c) => c.i === i && c.j === j)
@@ -133,25 +255,80 @@ export default function App() {
       return [...prev, { i, j }]
     })
   }
+
   function setSingleCell(i, j) {
     setSelectedCells([{ i, j }])
   }
+
   function clearSelection() { setSelectedCells([]) }
 
-  // Keyboard: 'c' clears selection
   useEffect(() => {
     function onKey(e) { if (e.key === 'c' || e.key === 'C') clearSelection() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Derive focus for Wind Vane: center of last selected cell, else hover, else center
+  function handleModeChange(nextMode) {
+    setFeatureMessage('')
+    if (nextMode === MODE_COMPARE) {
+      setCompareFeatureIndices((prev) => {
+        const cleaned = sanitizeFeatureIndices(prev, featureCount, COMPARE_MAX)
+        if (cleaned.length > 0) return cleaned
+        return effectiveDefaultFeatureIndex !== null ? [effectiveDefaultFeatureIndex] : []
+      })
+    } else if (nextMode === MODE_DEFAULT && mode === MODE_COMPARE) {
+      const nextDefault = effectiveCompareFeatureIndices[0] ?? effectiveDefaultFeatureIndex
+      if (nextDefault !== null) setDefaultFeatureIndex(nextDefault)
+    }
+    setMode(nextMode)
+  }
+
+  function handleSelectAllFeatures() {
+    setFeatureMessage('')
+    setMode(MODE_OVERVIEW)
+  }
+
+  function handleSelectFeature(idx) {
+    const next = Number(idx)
+    if (!Number.isInteger(next) || next < 0 || next >= featureCount) return
+    setFeatureMessage('')
+    setDefaultFeatureIndex(next)
+    setCompareFeatureIndices((prev) => {
+      const cleaned = sanitizeFeatureIndices(prev, featureCount, COMPARE_MAX)
+      return cleaned.length > 0 ? cleaned : [next]
+    })
+    setMode(MODE_DEFAULT)
+  }
+
+  function handleToggleCompareFeature(idx) {
+    const nextIdx = Number(idx)
+    if (!Number.isInteger(nextIdx) || nextIdx < 0 || nextIdx >= featureCount) return
+    setFeatureMessage('')
+    setCompareFeatureIndices((prev) => {
+      const cleaned = sanitizeFeatureIndices(prev, featureCount, COMPARE_MAX)
+      const exists = cleaned.includes(nextIdx)
+      if (exists) return cleaned.filter((value) => value !== nextIdx)
+      if (cleaned.length >= COMPARE_MAX) {
+        setFeatureMessage(`Compare mode supports up to ${COMPARE_MAX} features.`)
+        return cleaned
+      }
+      return [...cleaned, nextIdx]
+    })
+    setMode(MODE_COMPARE)
+  }
+
+  function handleClearCompareFeatures() {
+    setFeatureMessage('')
+    setCompareFeatureIndices([])
+    setMode(MODE_COMPARE)
+  }
+
   const vaneFocus = (() => {
-    const bbox = payload?.bbox || [0,1,0,1]
-    const [xmin,xmax,ymin,ymax] = bbox
+    const bbox = payload?.bbox || [0, 1, 0, 1]
+    const [xmin, xmax, ymin, ymax] = bbox
     const H = payload?.grid_res || 25
     const W = H
-    if (selectedCells && selectedCells.length > 0) {
+    if (selectedCells.length > 0) {
       const { i, j } = selectedCells[selectedCells.length - 1]
       const x = xmin + (j + 0.5) * (xmax - xmin) / W
       const y = ymin + (i + 0.5) * (ymax - ymin) / H
@@ -160,130 +337,34 @@ export default function App() {
     return hoverPos || null
   })()
 
-  // Compute average number of active (non-zero) selected features per valid grid cell
   const avgActiveFeatures = useMemo(() => {
     try {
-      if (!payload) return null
-      const { uAll = [], vAll = [], grid_res = 25, selection = {}, unmasked = null } = payload
-      const H = grid_res, W = grid_res
-      // Determine feature indices in scope
-      let indices = []
-      if (useManualFeatures) indices = selectedFeatureIndices
-      else if (selection && Array.isArray(selection.topKIndices)) indices = selection.topKIndices
-      else if (selection && typeof selection.featureIndex === 'number') indices = [selection.featureIndex]
-      if (!Array.isArray(indices) || indices.length === 0) return 0
+      if (!payload || activeFeatureIndices.length === 0) return null
+      const { uAll = [], vAll = [], grid_res = 25, unmasked = null } = payload
+      const H = grid_res
+      const W = grid_res
       let total = 0
       let cells = 0
       const eps = 1e-9
       for (let i = 0; i < H; i++) {
         for (let j = 0; j < W; j++) {
-          if (Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W) {
-            if (!unmasked[i][j]) continue
-          }
+          if (Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W && !unmasked[i][j]) continue
           cells += 1
           let cnt = 0
-          for (const fi of indices) {
+          for (const fi of activeFeatureIndices) {
             const u = (uAll[fi]?.[i]?.[j] ?? 0)
             const v = (vAll[fi]?.[i]?.[j] ?? 0)
-            if (u*u + v*v > eps) cnt += 1
+            if (u * u + v * v > eps) cnt += 1
           }
           total += cnt
         }
       }
       if (cells === 0) return 0
       return total / cells
-    } catch { return null }
-  }, [payload, selectedFeatureIndices, useManualFeatures])
-
-  // Compute which features are visible in the current Wind Vane view
-  const visibleFeatures = useMemo(() => {
-    const result = new Set()
-    if (!payload) return result
-    const { bbox = [0,1,0,1], grid_res = 25, uAll = [], vAll = [], selection = {}, unmasked = null, dominant = null } = payload
-    const [xmin, xmax, ymin, ymax] = bbox
-    const H = grid_res, W = grid_res
-    // Determine selected features (indices rendered in vane)
-    let indices = []
-    if (useManualFeatures) indices = selectedFeatureIndices
-    else if (selection && Array.isArray(selection.topKIndices)) indices = selection.topKIndices
-    else if (selection && typeof selection.featureIndex === 'number') indices = [selection.featureIndex]
-    if (!indices.length) return result
-    // Selection mode
-    const useSel = selectedCells && selectedCells.length > 0
-    const hasUnmasked = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
-    const hasDominant = Array.isArray(dominant) && dominant.length === H && dominant[0].length === W
-    const eps = 1e-9
-    // Helper: convex hull (monotone chain) returns indices
-    function hullIdx(pts) {
-      if (!pts || pts.length < 3) return pts.map((_, i) => i)
-      const arr = pts.map((p, i) => [p[0], p[1], i]).sort((a,b)=> (a[0]===b[0]? a[1]-b[1] : a[0]-b[0]))
-      const cross = (o,a,b)=> (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
-      const lower=[]; for (const p of arr){ while(lower.length>=2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) lower.pop(); lower.push(p) }
-      const upper=[]; for (let k=arr.length-1;k>=0;k--){ const p=arr[k]; while(upper.length>=2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) upper.pop(); upper.push(p) }
-      const hull = lower.slice(0,-1).concat(upper.slice(0,-1))
-      const seen=new Set(), idxs=[]; for (const h of hull){ if(!seen.has(h[2])){ seen.add(h[2]); idxs.push(h[2]) } }
-      return idxs
+    } catch {
+      return null
     }
-    if (useSel) {
-      // Filter to valid cells
-      const valid = []
-      if (hasUnmasked) {
-        for (const c of selectedCells) {
-          const ii = Math.max(0, Math.min(H - 1, c.i|0))
-          const jj = Math.max(0, Math.min(W - 1, c.j|0))
-          if (unmasked[ii][jj]) valid.push({ i: ii, j: jj })
-        }
-      } else {
-        for (const c of selectedCells) {
-          const ii = Math.max(0, Math.min(H - 1, c.i|0))
-          const jj = Math.max(0, Math.min(W - 1, c.j|0))
-          valid.push({ i: ii, j: jj })
-        }
-      }
-      if (!valid.length) return result
-      // Build vectors for selected features
-      const vecs = []
-      const feats = []
-      for (const idx of indices) {
-        let u = 0, v = 0
-        for (const c of valid) { u += (uAll[idx]?.[c.i]?.[c.j] ?? 0); v += (vAll[idx]?.[c.i]?.[c.j] ?? 0) }
-        const mag2 = u*u + v*v
-        if (mag2 > eps) { vecs.push([u, v]); feats.push(idx) }
-      }
-      if (vecs.length === 0) return result
-      if (vecs.length < 3) { feats.forEach(i=>result.add(i)); return result }
-      // Normalize endpoints by max magnitude to mirror vane scaling
-      let maxMag = 0; for (const [u,v] of vecs){ const m=Math.hypot(u,v); if(m>maxMag) maxMag=m }
-      const pts = vecs.map(([u,v]) => [u/(maxMag||1), v/(maxMag||1)])
-      const hidx = hullIdx(pts)
-      for (const hi of hidx) result.add(feats[hi])
-      return result
-    }
-    // Hover mode: snap to clicked/hovered cell center indices using floor mapping
-    const xCoord = vaneFocus?.x
-    const yCoord = vaneFocus?.y
-    if (typeof xCoord !== 'number' || typeof yCoord !== 'number') return result
-    const cj = Math.max(0, Math.min(W - 1, Math.floor(((xCoord - xmin) / (xmax - xmin)) * W)))
-    const ci = Math.max(0, Math.min(H - 1, Math.floor(((yCoord - ymin) / (ymax - ymin)) * H)))
-    // Masked?
-    if (hasUnmasked && !unmasked[ci][cj]) return result
-    if (hasDominant && dominant[ci][cj] === -1) return result
-    // Build vectors
-    const vecs = []
-    const feats = []
-    for (const idx of indices) {
-      const u = (uAll[idx]?.[ci]?.[cj] ?? 0)
-      const v = (vAll[idx]?.[ci]?.[cj] ?? 0)
-      if ((u*u + v*v) > eps) { vecs.push([u, v]); feats.push(idx) }
-    }
-    if (vecs.length === 0) return result
-    if (vecs.length < 3) { feats.forEach(i=>result.add(i)); return result }
-    let maxMag = 0; for (const [u,v] of vecs){ const m=Math.hypot(u,v); if(m>maxMag) maxMag=m }
-    const pts = vecs.map(([u,v]) => [u/(maxMag||1), v/(maxMag||1)])
-    const hidx = hullIdx(pts)
-    for (const hi of hidx) result.add(feats[hi])
-    return result
-  }, [payload, selectedCells, vaneFocus, selectedFeatureIndices, useManualFeatures])
+  }, [payload, activeFeatureIndices])
 
   return (
     <div className="app">
@@ -306,11 +387,11 @@ export default function App() {
               if (f) handleUpload(f)
             }}
           />
+          {busy && <span className="hint" style={{ marginTop: 0 }}>Computing…</span>}
         </div>
       </div>
       <div className="content">
         <div className="three-up">
-          {/* Wind Map */}
           <div className="panel canvas-frame">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <p className="panel-title" style={{ margin: 0 }}>Wind Map</p>
@@ -325,21 +406,30 @@ export default function App() {
             {payload ? (
               <CanvasWind
                 payload={payload}
+                mode={mode}
+                featureColorMap={activeFeatureColorMap}
+                neutralColor={OVERVIEW_NEUTRAL}
                 onHover={setHoverPos}
                 onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
-                onBrushCell={(payload) => {
-                  if (payload && Array.isArray(payload.cells)) {
-                    const cells = payload.cells
+                onBrushCell={(brushPayload) => {
+                  if (brushPayload && Array.isArray(brushPayload.cells)) {
+                    const cells = brushPayload.cells
                     setSelectedCells((prev) => {
                       const key = (c) => `${c.i}:${c.j}`
                       const setPrev = new Set(prev.map(key))
                       const out = prev.slice()
-                      for (const c of cells) { const k = key(c); if (!setPrev.has(k)) { setPrev.add(k); out.push({ i: c.i, j: c.j }) } }
+                      for (const c of cells) {
+                        const k = key(c)
+                        if (!setPrev.has(k)) {
+                          setPrev.add(k)
+                          out.push({ i: c.i, j: c.j })
+                        }
+                      }
                       return out
                     })
                     return
                   }
-                  const { i, j } = payload || {}
+                  const { i, j } = brushPayload || {}
                   if (typeof i === 'number' && typeof j === 'number') {
                     setSelectedCells((prev) => {
                       const exists = prev.some((c) => c.i === i && c.j === j)
@@ -363,9 +453,9 @@ export default function App() {
                 showCellGradients={showCellGradients}
                 showCellAggregatedGradients={showCellAggGradients}
                 showParticleInits={showParticleInits}
-                gradientFeatureIndices={useManualFeatures ? selectedFeatureIndices : []}
+                gradientFeatureIndices={gradientFeatureIndices}
                 selectedCells={selectedCells}
-                featureIndices={useManualFeatures ? selectedFeatureIndices : null}
+                featureIndices={activeFeatureIndices}
                 uniformPointShape={uniformPointShape}
                 showParticleArrowheads={showParticleArrowheads}
                 allowGridSelection={restrictSpawnToSelection}
@@ -379,7 +469,6 @@ export default function App() {
             )}
           </div>
 
-          {/* Wind Vane */}
           <div className="panel canvas-frame">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <p className="panel-title" style={{ margin: 0 }}>Wind Vane{selectedCells.length > 0 ? ` (selection: ${selectedCells.length} cells)` : ''}</p>
@@ -392,85 +481,56 @@ export default function App() {
               )}
             </div>
             {payload ? (
-                <WindVane
-                  payload={payload}
-                  focus={vaneFocus}
-                  selectedCells={selectedCells}
-                  useConvexHull={!showAllVectors}
-                  showHull={showHull}
-                  showLabels={showVectorLabels}
-                  featureIndices={useManualFeatures ? selectedFeatureIndices : null}
-                  onCanvasElement={(el) => { windVaneCanvasRef.current = el }}
-                />
+              <WindVane
+                payload={payload}
+                mode={mode}
+                focus={vaneFocus}
+                selectedCells={selectedCells}
+                useConvexHull={mode === MODE_COMPARE ? !showAllVectors : false}
+                showHull={mode === MODE_COMPARE ? showHull : false}
+                showLabels={mode === MODE_COMPARE ? showVectorLabels : false}
+                featureIndices={vaneFeatureIndices}
+                featureColorMap={activeFeatureColorMap}
+                neutralColor={OVERVIEW_NEUTRAL}
+                onCanvasElement={(el) => { windVaneCanvasRef.current = el }}
+              />
             ) : (
               <div className="panel placeholder" style={{ width: 600, height: 600 }}>Wind Vane</div>
             )}
           </div>
 
-          {/* Color Families */}
           <div className="panel padded color-panel">
-            <p className="panel-title">Color Families</p>
+            <p className="panel-title">Features</p>
             {payload ? (
               <ColorLegend
                 payload={payload}
-                dataset={dataset}
-                visible={visibleFeatures}
-                selectedFeatures={useManualFeatures ? selectedFeatureIndices : null}
-                onChangeSelectedFeatures={(arr) => { setSelectedFeatureIndices(arr); setUseManualFeatures(true) }}
-                onSwapFamilyColors={(famA, famB) => {
-                  // Swap colors between two family IDs across all features (front-end only)
-                  setPayload((prev) => {
-                    try {
-                      if (!prev) return prev
-                      const fams = prev.family_assignments || []
-                      const cols = (prev.colors || []).slice()
-                      if (!Array.isArray(fams) || !Array.isArray(cols)) return prev
-                      // Representative colors (first feature in each family)
-                      const idxA = fams.findIndex((f) => String(f) === String(famA))
-                      const idxB = fams.findIndex((f) => String(f) === String(famB))
-                      const colA = idxA >= 0 ? cols[idxA] : '#888'
-                      const colB = idxB >= 0 ? cols[idxB] : '#888'
-                      const out = cols.slice()
-                      for (let i = 0; i < fams.length; i++) {
-                        if (String(fams[i]) === String(famA)) out[i] = colB
-                        else if (String(fams[i]) === String(famB)) out[i] = colA
-                      }
-                      return { ...prev, colors: out }
-                    } catch { return prev }
-                  })
-                }}
-                onApplyFamilies={async (families) => {
-                  try {
-                    if (!dataset) return
-                    const res = await recolor(dataset.datasetId, families)
-                    setPayload((prev) => ({ ...prev, colors: res.colors, family_assignments: res.family_assignments }))
-                  } catch (e) {
-                    setError(e.message)
-                  }
-                }}
+                mode={mode}
+                onChangeMode={handleModeChange}
+                defaultFeatureIndex={effectiveDefaultFeatureIndex}
+                compareFeatureIndices={effectiveCompareFeatureIndices}
+                onSelectFeature={handleSelectFeature}
+                onSelectAll={handleSelectAllFeatures}
+                onToggleCompareFeature={handleToggleCompareFeature}
+                onClearCompare={handleClearCompareFeatures}
+                compareCap={COMPARE_MAX}
+                message={featureMessage}
+                activeFeatureColorMap={activeFeatureColorMap}
               />
             ) : (
-              <div className="hint">Upload a dataset to see colors</div>
+              <div className="hint">Upload a dataset to browse features</div>
             )}
           </div>
 
-          {/* Controls */}
           <div className="panel padded controls-grid full-span">
-            {null}
-
-            {null}
-
             <label>Grid Res</label>
             <div className="slider-row">
-              <input type="range" min={8} max={200} step={1} value={gridRes}
-                onChange={(e) => setGridRes(Number(e.target.value))} />
+              <input type="range" min={8} max={200} step={1} value={gridRes} onChange={(e) => setGridRes(Number(e.target.value))} />
               <span className="control-val">{gridRes}</span>
             </div>
 
             <label>Mask Buffer</label>
             <div className="slider-row">
-              <input type="range" min={0} max={2} step={0.05} value={maskBufferFactor}
-                onChange={(e) => setMaskBufferFactor(Number(e.target.value))} />
+              <input type="range" min={0} max={2} step={0.05} value={maskBufferFactor} onChange={(e) => setMaskBufferFactor(Number(e.target.value))} />
               <span className="control-val">{maskBufferFactor.toFixed(2)}</span>
             </div>
 
@@ -478,13 +538,13 @@ export default function App() {
             <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
 
             <label>Show Convex Hull</label>
-            <input type="checkbox" checked={showHull} onChange={(e) => setShowHull(e.target.checked)} />
+            <input type="checkbox" checked={showHull} onChange={(e) => setShowHull(e.target.checked)} disabled={mode !== MODE_COMPARE} />
 
             <label>Show Vector Labels</label>
-            <input type="checkbox" checked={showVectorLabels} onChange={(e) => setShowVectorLabels(e.target.checked)} />
+            <input type="checkbox" checked={showVectorLabels} onChange={(e) => setShowVectorLabels(e.target.checked)} disabled={mode !== MODE_COMPARE} />
 
             <label>Show All Vectors</label>
-            <input type="checkbox" checked={showAllVectors} onChange={(e) => setShowAllVectors(e.target.checked)} />
+            <input type="checkbox" checked={showAllVectors} onChange={(e) => setShowAllVectors(e.target.checked)} disabled={mode !== MODE_COMPARE} />
 
             <label>Hide Particles</label>
             <input type="checkbox" checked={hideParticles} onChange={(e) => setHideParticles(e.target.checked)} />
@@ -496,7 +556,7 @@ export default function App() {
               disabled={!payload || !Array.isArray(payload.feature_values)}
             >
               <option value="">None</option>
-              {Array.isArray(payload?.col_labels) && payload?.col_labels.map((name, idx) => (
+              {Array.isArray(payload?.col_labels) && payload.col_labels.map((name, idx) => (
                 <option key={idx} value={String(idx)}>{name}</option>
               ))}
             </select>
@@ -508,13 +568,13 @@ export default function App() {
             <input type="checkbox" checked={showParticleArrowheads} onChange={(e) => setShowParticleArrowheads(e.target.checked)} />
 
             <label>Show Point Gradients</label>
-            <input type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} />
+            <input type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
 
             <label>Show Aggregated Point Gradients</label>
             <input type="checkbox" checked={showPointAggGradients} onChange={(e) => setShowPointAggGradients(e.target.checked)} />
 
             <label>Show Cell Gradients</label>
-            <input type="checkbox" checked={showCellGradients} onChange={(e) => setShowCellGradients(e.target.checked)} />
+            <input type="checkbox" checked={showCellGradients} onChange={(e) => setShowCellGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
 
             <label>Show Aggregated Cell Gradients</label>
             <input type="checkbox" checked={showCellAggGradients} onChange={(e) => setShowCellAggGradients(e.target.checked)} />
@@ -540,52 +600,43 @@ export default function App() {
 
             <label>Particles</label>
             <div className="slider-row">
-              <input type="range" min={50} max={5000} step={50} value={particleCount}
-                onChange={(e) => setParticleCount(Number(e.target.value))} />
+              <input type="range" min={50} max={5000} step={50} value={particleCount} onChange={(e) => setParticleCount(Number(e.target.value))} />
               <span className="control-val">{particleCount}</span>
             </div>
 
-            {null}
-
             <label>Speed Scale</label>
             <div className="slider-row">
-              <input type="range" min={0.1} max={10} step={0.1} value={speedScale}
-                onChange={(e) => setSpeedScale(Number(e.target.value))} />
+              <input type="range" min={0.1} max={10} step={0.1} value={speedScale} onChange={(e) => setSpeedScale(Number(e.target.value))} />
               <span className="control-val">{speedScale.toFixed(1)}</span>
             </div>
 
             <label>Tail Length</label>
             <div className="slider-row">
-              <input type="range" min={2} max={60} step={1} value={tailLength}
-                onChange={(e) => setTailLength(Number(e.target.value))} />
+              <input type="range" min={2} max={60} step={1} value={tailLength} onChange={(e) => setTailLength(Number(e.target.value))} />
               <span className="control-val">{tailLength}</span>
             </div>
 
             <label>Trail Width</label>
             <div className="slider-row">
-              <input type="range" min={0.5} max={4} step={0.1} value={trailLineWidth}
-                onChange={(e) => setTrailLineWidth(Number(e.target.value))} />
+              <input type="range" min={0.5} max={4} step={0.1} value={trailLineWidth} onChange={(e) => setTrailLineWidth(Number(e.target.value))} />
               <span className="control-val">{trailLineWidth.toFixed(1)} px</span>
             </div>
 
             <label>Tail Min Alpha</label>
             <div className="slider-row">
-              <input type="range" min={0} max={1} step={0.01} value={trailTailMin}
-                onChange={(e) => setTrailTailMin(Number(e.target.value))} />
+              <input type="range" min={0} max={1} step={0.01} value={trailTailMin} onChange={(e) => setTrailTailMin(Number(e.target.value))} />
               <span className="control-val">{trailTailMin.toFixed(2)}</span>
             </div>
 
             <label>Tail Exp</label>
             <div className="slider-row">
-              <input type="range" min={0.5} max={6} step={0.1} value={trailTailExp}
-                onChange={(e) => setTrailTailExp(Number(e.target.value))} />
+              <input type="range" min={0.5} max={6} step={0.1} value={trailTailExp} onChange={(e) => setTrailTailExp(Number(e.target.value))} />
               <span className="control-val">{trailTailExp.toFixed(1)}</span>
             </div>
 
             <label>Max Lifetime</label>
             <div className="slider-row">
-              <input type="range" min={1} max={300} step={1} value={maxLifetime}
-                onChange={(e) => setMaxLifetime(Number(e.target.value))} />
+              <input type="range" min={1} max={300} step={1} value={maxLifetime} onChange={(e) => setMaxLifetime(Number(e.target.value))} />
               <span className="control-val">{maxLifetime}</span>
             </div>
 
