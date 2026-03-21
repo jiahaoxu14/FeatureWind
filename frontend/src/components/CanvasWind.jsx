@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo } from 'react'
+import React, { useEffect, useRef, useMemo, useState } from 'react'
 
 function sumSelectedGrid(grids, indices) {
   if (!grids || grids.length === 0) return null
@@ -35,6 +35,7 @@ function bilinearSample(grid, gx, gy) {
 export default function CanvasWind({
   payload,
   mode = 'default',
+  interactionMode = 'pan',
   featureColorMap = null,
   neutralColor = '#4b5563',
   particleCount = 1000,
@@ -67,13 +68,14 @@ export default function CanvasWind({
   trailTailMin = 0.10,
   trailTailExp = 2.0,
   maxLifetime = 200,
-  size = 600,
+  size = null,
   width = null,
   height = null,
   selectedCells = [],
   featureIndices = null,
   pointColorFeatureIndex = null,
 }) {
+  const containerRef = useRef(null)
   const canvasRef = useRef(null)
   const rafRef = useRef(0)
   const runningRef = useRef(false)
@@ -105,11 +107,18 @@ export default function CanvasWind({
   const panStartPosRef = useRef({ x: 0, y: 0 })
   const panStartViewRef = useRef(null)
   const suppressClickRef = useRef(false)
+  const areaBrushActiveRef = useRef(false)
+  const areaBrushMovedRef = useRef(false)
+  const areaBrushRectRef = useRef(null)
   const gradientFeatureIndicesRef = useRef(Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [])
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
   const showGridRef = useRef(!!showGrid)
   const selectedRef = useRef(selectedCells)
+  const explicitWidth = (typeof width === 'number' && width > 0) ? width : null
+  const explicitHeight = (typeof height === 'number' && height > 0) ? height : null
+  const fixedSize = (typeof size === 'number' && size > 0) ? size : null
+  const [canvasSize, setCanvasSize] = useState(fixedSize || 600)
   // keep selection fresh for the draw loop without resetting particles
   useEffect(() => { selectedRef.current = selectedCells || [] }, [selectedCells])
   useEffect(() => { showGridRef.current = !!showGrid }, [showGrid])
@@ -136,6 +145,28 @@ export default function CanvasWind({
     return () => { if (typeof onCanvasElement === 'function') onCanvasElement(null) }
   }, [onCanvasElement])
   useEffect(() => { gradientFeatureIndicesRef.current = Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [] }, [gradientFeatureIndices])
+
+  useEffect(() => {
+    if (explicitWidth !== null || explicitHeight !== null) return
+    if (fixedSize !== null) {
+      setCanvasSize(fixedSize)
+      return
+    }
+    const el = containerRef.current
+    if (!el) return
+    function measure() {
+      const next = Math.max(240, Math.floor(el.clientWidth || 0))
+      if (next > 0) setCanvasSize(next)
+    }
+    measure()
+    if (typeof ResizeObserver === 'function') {
+      const ro = new ResizeObserver(() => measure())
+      ro.observe(el)
+      return () => ro.disconnect()
+    }
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [explicitWidth, explicitHeight, fixedSize])
 
   const {
     bbox = [0, 1, 0, 1],
@@ -291,6 +322,14 @@ export default function CanvasWind({
       const sx = (x - v.xmin) / (v.xmax - v.xmin) * Wpx
       const sy = Hpx - (y - v.ymin) / (v.ymax - v.ymin) * Hpx
       return [sx, sy]
+    }
+
+    function screenToWorld(cx, cy) {
+      const v = viewRef.current
+      return {
+        x: v.xmin + (cx / Wpx) * (v.xmax - v.xmin),
+        y: v.ymin + ((Hpx - cy) / Hpx) * (v.ymax - v.ymin),
+      }
     }
 
     function clampView(nextXmin, nextXmax, nextYmin, nextYmax) {
@@ -624,6 +663,21 @@ export default function CanvasWind({
           ctx.fill()
           ctx.stroke()
         }
+      }
+
+      if (areaBrushRectRef.current) {
+        const { x0, y0, x1, y1 } = areaBrushRectRef.current
+        const left = Math.min(x0, x1)
+        const top = Math.min(y0, y1)
+        const width = Math.abs(x1 - x0)
+        const height = Math.abs(y1 - y0)
+        ctx.fillStyle = 'rgba(37,99,235,0.12)'
+        ctx.strokeStyle = 'rgba(37,99,235,0.9)'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([6, 4])
+        ctx.fillRect(left, top, width, height)
+        ctx.strokeRect(left, top, width, height)
+        ctx.setLineDash([])
       }
 
       // Optional: draw base points with shapes per label (like Python)
@@ -1340,6 +1394,7 @@ export default function CanvasWind({
 
     // Click handler to select grid cell
     function handleClick(e) {
+      if (interactionMode === 'brush') return
       if (suppressClickRef.current) {
         suppressClickRef.current = false
         return
@@ -1415,6 +1470,15 @@ export default function CanvasWind({
         // Do not start grid brushing in point-select mode
         return
       }
+      if (interactionMode === 'brush') {
+        areaBrushActiveRef.current = true
+        areaBrushMovedRef.current = false
+        areaBrushRectRef.current = { x0: cx, y0: cy, x1: cx, y1: cy }
+        staticTrailSeedRef.current = null
+        staticTrailRef.current = null
+        canvas.style.cursor = 'crosshair'
+        return
+      }
       if (!e.shiftKey) {
         panPointerDownRef.current = true
         panStartPosRef.current = { x: cx, y: cy }
@@ -1432,7 +1496,50 @@ export default function CanvasWind({
         try { brushCbRef.current({ i, j }) } catch {}
       }
     }
-    function handleUp() {
+    function handleUp(e) {
+      if (areaBrushActiveRef.current) {
+        const rect = canvas.getBoundingClientRect()
+        let cx = areaBrushRectRef.current?.x1 ?? areaBrushRectRef.current?.x0 ?? 0
+        let cy = areaBrushRectRef.current?.y1 ?? areaBrushRectRef.current?.y0 ?? 0
+        if (e && typeof e.clientX === 'number' && typeof e.clientY === 'number') {
+          cx = e.clientX - rect.left
+          cy = e.clientY - rect.top
+        }
+        cx = Math.max(0, Math.min(Wpx, cx))
+        cy = Math.max(0, Math.min(Hpx, cy))
+        const currentRect = areaBrushRectRef.current || { x0: cx, y0: cy, x1: cx, y1: cy }
+        currentRect.x1 = cx
+        currentRect.y1 = cy
+        areaBrushRectRef.current = currentRect
+        const { x: wx0, y: wy0 } = screenToWorld(currentRect.x0, currentRect.y0)
+        const { x: wx1, y: wy1 } = screenToWorld(currentRect.x1, currentRect.y1)
+        const minX = Math.min(wx0, wx1)
+        const maxX = Math.max(wx0, wx1)
+        const minY = Math.min(wy0, wy1)
+        const maxY = Math.max(wy0, wy1)
+        const startCell = worldToCell(minX, minY)
+        const endCell = worldToCell(maxX, maxY)
+        if (startCell && endCell && typeof brushCbRef.current === 'function') {
+          const i0 = Math.min(startCell.i, endCell.i)
+          const i1 = Math.max(startCell.i, endCell.i)
+          const j0 = Math.min(startCell.j, endCell.j)
+          const j1 = Math.max(startCell.j, endCell.j)
+          const cells = []
+          for (let i = i0; i <= i1; i++) {
+            for (let j = j0; j <= j1; j++) {
+              if (hasMask && !unmasked[i][j]) continue
+              cells.push({ i, j })
+            }
+          }
+          if (cells.length > 0) {
+            try { brushCbRef.current({ cells, replace: !e?.shiftKey }) } catch {}
+          }
+        }
+        areaBrushActiveRef.current = false
+        areaBrushMovedRef.current = false
+        areaBrushRectRef.current = null
+        suppressClickRef.current = true
+      }
       pointPointerDownRef.current = false
       pointBrushingRef.current = false
       panPointerDownRef.current = false
@@ -1440,15 +1547,27 @@ export default function CanvasWind({
       panStartViewRef.current = null
       brushingRef.current = false
       lastBrushRef.current = { i: -1, j: -1 }
-      canvas.style.cursor = 'grab'
+      canvas.style.cursor = interactionMode === 'brush' ? 'crosshair' : 'grab'
     }
-    canvas.style.cursor = 'grab'
+    canvas.style.cursor = interactionMode === 'brush' ? 'crosshair' : 'grab'
     const PAN_THRESHOLD2 = 36
     const originalHandleMove = handleMove
     function handleMoveWithPan(e) {
       const rect = canvas.getBoundingClientRect()
       const cx = e.clientX - rect.left
       const cy = e.clientY - rect.top
+      if (areaBrushActiveRef.current && areaBrushRectRef.current) {
+        const dx = cx - areaBrushRectRef.current.x0
+        const dy = cy - areaBrushRectRef.current.y0
+        if (!areaBrushMovedRef.current && (dx * dx + dy * dy > PAN_THRESHOLD2)) {
+          areaBrushMovedRef.current = true
+        }
+        areaBrushRectRef.current = {
+          ...areaBrushRectRef.current,
+          x1: cx,
+          y1: cy,
+        }
+      }
       if (panPointerDownRef.current && panStartViewRef.current) {
         const dx = cx - panStartPosRef.current.x
         const dy = cy - panStartPosRef.current.y
@@ -1478,7 +1597,6 @@ export default function CanvasWind({
     }
     canvas.addEventListener('mousedown', handleDown)
     window.addEventListener('mouseup', handleUp)
-    canvas.addEventListener('mouseleave', handleUp)
     canvas.removeEventListener('mousemove', handleMove)
     canvas.addEventListener('mousemove', handleMoveWithPan)
 
@@ -1490,10 +1608,10 @@ export default function CanvasWind({
       canvas.removeEventListener('click', handleClick)
       canvas.removeEventListener('mousedown', handleDown)
       window.removeEventListener('mouseup', handleUp)
-      canvas.removeEventListener('mouseleave', handleUp)
     }
   }, [
     bbox,
+    interactionMode,
     mode,
     grid_res,
     uSum,
@@ -1520,14 +1638,22 @@ export default function CanvasWind({
     showPointAggregatedGradients,
   ])
 
-  const canvasWidth = (typeof width === 'number' && width > 0) ? width : size
-  const canvasHeight = (typeof height === 'number' && height > 0) ? height : size
+  const canvasWidth = explicitWidth ?? fixedSize ?? canvasSize
+  const canvasHeight = explicitHeight ?? fixedSize ?? canvasSize
+  const isResponsiveCanvas = explicitWidth === null && explicitHeight === null && fixedSize === null
   return (
-    <canvas
-      ref={canvasRef}
-      width={canvasWidth}
-      height={canvasHeight}
-      style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px`, border: '1px solid #ddd' }}
-    />
+    <div ref={containerRef} className="canvas-surface">
+      <canvas
+        ref={canvasRef}
+        width={canvasWidth}
+        height={canvasHeight}
+        style={{
+          width: isResponsiveCanvas ? '100%' : `${canvasWidth}px`,
+          height: isResponsiveCanvas ? 'auto' : `${canvasHeight}px`,
+          border: '1px solid #ddd',
+          display: 'block',
+        }}
+      />
+    </div>
   )
 }

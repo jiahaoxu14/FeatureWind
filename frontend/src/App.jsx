@@ -12,6 +12,8 @@ const COMPARE_MAX = 4
 const DEFAULT_FEATURE_HUE = '#0f766e'
 const COMPARE_PALETTE = ['#0f766e', '#c2410c', '#7c3aed', '#dc2626']
 const OVERVIEW_NEUTRAL = '#4b5563'
+const WIND_MAP_TOOL_PAN = 'pan'
+const WIND_MAP_TOOL_BRUSH = 'brush'
 
 function sanitizeFeatureIndices(indices, count, cap = Infinity) {
   if (!Array.isArray(indices)) return []
@@ -60,10 +62,12 @@ export default function App() {
   const [error, setError] = useState('')
   const [hoverPos, setHoverPos] = useState(null)
   const [selectedCells, setSelectedCells] = useState([])
+  const [windMapTool, setWindMapTool] = useState(WIND_MAP_TOOL_PAN)
   const [mode, setMode] = useState(MODE_DEFAULT)
   const [defaultFeatureIndex, setDefaultFeatureIndex] = useState(null)
   const [compareFeatureIndices, setCompareFeatureIndices] = useState([])
   const [featureMessage, setFeatureMessage] = useState('')
+  const [advancedControlsOpen, setAdvancedControlsOpen] = useState(false)
 
   // Interactive config (frontend + backend overrides)
   const [showGrid, setShowGrid] = useState(true)
@@ -391,262 +395,326 @@ export default function App() {
         </div>
       </div>
       <div className="content">
-        <div className="three-up">
-          <div className="panel canvas-frame">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <p className="panel-title" style={{ margin: 0 }}>Wind Map</p>
-              {payload && (
-                <button
-                  className="btn"
-                  title="Save Wind Map as PNG"
-                  onClick={() => saveCanvasAsPng(windMapCanvasRef.current, 'wind_map.png')}
-                >Save PNG</button>
+        <div className="workspace">
+          <div className="main-column">
+            <div className="panel panel-section map-panel">
+              <div className="panel-header">
+                <p className="panel-title">Wind Map</p>
+                <div className="toolbar-group">
+                  <button
+                    className={`toolbar-btn${windMapTool === WIND_MAP_TOOL_PAN ? ' active' : ''}`}
+                    type="button"
+                    onClick={() => setWindMapTool(WIND_MAP_TOOL_PAN)}
+                    title="Pan and zoom the wind map"
+                  >
+                    Pan
+                  </button>
+                  <button
+                    className={`toolbar-btn${windMapTool === WIND_MAP_TOOL_BRUSH ? ' active' : ''}`}
+                    type="button"
+                    onClick={() => setWindMapTool(WIND_MAP_TOOL_BRUSH)}
+                    title="Drag a rectangle to select grid cells"
+                  >
+                    Brush
+                  </button>
+                  {payload && (
+                    <button
+                      className="btn"
+                      title="Save Wind Map as PNG"
+                      onClick={() => saveCanvasAsPng(windMapCanvasRef.current, 'wind_map.png')}
+                    >Save PNG</button>
+                  )}
+                </div>
+              </div>
+              {payload && windMapTool === WIND_MAP_TOOL_BRUSH && (
+                <div className="panel-note">Brush mode: drag a rectangle to select cells. Hold Shift to add to the current selection.</div>
               )}
-            </div>
-            {payload ? (
-              <CanvasWind
-                payload={payload}
-                mode={mode}
-                featureColorMap={activeFeatureColorMap}
-                neutralColor={OVERVIEW_NEUTRAL}
-                onHover={setHoverPos}
-                onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
-                onBrushCell={(brushPayload) => {
-                  if (brushPayload && Array.isArray(brushPayload.cells)) {
-                    const cells = brushPayload.cells
-                    setSelectedCells((prev) => {
-                      const key = (c) => `${c.i}:${c.j}`
-                      const setPrev = new Set(prev.map(key))
-                      const out = prev.slice()
-                      for (const c of cells) {
-                        const k = key(c)
-                        if (!setPrev.has(k)) {
-                          setPrev.add(k)
-                          out.push({ i: c.i, j: c.j })
-                        }
+              {payload ? (
+                <div className="wind-map-shell">
+                  <CanvasWind
+                    payload={payload}
+                    mode={mode}
+                    interactionMode={windMapTool}
+                    featureColorMap={activeFeatureColorMap}
+                    neutralColor={OVERVIEW_NEUTRAL}
+                    onHover={setHoverPos}
+                    onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
+                    onBrushCell={(brushPayload) => {
+                      if (brushPayload && Array.isArray(brushPayload.cells)) {
+                        const cells = brushPayload.cells
+                        const replace = !!brushPayload.replace
+                        setSelectedCells((prev) => {
+                          const key = (c) => `${c.i}:${c.j}`
+                          const base = replace ? [] : prev
+                          const setPrev = new Set(base.map(key))
+                          const out = base.slice()
+                          for (const c of cells) {
+                            const k = key(c)
+                            if (!setPrev.has(k)) {
+                              setPrev.add(k)
+                              out.push({ i: c.i, j: c.j })
+                            }
+                          }
+                          return out
+                        })
+                        return
                       }
-                      return out
-                    })
-                    return
-                  }
-                  const { i, j } = brushPayload || {}
-                  if (typeof i === 'number' && typeof j === 'number') {
-                    setSelectedCells((prev) => {
-                      const exists = prev.some((c) => c.i === i && c.j === j)
-                      if (exists) return prev
-                      return [...prev, { i, j }]
-                    })
-                  }
-                }}
-                showGrid={showGrid}
-                particleCount={particleCount}
-                speedScale={speedScale}
-                tailLength={tailLength}
-                trailTailMin={trailTailMin}
-                trailTailExp={trailTailExp}
-                maxLifetime={maxLifetime}
-                size={600}
-                showParticles={!hideParticles}
-                pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
-                showPointGradients={showPointGradients}
-                showPointAggregatedGradients={showPointAggGradients}
-                showCellGradients={showCellGradients}
-                showCellAggregatedGradients={showCellAggGradients}
-                showParticleInits={showParticleInits}
-                gradientFeatureIndices={gradientFeatureIndices}
-                selectedCells={selectedCells}
-                featureIndices={activeFeatureIndices}
-                uniformPointShape={uniformPointShape}
-                showParticleArrowheads={showParticleArrowheads}
-                allowGridSelection={restrictSpawnToSelection}
-                restrictSpawnToSelection={restrictSpawnToSelection}
-                autoRespawnRate={autoRespawnEnabled ? 0.3 : 0.0}
-                trailLineWidth={trailLineWidth}
-                onCanvasElement={(el) => { windMapCanvasRef.current = el }}
-              />
-            ) : (
-              <div className="panel placeholder" style={{ width: 600, height: 600 }}>Wind Map</div>
-            )}
-          </div>
-
-          <div className="panel canvas-frame">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <p className="panel-title" style={{ margin: 0 }}>Wind Vane{selectedCells.length > 0 ? ` (selection: ${selectedCells.length} cells)` : ''}</p>
-              {payload && (
-                <button
-                  className="btn"
-                  title="Save Wind Vane as PNG"
-                  onClick={() => saveCanvasAsPng(windVaneCanvasRef.current, 'wind_vane.png')}
-                >Save PNG</button>
+                      const { i, j } = brushPayload || {}
+                      if (typeof i === 'number' && typeof j === 'number') {
+                        setSelectedCells((prev) => {
+                          const exists = prev.some((c) => c.i === i && c.j === j)
+                          if (exists) return prev
+                          return [...prev, { i, j }]
+                        })
+                      }
+                    }}
+                    showGrid={showGrid}
+                    particleCount={particleCount}
+                    speedScale={speedScale}
+                    tailLength={tailLength}
+                    trailTailMin={trailTailMin}
+                    trailTailExp={trailTailExp}
+                    maxLifetime={maxLifetime}
+                    showParticles={!hideParticles}
+                    pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
+                    showPointGradients={showPointGradients}
+                    showPointAggregatedGradients={showPointAggGradients}
+                    showCellGradients={showCellGradients}
+                    showCellAggregatedGradients={showCellAggGradients}
+                    showParticleInits={showParticleInits}
+                    gradientFeatureIndices={gradientFeatureIndices}
+                    selectedCells={selectedCells}
+                    featureIndices={activeFeatureIndices}
+                    uniformPointShape={uniformPointShape}
+                    showParticleArrowheads={showParticleArrowheads}
+                    allowGridSelection={restrictSpawnToSelection}
+                    restrictSpawnToSelection={restrictSpawnToSelection}
+                    autoRespawnRate={autoRespawnEnabled ? 0.3 : 0.0}
+                    trailLineWidth={trailLineWidth}
+                    onCanvasElement={(el) => { windMapCanvasRef.current = el }}
+                  />
+                </div>
+              ) : (
+                <div className="placeholder wind-map-placeholder">Wind Map</div>
               )}
             </div>
-            {payload ? (
-              <WindVane
-                payload={payload}
-                mode={mode}
-                focus={vaneFocus}
-                selectedCells={selectedCells}
-                useConvexHull={mode === MODE_COMPARE ? !showAllVectors : false}
-                showHull={mode === MODE_COMPARE ? showHull : false}
-                showLabels={mode === MODE_COMPARE ? showVectorLabels : false}
-                featureIndices={vaneFeatureIndices}
-                featureColorMap={activeFeatureColorMap}
-                neutralColor={OVERVIEW_NEUTRAL}
-                onCanvasElement={(el) => { windVaneCanvasRef.current = el }}
-              />
-            ) : (
-              <div className="panel placeholder" style={{ width: 600, height: 600 }}>Wind Vane</div>
-            )}
           </div>
 
-          <div className="panel padded color-panel">
-            <p className="panel-title">Features</p>
-            {payload ? (
-              <ColorLegend
-                payload={payload}
-                mode={mode}
-                onChangeMode={handleModeChange}
-                defaultFeatureIndex={effectiveDefaultFeatureIndex}
-                compareFeatureIndices={effectiveCompareFeatureIndices}
-                onSelectFeature={handleSelectFeature}
-                onSelectAll={handleSelectAllFeatures}
-                onToggleCompareFeature={handleToggleCompareFeature}
-                onClearCompare={handleClearCompareFeatures}
-                compareCap={COMPARE_MAX}
-                message={featureMessage}
-                activeFeatureColorMap={activeFeatureColorMap}
-              />
-            ) : (
-              <div className="hint">Upload a dataset to browse features</div>
-            )}
-          </div>
-
-          <div className="panel padded controls-grid full-span">
-            <label>Grid Res</label>
-            <div className="slider-row">
-              <input type="range" min={8} max={200} step={1} value={gridRes} onChange={(e) => setGridRes(Number(e.target.value))} />
-              <span className="control-val">{gridRes}</span>
-            </div>
-
-            <label>Mask Buffer</label>
-            <div className="slider-row">
-              <input type="range" min={0} max={2} step={0.05} value={maskBufferFactor} onChange={(e) => setMaskBufferFactor(Number(e.target.value))} />
-              <span className="control-val">{maskBufferFactor.toFixed(2)}</span>
-            </div>
-
-            <label>Show Grid</label>
-            <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
-
-            <label>Show Convex Hull</label>
-            <input type="checkbox" checked={showHull} onChange={(e) => setShowHull(e.target.checked)} disabled={mode !== MODE_COMPARE} />
-
-            <label>Show Vector Labels</label>
-            <input type="checkbox" checked={showVectorLabels} onChange={(e) => setShowVectorLabels(e.target.checked)} disabled={mode !== MODE_COMPARE} />
-
-            <label>Show All Vectors</label>
-            <input type="checkbox" checked={showAllVectors} onChange={(e) => setShowAllVectors(e.target.checked)} disabled={mode !== MODE_COMPARE} />
-
-            <label>Hide Particles</label>
-            <input type="checkbox" checked={hideParticles} onChange={(e) => setHideParticles(e.target.checked)} />
-
-            <label>Point Color By</label>
-            <select
-              value={pointColorFeature}
-              onChange={(e) => setPointColorFeature(e.target.value)}
-              disabled={!payload || !Array.isArray(payload.feature_values)}
-            >
-              <option value="">None</option>
-              {Array.isArray(payload?.col_labels) && payload.col_labels.map((name, idx) => (
-                <option key={idx} value={String(idx)}>{name}</option>
-              ))}
-            </select>
-
-            <label>Use Circle Markers</label>
-            <input type="checkbox" checked={uniformPointShape} onChange={(e) => setUniformPointShape(e.target.checked)} />
-
-            <label>Particle Arrowheads</label>
-            <input type="checkbox" checked={showParticleArrowheads} onChange={(e) => setShowParticleArrowheads(e.target.checked)} />
-
-            <label>Show Point Gradients</label>
-            <input type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
-
-            <label>Show Aggregated Point Gradients</label>
-            <input type="checkbox" checked={showPointAggGradients} onChange={(e) => setShowPointAggGradients(e.target.checked)} />
-
-            <label>Show Cell Gradients</label>
-            <input type="checkbox" checked={showCellGradients} onChange={(e) => setShowCellGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
-
-            <label>Show Aggregated Cell Gradients</label>
-            <input type="checkbox" checked={showCellAggGradients} onChange={(e) => setShowCellAggGradients(e.target.checked)} />
-
-            <label>Show Particle Inits</label>
-            <input type="checkbox" checked={showParticleInits} onChange={(e) => setShowParticleInits(e.target.checked)} />
-
-            <label>Restrict Spawns to Selection</label>
-            <input type="checkbox" checked={restrictSpawnToSelection} onChange={(e) => setRestrictSpawnToSelection(e.target.checked)} />
-
-            <label>Auto Respawn (30% bursts)</label>
-            <input type="checkbox" checked={autoRespawnEnabled} onChange={(e) => setAutoRespawnEnabled(e.target.checked)} />
-
-            <label>Assess Feature Coverage</label>
-            <div className="slider-row">
-              <input type="checkbox" checked={assessAllCells} onChange={(e) => setAssessAllCells(e.target.checked)} />
-              {assessAllCells && (
-                <span className="control-val">
-                  Avg active: {typeof avgActiveFeatures === 'number' ? avgActiveFeatures.toFixed(2) : '-'}
-                </span>
+          <div className="sidebar-column">
+            <div className="panel panel-section sidebar-panel vane-panel">
+              <div className="panel-header">
+                <p className="panel-title">Wind Vane{selectedCells.length > 0 ? ` (${selectedCells.length} cells)` : ''}</p>
+                {payload && (
+                  <button
+                    className="btn"
+                    title="Save Wind Vane as PNG"
+                    onClick={() => saveCanvasAsPng(windVaneCanvasRef.current, 'wind_vane.png')}
+                  >Save PNG</button>
+                )}
+              </div>
+              {payload ? (
+                <div className="wind-vane-shell">
+                  <WindVane
+                    payload={payload}
+                    mode={mode}
+                    focus={vaneFocus}
+                    selectedCells={selectedCells}
+                    useConvexHull={mode === MODE_COMPARE ? !showAllVectors : false}
+                    showHull={mode === MODE_COMPARE ? showHull : false}
+                    showLabels={mode === MODE_COMPARE ? showVectorLabels : false}
+                    featureIndices={vaneFeatureIndices}
+                    featureColorMap={activeFeatureColorMap}
+                    neutralColor={OVERVIEW_NEUTRAL}
+                    onCanvasElement={(el) => { windVaneCanvasRef.current = el }}
+                  />
+                </div>
+              ) : (
+                <div className="placeholder wind-vane-placeholder">Wind Vane</div>
               )}
             </div>
 
-            <label>Particles</label>
-            <div className="slider-row">
-              <input type="range" min={50} max={5000} step={50} value={particleCount} onChange={(e) => setParticleCount(Number(e.target.value))} />
-              <span className="control-val">{particleCount}</span>
+            <div className="panel padded panel-section sidebar-panel color-panel features-panel">
+              <div className="panel-header">
+                <p className="panel-title">Features</p>
+              </div>
+              {payload ? (
+                <ColorLegend
+                  payload={payload}
+                  mode={mode}
+                  onChangeMode={handleModeChange}
+                  defaultFeatureIndex={effectiveDefaultFeatureIndex}
+                  compareFeatureIndices={effectiveCompareFeatureIndices}
+                  onSelectFeature={handleSelectFeature}
+                  onSelectAll={handleSelectAllFeatures}
+                  onToggleCompareFeature={handleToggleCompareFeature}
+                  onClearCompare={handleClearCompareFeatures}
+                  compareCap={COMPARE_MAX}
+                  message={featureMessage}
+                  activeFeatureColorMap={activeFeatureColorMap}
+                />
+              ) : (
+                <div className="hint">Upload a dataset to browse features</div>
+              )}
             </div>
 
-            <label>Speed Scale</label>
-            <div className="slider-row">
-              <input type="range" min={0.1} max={10} step={0.1} value={speedScale} onChange={(e) => setSpeedScale(Number(e.target.value))} />
-              <span className="control-val">{speedScale.toFixed(1)}</span>
-            </div>
+            <div className="panel padded panel-section sidebar-panel controls-panel">
+              <div className="panel-header">
+                <p className="panel-title">Controls</p>
+              </div>
+              <div className="controls-stack">
+                <div className="controls-section">
+                  <div className="controls-section-title">Basic</div>
+                  <div className="controls-grid controls-grid-compact">
+                    <label>Grid Res</label>
+                    <div className="slider-row">
+                      <input type="range" min={8} max={200} step={1} value={gridRes} onChange={(e) => setGridRes(Number(e.target.value))} />
+                      <span className="control-val">{gridRes}</span>
+                    </div>
 
-            <label>Tail Length</label>
-            <div className="slider-row">
-              <input type="range" min={2} max={60} step={1} value={tailLength} onChange={(e) => setTailLength(Number(e.target.value))} />
-              <span className="control-val">{tailLength}</span>
-            </div>
+                    <label>Mask Buffer</label>
+                    <div className="slider-row">
+                      <input type="range" min={0} max={2} step={0.05} value={maskBufferFactor} onChange={(e) => setMaskBufferFactor(Number(e.target.value))} />
+                      <span className="control-val">{maskBufferFactor.toFixed(2)}</span>
+                    </div>
 
-            <label>Trail Width</label>
-            <div className="slider-row">
-              <input type="range" min={0.5} max={4} step={0.1} value={trailLineWidth} onChange={(e) => setTrailLineWidth(Number(e.target.value))} />
-              <span className="control-val">{trailLineWidth.toFixed(1)} px</span>
-            </div>
+                    <label>Show Grid</label>
+                    <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
 
-            <label>Tail Min Alpha</label>
-            <div className="slider-row">
-              <input type="range" min={0} max={1} step={0.01} value={trailTailMin} onChange={(e) => setTrailTailMin(Number(e.target.value))} />
-              <span className="control-val">{trailTailMin.toFixed(2)}</span>
-            </div>
+                    <label>Hide Particles</label>
+                    <input type="checkbox" checked={hideParticles} onChange={(e) => setHideParticles(e.target.checked)} />
 
-            <label>Tail Exp</label>
-            <div className="slider-row">
-              <input type="range" min={0.5} max={6} step={0.1} value={trailTailExp} onChange={(e) => setTrailTailExp(Number(e.target.value))} />
-              <span className="control-val">{trailTailExp.toFixed(1)}</span>
-            </div>
+                    <label>Restrict Spawns</label>
+                    <input type="checkbox" checked={restrictSpawnToSelection} onChange={(e) => setRestrictSpawnToSelection(e.target.checked)} />
 
-            <label>Max Lifetime</label>
-            <div className="slider-row">
-              <input type="range" min={1} max={300} step={1} value={maxLifetime} onChange={(e) => setMaxLifetime(Number(e.target.value))} />
-              <span className="control-val">{maxLifetime}</span>
-            </div>
+                    <label>Selection</label>
+                    <div className="selection-row">
+                      <span className="selection-count">{selectedCells.length} cells</span>
+                      <button
+                        className="btn btn-small"
+                        type="button"
+                        onClick={clearSelection}
+                        disabled={selectedCells.length === 0}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                </div>
 
-            <div className="spacer" />
-            <label>Selection</label>
-            <div>
-              <button onClick={clearSelection} style={{ height: 32, padding: '0 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff' }}>Clear (C)</button>
+                <div className="controls-section controls-section-advanced">
+                  <button
+                    className={`section-toggle${advancedControlsOpen ? ' open' : ''}`}
+                    type="button"
+                    onClick={() => setAdvancedControlsOpen((prev) => !prev)}
+                  >
+                    <span>Advanced</span>
+                    <span>{advancedControlsOpen ? 'Hide' : 'Show'}</span>
+                  </button>
+                  {advancedControlsOpen && (
+                    <div className="controls-grid">
+                      <label>Show Convex Hull</label>
+                      <input type="checkbox" checked={showHull} onChange={(e) => setShowHull(e.target.checked)} disabled={mode !== MODE_COMPARE} />
+
+                      <label>Show Vector Labels</label>
+                      <input type="checkbox" checked={showVectorLabels} onChange={(e) => setShowVectorLabels(e.target.checked)} disabled={mode !== MODE_COMPARE} />
+
+                      <label>Show All Vectors</label>
+                      <input type="checkbox" checked={showAllVectors} onChange={(e) => setShowAllVectors(e.target.checked)} disabled={mode !== MODE_COMPARE} />
+
+                      <label>Point Color By</label>
+                      <select
+                        value={pointColorFeature}
+                        onChange={(e) => setPointColorFeature(e.target.value)}
+                        disabled={!payload || !Array.isArray(payload.feature_values)}
+                      >
+                        <option value="">None</option>
+                        {Array.isArray(payload?.col_labels) && payload.col_labels.map((name, idx) => (
+                          <option key={idx} value={String(idx)}>{name}</option>
+                        ))}
+                      </select>
+
+                      <label>Use Circle Markers</label>
+                      <input type="checkbox" checked={uniformPointShape} onChange={(e) => setUniformPointShape(e.target.checked)} />
+
+                      <label>Particle Arrowheads</label>
+                      <input type="checkbox" checked={showParticleArrowheads} onChange={(e) => setShowParticleArrowheads(e.target.checked)} />
+
+                      <label>Show Point Gradients</label>
+                      <input type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
+
+                      <label>Show Aggregated Point Gradients</label>
+                      <input type="checkbox" checked={showPointAggGradients} onChange={(e) => setShowPointAggGradients(e.target.checked)} />
+
+                      <label>Show Cell Gradients</label>
+                      <input type="checkbox" checked={showCellGradients} onChange={(e) => setShowCellGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
+
+                      <label>Show Aggregated Cell Gradients</label>
+                      <input type="checkbox" checked={showCellAggGradients} onChange={(e) => setShowCellAggGradients(e.target.checked)} />
+
+                      <label>Show Particle Inits</label>
+                      <input type="checkbox" checked={showParticleInits} onChange={(e) => setShowParticleInits(e.target.checked)} />
+
+                      <label>Auto Respawn</label>
+                      <input type="checkbox" checked={autoRespawnEnabled} onChange={(e) => setAutoRespawnEnabled(e.target.checked)} />
+
+                      <label>Assess Coverage</label>
+                      <div className="slider-row">
+                        <input type="checkbox" checked={assessAllCells} onChange={(e) => setAssessAllCells(e.target.checked)} />
+                        {assessAllCells && (
+                          <span className="control-val">
+                            {typeof avgActiveFeatures === 'number' ? avgActiveFeatures.toFixed(2) : '-'}
+                          </span>
+                        )}
+                      </div>
+
+                      <label>Particles</label>
+                      <div className="slider-row">
+                        <input type="range" min={50} max={5000} step={50} value={particleCount} onChange={(e) => setParticleCount(Number(e.target.value))} />
+                        <span className="control-val">{particleCount}</span>
+                      </div>
+
+                      <label>Speed Scale</label>
+                      <div className="slider-row">
+                        <input type="range" min={0.1} max={10} step={0.1} value={speedScale} onChange={(e) => setSpeedScale(Number(e.target.value))} />
+                        <span className="control-val">{speedScale.toFixed(1)}</span>
+                      </div>
+
+                      <label>Tail Length</label>
+                      <div className="slider-row">
+                        <input type="range" min={2} max={60} step={1} value={tailLength} onChange={(e) => setTailLength(Number(e.target.value))} />
+                        <span className="control-val">{tailLength}</span>
+                      </div>
+
+                      <label>Trail Width</label>
+                      <div className="slider-row">
+                        <input type="range" min={0.5} max={4} step={0.1} value={trailLineWidth} onChange={(e) => setTrailLineWidth(Number(e.target.value))} />
+                        <span className="control-val">{trailLineWidth.toFixed(1)} px</span>
+                      </div>
+
+                      <label>Tail Min Alpha</label>
+                      <div className="slider-row">
+                        <input type="range" min={0} max={1} step={0.01} value={trailTailMin} onChange={(e) => setTrailTailMin(Number(e.target.value))} />
+                        <span className="control-val">{trailTailMin.toFixed(2)}</span>
+                      </div>
+
+                      <label>Tail Exp</label>
+                      <div className="slider-row">
+                        <input type="range" min={0.5} max={6} step={0.1} value={trailTailExp} onChange={(e) => setTrailTailExp(Number(e.target.value))} />
+                        <span className="control-val">{trailTailExp.toFixed(1)}</span>
+                      </div>
+
+                      <label>Max Lifetime</label>
+                      <div className="slider-row">
+                        <input type="range" min={1} max={300} step={1} value={maxLifetime} onChange={(e) => setMaxLifetime(Number(e.target.value))} />
+                        <span className="control-val">{maxLifetime}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {error && <div className="hint controls-error">{error}</div>}
+              </div>
             </div>
-            <div className="spacer" />
-            {error && <div className="hint" style={{ color: '#b91c1c' }}>{error}</div>}
           </div>
         </div>
       </div>
