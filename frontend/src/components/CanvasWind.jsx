@@ -64,10 +64,10 @@ export default function CanvasWind({
   brushRadius = 1,
   gradientFeatureIndices = null,
   speedScale = 1.0,
-  tailLength = 10,
+  tailDurationSec = 1.2,
   trailTailMin = 0.10,
   trailTailExp = 2.0,
-  maxLifetime = 200,
+  lifetimeTailMultiplier = 3.0,
   size = null,
   width = null,
   height = null,
@@ -273,26 +273,18 @@ export default function CanvasWind({
     const W = grid_res, H = grid_res
 
     // Trail configuration (mirrors defaults in featurewind/config.py)
-    const TAIL_LENGTH = Math.max(1, Math.floor(tailLength))
+    const FIELD_EPS = 1e-8
+    const DISPLAY_SPEED_PX = Math.max(1, 120 * (Number(speedScale) || 1))
+    const TAIL_DURATION_SEC = Math.max(0.1, Number(tailDurationSec) || 1.2)
     const TRAIL_TAIL_MIN = Math.max(0, Math.min(1, trailTailMin))
     const TRAIL_TAIL_EXP = Math.max(0.5, trailTailExp)
-    const MAX_LIFETIME = Math.max(1, Math.floor(maxLifetime))
-    const SPEED_SCALE = speedScale
+    const LIFETIME_TAIL_MULTIPLIER = Math.max(0.5, Number(lifetimeTailMultiplier) || 3.0)
+    const MAX_LIFETIME_SEC = LIFETIME_TAIL_MULTIPLIER * TAIL_DURATION_SEC
 
     // Optional mask helpers
     let hasMask = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
     const isOverviewMode = mode === 'overview'
 
-    // Precompute list of unmasked cells for efficient respawn
-    let unmaskedList = []
-    if (hasMask) {
-      for (let i = 0; i < H; i++) {
-        for (let j = 0; j < W; j++) {
-          if (unmasked[i][j]) unmaskedList.push([i, j])
-        }
-      }
-      if (unmaskedList.length === 0) hasMask = false
-    }
     const dxWorld = (xmax - xmin) / W
     const dyWorld = (ymax - ymin) / H
 
@@ -406,6 +398,82 @@ export default function CanvasWind({
       return false
     }
 
+    const activeFieldP99 = magInfo?.p99 || 1.0
+    const weakThreshold = Math.max(1e-6, 0.03 * activeFieldP99)
+
+    // Precompute list of valid cells for efficient, uniform respawn.
+    const validSpawnCells = []
+    for (let i = 0; i < H; i++) {
+      for (let j = 0; j < W; j++) {
+        if (hasMask && !unmasked[i][j]) continue
+        const mag = Math.hypot(uSum?.[i]?.[j] ?? 0, vSum?.[i]?.[j] ?? 0)
+        if (mag >= weakThreshold) validSpawnCells.push([i, j])
+      }
+    }
+    if (validSpawnCells.length === 0 && hasMask) hasMask = false
+
+    function sampleActiveField(x, y, view = viewRef.current) {
+      const cell = worldToCell(x, y)
+      if (!cell || isMaskedCell(cell.i, cell.j)) {
+        return { valid: false, u: 0, v: 0, mag: 0, dirX: 0, dirY: 0, screenDirX: 0, screenDirY: 0 }
+      }
+      const [gx, gy] = worldToGrid(x, y)
+      const u = bilinearSample(uSum, gx, gy)
+      const v = bilinearSample(vSum, gx, gy)
+      const mag = Math.hypot(u, v)
+      if (!(mag > FIELD_EPS) || mag < weakThreshold) {
+        return { valid: false, u, v, mag, dirX: 0, dirY: 0, screenDirX: 0, screenDirY: 0 }
+      }
+      const dirX = u / (mag + FIELD_EPS)
+      const dirY = v / (mag + FIELD_EPS)
+      const sxScale = Wpx / (view.xmax - view.xmin)
+      const syScale = Hpx / (view.ymax - view.ymin)
+      const screenDx = dirX * sxScale
+      const screenDy = -dirY * syScale
+      const screenMag = Math.hypot(screenDx, screenDy)
+      if (!(screenMag > FIELD_EPS)) {
+        return { valid: false, u, v, mag, dirX, dirY, screenDirX: 0, screenDirY: 0 }
+      }
+      return {
+        valid: true,
+        u,
+        v,
+        mag,
+        dirX,
+        dirY,
+        screenDirX: screenDx / screenMag,
+        screenDirY: screenDy / screenMag,
+      }
+    }
+
+    function worldDeltaFromScreenDirection(screenDirX, screenDirY, distancePx, view = viewRef.current) {
+      const sxScale = Wpx / (view.xmax - view.xmin)
+      const syScale = Hpx / (view.ymax - view.ymin)
+      return {
+        dx: (screenDirX * distancePx) / sxScale,
+        dy: -(screenDirY * distancePx) / syScale,
+      }
+    }
+
+    function advectAlongFieldRK2(x, y, dtSec) {
+      const view = viewRef.current
+      const start = sampleActiveField(x, y, view)
+      if (!start.valid) return { valid: false, sample: start }
+      const distancePx = DISPLAY_SPEED_PX * dtSec
+      const halfDelta = worldDeltaFromScreenDirection(start.screenDirX, start.screenDirY, distancePx * 0.5, view)
+      const midX = x + halfDelta.dx
+      const midY = y + halfDelta.dy
+      const midpoint = sampleActiveField(midX, midY, view)
+      if (!midpoint.valid) return { valid: false, sample: midpoint }
+      const fullDelta = worldDeltaFromScreenDirection(midpoint.screenDirX, midpoint.screenDirY, distancePx, view)
+      const nx = x + fullDelta.dx
+      const ny = y + fullDelta.dy
+      if (!Number.isFinite(nx) || !Number.isFinite(ny)) return { valid: false, sample: midpoint }
+      const end = sampleActiveField(nx, ny, view)
+      if (!end.valid) return { valid: false, sample: end }
+      return { valid: true, x: nx, y: ny, start, midpoint, end }
+    }
+
     function resolveStaticTrailStart(seed) {
       if (!seed || typeof seed !== 'object') return null
       if (typeof seed.pointIndex === 'number' && seed.pointIndex >= 0 && seed.pointIndex < positions.length) {
@@ -419,9 +487,11 @@ export default function CanvasWind({
     function buildStaticTrail(startX, startY) {
       const startCell = worldToCell(startX, startY)
       if (!startCell || isMaskedCell(startCell.i, startCell.j)) return null
+      const startSample = sampleActiveField(startX, startY)
+      if (!startSample.valid) return null
       const points = [{ x: startX, y: startY }]
       const segments = []
-      const stepSize = 0.45 * Math.min(dxWorld, dyWorld)
+      const staticStepDt = 1 / 60
       const maxSteps = Math.max(64, Math.min(4000, W * H * 4))
       const visitCounts = new Map()
       let x = startX
@@ -434,16 +504,9 @@ export default function CanvasWind({
         visitCounts.set(key, visits)
         if (visits > 24) break
 
-        const u = (uSum?.[cell.i]?.[cell.j] ?? 0)
-        const v = (vSum?.[cell.i]?.[cell.j] ?? 0)
-        const mag = Math.hypot(u, v)
-        if (!(mag > 1e-10)) break
-
-        const scale = stepSize / mag
-        const nx = x + u * scale
-        const ny = y + v * scale
-        if (!Number.isFinite(nx) || !Number.isFinite(ny)) break
-
+        const advected = advectAlongFieldRK2(x, y, staticStepDt)
+        if (!advected.valid) break
+        const { x: nx, y: ny } = advected
         const nextCell = worldToCell(nx, ny)
         if (!nextCell || isMaskedCell(nextCell.i, nextCell.j)) break
 
@@ -461,6 +524,32 @@ export default function CanvasWind({
       return { points, segments, start: { x: startX, y: startY } }
     }
 
+    function shuffleCells(cells) {
+      const out = cells.slice()
+      for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        const tmp = out[i]
+        out[i] = out[j]
+        out[j] = tmp
+      }
+      return out
+    }
+
+    const globalSpawnState = { order: shuffleCells(validSpawnCells), index: 0 }
+    const selectedSpawnState = { key: '', order: [], index: 0 }
+
+    function nextSpawnCell(state, cells, key = '') {
+      if (!Array.isArray(cells) || cells.length === 0) return null
+      if (state.key !== key || state.index >= state.order.length) {
+        state.key = key
+        state.order = shuffleCells(cells)
+        state.index = 0
+      }
+      const cell = state.order[state.index] || null
+      state.index += 1
+      return cell
+    }
+
     function randomSpawn() {
       // If restriction is enabled and we have selected cells, spawn within them (respecting mask)
       if (restrictSpawnToSelectionRef.current && Array.isArray(selectedRef.current) && selectedRef.current.length > 0) {
@@ -468,10 +557,13 @@ export default function CanvasWind({
         for (const c of selectedRef.current) {
           const i = Math.max(0, Math.min(H - 1, (c.i|0)))
           const j = Math.max(0, Math.min(W - 1, (c.j|0)))
-          if (!hasMask || (unmasked[i][j])) valid.push([i, j])
+          const mag = Math.hypot(uSum?.[i]?.[j] ?? 0, vSum?.[i]?.[j] ?? 0)
+          if ((!hasMask || unmasked[i][j]) && mag >= weakThreshold) valid.push([i, j])
         }
         if (valid.length > 0) {
-          const [i, j] = valid[Math.floor(Math.random() * valid.length)]
+          const key = valid.map(([i, j]) => `${i}:${j}`).join('|')
+          const picked = nextSpawnCell(selectedSpawnState, valid, key) || valid[0]
+          const [i, j] = picked
           const dx = (xmax - xmin) / W
           const dy = (ymax - ymin) / H
           const x = xmin + j * dx + Math.random() * dx
@@ -479,27 +571,51 @@ export default function CanvasWind({
           return { x, y }
         }
       }
-      if (hasMask && unmaskedList.length) {
-        const idx = Math.floor(Math.random() * unmaskedList.length)
-        const [i, j] = unmaskedList[idx]
+      if (validSpawnCells.length) {
+        const picked = nextSpawnCell(globalSpawnState, validSpawnCells, 'global') || validSpawnCells[0]
+        const [i, j] = picked
         const dx = (xmax - xmin) / W
         const dy = (ymax - ymin) / H
         const x = xmin + j * dx + Math.random() * dx
         const y = ymin + i * dy + Math.random() * dy
         return { x, y }
-      } else {
-        return {
-          x: xmin + Math.random() * (xmax - xmin),
-          y: ymin + Math.random() * (ymax - ymin),
+      } else if (hasMask) {
+        const fallback = []
+        for (let i = 0; i < H; i++) {
+          for (let j = 0; j < W; j++) {
+            if (unmasked[i][j]) fallback.push([i, j])
+          }
         }
+        if (fallback.length) {
+          const [i, j] = fallback[Math.floor(Math.random() * fallback.length)]
+          const dx = (xmax - xmin) / W
+          const dy = (ymax - ymin) / H
+          return {
+            x: xmin + j * dx + Math.random() * dx,
+            y: ymin + i * dy + Math.random() * dy,
+          }
+        }
+      }
+      return {
+        x: xmin + Math.random() * (xmax - xmin),
+        y: ymin + Math.random() * (ymax - ymin),
       }
     }
 
+    function resetParticle(p, x, y, nowSec) {
+      p.x = x
+      p.y = y
+      p.ageSec = 0
+      p.initX = x
+      p.initY = y
+      p.hist = [{ x, y, t: nowSec }]
+    }
+
     // Particles with trail histories and lifetimes
+    let simTimeSec = 0
     const particles = Array.from({ length: particleCount }, () => {
       const { x, y } = randomSpawn()
-      const hist = Array.from({ length: TAIL_LENGTH + 1 }, () => ({ x, y }))
-      return { x, y, age: 0, hist, initX: x, initY: y }
+      return { x, y, ageSec: 0, hist: [{ x, y, t: simTimeSec }], initX: x, initY: y }
     })
 
     // Frame counter for periodic behaviors
@@ -512,39 +628,28 @@ export default function CanvasWind({
 
     function step(dt) {
       for (const p of particles) {
-        const [gx, gy] = worldToGrid(p.x, p.y)
-        let u = bilinearSample(uSum, gx, gy)
-        let v = bilinearSample(vSum, gx, gy)
-
-        // Scale speed directly by user-controlled factor
-        u *= SPEED_SCALE
-        v *= SPEED_SCALE
-
-        // Integrate position
-        p.x += u * dt
-        p.y += v * dt
-        p.age += 1
-
-        // Shift history
-        for (let t = TAIL_LENGTH; t >= 1; t--) {
-          p.hist[t].x = p.hist[t - 1].x
-          p.hist[t].y = p.hist[t - 1].y
+        const advected = advectAlongFieldRK2(p.x, p.y, dt)
+        if (!advected.valid) {
+          const { x: nx, y: ny } = randomSpawn()
+          resetParticle(p, nx, ny, simTimeSec)
+          continue
         }
-        p.hist[0].x = p.x
-        p.hist[0].y = p.y
+
+        p.x = advected.x
+        p.y = advected.y
+        p.ageSec += dt
+        p.hist.unshift({ x: p.x, y: p.y, t: simTimeSec })
+        while (p.hist.length > 2 && (simTimeSec - p.hist[p.hist.length - 1].t) > TAIL_DURATION_SEC) {
+          p.hist.pop()
+        }
 
         // Respawn if out of bounds, over-age, or in masked region
         const outOfBounds = p.x < xmin || p.x > xmax || p.y < ymin || p.y > ymax
-        const overAge = p.age > MAX_LIFETIME
+        const overAge = p.ageSec > MAX_LIFETIME_SEC
         const inMasked = isMaskedAt(p.x, p.y)
         if (outOfBounds || overAge || inMasked) {
           const { x: nx, y: ny } = randomSpawn()
-          p.x = nx
-          p.y = ny
-          p.age = 0
-          p.initX = nx
-          p.initY = ny
-          for (let t = 0; t <= TAIL_LENGTH; t++) { p.hist[t].x = nx; p.hist[t].y = ny }
+          resetParticle(p, nx, ny, simTimeSec)
         }
       }
 
@@ -558,12 +663,7 @@ export default function CanvasWind({
           const idx = Math.floor(Math.random() * particles.length)
           const p = particles[idx]
           const { x: nx, y: ny } = randomSpawn()
-          p.x = nx
-          p.y = ny
-          p.age = 0
-          p.initX = nx
-          p.initY = ny
-          for (let t = 0; t <= TAIL_LENGTH; t++) { p.hist[t].x = nx; p.hist[t].y = ny }
+          resetParticle(p, nx, ny, simTimeSec)
         }
       }
     }
@@ -574,6 +674,7 @@ export default function CanvasWind({
       const now = performance.now()
       const dt = Math.min((now - last) / 1000, 0.05)
       last = now
+      simTimeSec += dt
       if (showParticlesRef.current) {
         step(dt)
       }
@@ -1064,10 +1165,10 @@ export default function CanvasWind({
         }
       }
 
-      // Draw trails as fading line segments (colored by feature family)
+      // Draw trails as fading line segments (colored by the active feature mode)
       ctx.lineWidth = Math.max(0.5, Number(trailLineWidth) || 1.2)
       ctx.lineCap = 'round'
-      const p99 = magInfo?.p99 || 1.0
+      const p99 = activeFieldP99
       // If exactly one feature is manually selected, force its color globally
       const singleColorOverride = (Array.isArray(featureIndices) && featureIndices.length === 1)
         ? (function () {
@@ -1082,14 +1183,17 @@ export default function CanvasWind({
           // reset cached head style each frame
           p._headAlpha = undefined
           p._headRgb = undefined
-          for (let t = TAIL_LENGTH - 1; t >= 0; t--) {
+          if (!Array.isArray(p.hist) || p.hist.length < 2) continue
+          for (let t = p.hist.length - 2; t >= 0; t--) {
           // Fade from tail (low alpha) to head (high alpha)
-          const relHead = (TAIL_LENGTH - t) / TAIL_LENGTH
+          const head = p.hist[t]
+          const tail = p.hist[t + 1]
+          const relHead = Math.max(0, Math.min(1, 1 - ((simTimeSec - head.t) / TAIL_DURATION_SEC)))
           const aTail = TRAIL_TAIL_MIN + (1 - TRAIL_TAIL_MIN) * Math.pow(relHead, TRAIL_TAIL_EXP)
-          const x1 = p.hist[t + 1].x
-          const y1 = p.hist[t + 1].y
-          const x0 = p.hist[t].x
-          const y0 = p.hist[t].y
+          const x1 = tail.x
+          const y1 = tail.y
+          const x0 = head.x
+          const y0 = head.y
           // Field-strength based alpha at segment head
           const [gx0, gy0] = worldToGrid(x0, y0)
           const u0 = bilinearSample(uSum, gx0, gy0)
@@ -1155,7 +1259,7 @@ export default function CanvasWind({
             // Use cached head alpha/color to exactly match the head segment's opacity and color
             const alpha = (typeof p._headAlpha === 'number') ? p._headAlpha : 0
             const rgb = Array.isArray(p._headRgb) ? p._headRgb : [20, 20, 20]
-            if (!(alpha > 0.01)) continue
+            if (!(alpha > 0.01) || !Array.isArray(p.hist) || p.hist.length < 2) continue
             const x0 = p.hist[0].x, y0 = p.hist[0].y
             const x1 = p.hist[1].x, y1 = p.hist[1].y
             // Screen coords + direction from last step
@@ -1626,10 +1730,10 @@ export default function CanvasWind({
     featureIndices,
     pointColorStats,
     particleCount,
-    tailLength,
+    tailDurationSec,
     trailTailMin,
     trailTailExp,
-    maxLifetime,
+    lifetimeTailMultiplier,
     speedScale,
     trailLineWidth,
     showCellAggregatedGradients,

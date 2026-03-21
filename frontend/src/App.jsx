@@ -73,11 +73,11 @@ export default function App() {
   const [showGrid, setShowGrid] = useState(true)
   const [particleCount, setParticleCount] = useState(1000)
   const [speedScale, setSpeedScale] = useState(1.0)
-  const [tailLength, setTailLength] = useState(10)
+  const [tailDurationSec, setTailDurationSec] = useState(1.2)
   const [trailTailMin, setTrailTailMin] = useState(0.10)
   const [trailTailExp, setTrailTailExp] = useState(2.0)
   const [trailLineWidth, setTrailLineWidth] = useState(2.0)
-  const [maxLifetime, setMaxLifetime] = useState(200)
+  const [lifetimeTailMultiplier, setLifetimeTailMultiplier] = useState(3.0)
   const [maskBufferFactor, setMaskBufferFactor] = useState(0.2)
   const [showHull, setShowHull] = useState(false)
   const [showVectorLabels, setShowVectorLabels] = useState(false)
@@ -471,10 +471,10 @@ export default function App() {
                     showGrid={showGrid}
                     particleCount={particleCount}
                     speedScale={speedScale}
-                    tailLength={tailLength}
+                    tailDurationSec={tailDurationSec}
                     trailTailMin={trailTailMin}
                     trailTailExp={trailTailExp}
-                    maxLifetime={maxLifetime}
+                    lifetimeTailMultiplier={lifetimeTailMultiplier}
                     showParticles={!hideParticles}
                     pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
                     showPointGradients={showPointGradients}
@@ -673,16 +673,16 @@ export default function App() {
                         <span className="control-val">{particleCount}</span>
                       </div>
 
-                      <label>Speed Scale</label>
+                      <label>Display Speed</label>
                       <div className="slider-row">
-                        <input type="range" min={0.1} max={10} step={0.1} value={speedScale} onChange={(e) => setSpeedScale(Number(e.target.value))} />
-                        <span className="control-val">{speedScale.toFixed(1)}</span>
+                        <input type="range" min={0.5} max={2.5} step={0.1} value={speedScale} onChange={(e) => setSpeedScale(Number(e.target.value))} />
+                        <span className="control-val">{Math.round(120 * speedScale)} px/s</span>
                       </div>
 
-                      <label>Tail Length</label>
+                      <label>Tail Duration</label>
                       <div className="slider-row">
-                        <input type="range" min={2} max={60} step={1} value={tailLength} onChange={(e) => setTailLength(Number(e.target.value))} />
-                        <span className="control-val">{tailLength}</span>
+                        <input type="range" min={0.8} max={1.8} step={0.1} value={tailDurationSec} onChange={(e) => setTailDurationSec(Number(e.target.value))} />
+                        <span className="control-val">{tailDurationSec.toFixed(1)} s</span>
                       </div>
 
                       <label>Trail Width</label>
@@ -703,10 +703,10 @@ export default function App() {
                         <span className="control-val">{trailTailExp.toFixed(1)}</span>
                       </div>
 
-                      <label>Max Lifetime</label>
+                      <label>Lifetime</label>
                       <div className="slider-row">
-                        <input type="range" min={1} max={300} step={1} value={maxLifetime} onChange={(e) => setMaxLifetime(Number(e.target.value))} />
-                        <span className="control-val">{maxLifetime}</span>
+                        <input type="range" min={2} max={4} step={0.25} value={lifetimeTailMultiplier} onChange={(e) => setLifetimeTailMultiplier(Number(e.target.value))} />
+                        <span className="control-val">{lifetimeTailMultiplier.toFixed(2)}x tail</span>
                       </div>
                     </div>
                   )}
