@@ -465,20 +465,72 @@ export default function CanvasWind({
     function advectAlongFieldRK2(x, y, dtSec) {
       const view = viewRef.current
       const start = sampleActiveField(x, y, view)
-      if (!start.valid) return { valid: false, reason: `start-${start.reason || 'invalid'}`, sample: start }
+      if (!start.valid) {
+        return {
+          valid: false,
+          reason: `start-${start.reason || 'invalid'}`,
+          sample: start,
+          start,
+          midpoint: null,
+          end: null,
+          midX: null,
+          midY: null,
+          nx: null,
+          ny: null,
+        }
+      }
       const distancePx = DISPLAY_SPEED_PX * dtSec
       const halfDelta = worldDeltaFromScreenDirection(start.screenDirX, start.screenDirY, distancePx * 0.5, view)
       const midX = x + halfDelta.dx
       const midY = y + halfDelta.dy
       const midpoint = sampleActiveField(midX, midY, view)
-      if (!midpoint.valid) return { valid: false, reason: `midpoint-${midpoint.reason || 'invalid'}`, sample: midpoint }
+      if (!midpoint.valid) {
+        return {
+          valid: false,
+          reason: `midpoint-${midpoint.reason || 'invalid'}`,
+          sample: midpoint,
+          start,
+          midpoint,
+          end: null,
+          midX,
+          midY,
+          nx: null,
+          ny: null,
+        }
+      }
       const fullDelta = worldDeltaFromScreenDirection(midpoint.screenDirX, midpoint.screenDirY, distancePx, view)
       const nx = x + fullDelta.dx
       const ny = y + fullDelta.dy
-      if (!Number.isFinite(nx) || !Number.isFinite(ny)) return { valid: false, reason: 'nonfinite-endpoint', sample: midpoint }
+      if (!Number.isFinite(nx) || !Number.isFinite(ny)) {
+        return {
+          valid: false,
+          reason: 'nonfinite-endpoint',
+          sample: midpoint,
+          start,
+          midpoint,
+          end: null,
+          midX,
+          midY,
+          nx,
+          ny,
+        }
+      }
       const end = sampleActiveField(nx, ny, view)
-      if (!end.valid) return { valid: false, reason: `end-${end.reason || 'invalid'}`, sample: end }
-      return { valid: true, reason: null, x: nx, y: ny, start, midpoint, end }
+      if (!end.valid) {
+        return {
+          valid: false,
+          reason: `end-${end.reason || 'invalid'}`,
+          sample: end,
+          start,
+          midpoint,
+          end,
+          midX,
+          midY,
+          nx,
+          ny,
+        }
+      }
+      return { valid: true, reason: null, x: nx, y: ny, start, midpoint, end, midX, midY, nx, ny }
     }
 
     function resolveStaticTrailSeed(seed) {
@@ -497,37 +549,305 @@ export default function CanvasWind({
       return null
     }
 
-    function buildStaticTrail(startX, startY) {
-      const finishTrail = (points, segments, stopReason, stopStep = 0) => ({
-        points,
-        segments,
-        start: { x: startX, y: startY },
-        stopReason,
-        stopStep,
+    function roundDiagnosticValue(value) {
+      return Number.isFinite(value) ? Number(value.toFixed(6)) : value
+    }
+
+    function snapshotCell(cell) {
+      return cell ? { i: cell.i, j: cell.j } : null
+    }
+
+    function snapshotView(view) {
+      if (!view) return null
+      return {
+        xmin: roundDiagnosticValue(view.xmin),
+        xmax: roundDiagnosticValue(view.xmax),
+        ymin: roundDiagnosticValue(view.ymin),
+        ymax: roundDiagnosticValue(view.ymax),
+      }
+    }
+
+    function snapshotFieldSample(sample) {
+      if (!sample) return null
+      return {
+        valid: !!sample.valid,
+        reason: sample.reason ?? null,
+        u: roundDiagnosticValue(sample.u),
+        v: roundDiagnosticValue(sample.v),
+        mag: roundDiagnosticValue(sample.mag),
+      }
+    }
+
+    function flattenStaticTrailStepRecord(record) {
+      const cell = record?.cell ? `${record.cell.i},${record.cell.j}` : ''
+      const nextCell = record?.nextCell ? `${record.nextCell.i},${record.nextCell.j}` : ''
+      return {
+        step: record?.step ?? null,
+        dt: record?.dt ?? null,
+        x: record?.x ?? null,
+        y: record?.y ?? null,
+        cell,
+        visitsBefore: record?.visitsBefore ?? null,
+        visitsAfter: record?.visitsAfter ?? null,
+        gx: record?.gx ?? null,
+        gy: record?.gy ?? null,
+        startU: record?.start?.u ?? null,
+        startV: record?.start?.v ?? null,
+        startMag: record?.start?.mag ?? null,
+        startReason: record?.start?.reason ?? null,
+        midX: record?.midX ?? null,
+        midY: record?.midY ?? null,
+        midpointU: record?.midpoint?.u ?? null,
+        midpointV: record?.midpoint?.v ?? null,
+        midpointMag: record?.midpoint?.mag ?? null,
+        midpointReason: record?.midpoint?.reason ?? null,
+        nx: record?.nx ?? null,
+        ny: record?.ny ?? null,
+        nextCell,
+        endU: record?.end?.u ?? null,
+        endV: record?.end?.v ?? null,
+        endMag: record?.end?.mag ?? null,
+        endReason: record?.end?.reason ?? null,
+        sameCellAsPrev: record?.sameCellAsPrev ?? null,
+        sameCellAsNext: record?.sameCellAsNext ?? null,
+        sameCellVisitCount: record?.sameCellVisitCount ?? null,
+        recentNetDisplacement: record?.recentNetDisplacement ?? null,
+        stepStopReason: record?.stepStopReason ?? null,
+      }
+    }
+
+    function logStaticTrailDiagnostics(trail) {
+      if (!trail?.diagnostics) return
+      const { globalContext, summary, stepRecords } = trail.diagnostics
+      console.groupCollapsed('[Wind Map] Static trail diagnostics', {
+        pointIndex: globalContext?.seed?.pointIndex ?? null,
+        stopReason: summary?.stopReason ?? trail.stopReason ?? 'unknown',
+        stopStep: summary?.stopStep ?? trail.stopStep ?? 0,
+        steps: Array.isArray(stepRecords) ? stepRecords.length : 0,
       })
+      console.log('globalContext', globalContext)
+      console.log('summary', summary)
+      console.log('stepRecords', stepRecords)
+      if (Array.isArray(stepRecords) && stepRecords.length > 0) {
+        console.table(stepRecords.map((record) => flattenStaticTrailStepRecord(record)))
+      }
+      console.groupEnd()
+    }
+
+    function buildStaticTrail(startX, startY, options = {}) {
+      const collectDiagnostics = !!options.collectDiagnostics
+      const stepRecords = []
+      const visitCounts = new Map()
+      const cellPxX = Wpx / W
+      const cellPxY = Hpx / H
+      const cellDiagPx = Math.hypot(cellPxX, cellPxY)
+      const stepPx = DISPLAY_SPEED_PX * FIXED_ADVECTION_STEP_SEC
+      const recentWindowSize = 16
+      const progressThreshold = Math.max(1e-6, Math.hypot(dxWorld, dyWorld) * 0.35)
+      // The old fixed `visits > 24` rule was too coarse: a streamline can make
+      // steady progress yet still need many fixed substeps to cross one coarse cell.
+      const visitLimit = Math.max(64, Math.ceil((cellDiagPx / Math.max(stepPx, 1e-6)) * 2.0))
+      const loopGuard = {
+        visitLimit,
+        recentWindowSize,
+        progressThreshold: roundDiagnosticValue(progressThreshold),
+      }
+      const makeGlobalContext = () => ({
+        seed: {
+          x: roundDiagnosticValue(startX),
+          y: roundDiagnosticValue(startY),
+          pointIndex: Number.isInteger(options.pointIndex) ? options.pointIndex : null,
+        },
+        grid_res: grid_res,
+        canvasSize: { Wpx, Hpx },
+        bbox: [xmin, xmax, ymin, ymax].map((value) => roundDiagnosticValue(value)),
+        speedScale: Number(speedScale) || 1,
+        DISPLAY_SPEED_PX: roundDiagnosticValue(DISPLAY_SPEED_PX),
+        weakThreshold: roundDiagnosticValue(weakThreshold),
+        viewWindow: snapshotView(viewRef.current),
+      })
+      const summarizeVisitCounts = () => (
+        Array.from(visitCounts.entries())
+          .map(([key, visits]) => {
+            const [i, j] = key.split(':').map((value) => Number(value))
+            return { cell: { i, j }, visits }
+          })
+          .sort((a, b) => b.visits - a.visits)
+          .slice(0, 8)
+      )
+      const finishTrail = (points, segments, stopReason, stopStep = 0, extraSummary = {}) => {
+        const trail = {
+          points,
+          segments,
+          start: { x: startX, y: startY },
+          stopReason,
+          stopStep,
+          loopGuard,
+        }
+        if (extraSummary.loopGuardState) trail.loopGuardState = extraSummary.loopGuardState
+        if (collectDiagnostics) {
+          trail.diagnostics = {
+            globalContext: makeGlobalContext(),
+            summary: {
+              stopReason,
+              stopStep,
+              totalPoints: points.length,
+              totalSegments: segments.length,
+              topRepeatedCells: summarizeVisitCounts(),
+              loopGuard,
+              ...extraSummary,
+            },
+            stepRecords,
+          }
+        }
+        return trail
+      }
       const startCell = worldToCell(startX, startY)
-      if (!startCell || isMaskedCell(startCell.i, startCell.j)) return finishTrail([], [], 'start-masked-or-out-of-bounds')
+      if (!startCell || isMaskedCell(startCell.i, startCell.j)) {
+        return finishTrail([], [], 'start-masked-or-out-of-bounds', 0, {
+          startCell: snapshotCell(startCell),
+          initialSample: null,
+        })
+      }
       const startSample = sampleActiveField(startX, startY)
-      if (!startSample.valid) return finishTrail([], [], `start-${startSample.reason || 'invalid'}`)
+      if (!startSample.valid) {
+        return finishTrail([], [], `start-${startSample.reason || 'invalid'}`, 0, {
+          startCell: snapshotCell(startCell),
+          initialSample: snapshotFieldSample(startSample),
+        })
+      }
       const points = [{ x: startX, y: startY }]
       const segments = []
       const maxSteps = Math.max(64, Math.min(4000, W * H * 4))
-      const visitCounts = new Map()
+      const recentPositions = [{ x: startX, y: startY }]
+      let sameCellKey = null
+      let sameCellVisitCount = 0
+
+      function computeRecentNetDisplacement(candidateX, candidateY) {
+        const startIdx = Math.max(0, recentPositions.length - (recentWindowSize - 1))
+        const startPos = recentPositions[startIdx] || recentPositions[0] || { x: candidateX, y: candidateY }
+        return Math.hypot(candidateX - startPos.x, candidateY - startPos.y)
+      }
+
       let x = startX
       let y = startY
       for (let step = 0; step < maxSteps; step++) {
         const cell = worldToCell(x, y)
-        if (!cell || isMaskedCell(cell.i, cell.j)) return finishTrail(points, segments, 'current-cell-masked-or-out-of-bounds', step)
+        const [gx, gy] = worldToGrid(x, y)
+        if (!cell || isMaskedCell(cell.i, cell.j)) {
+          if (collectDiagnostics) {
+            const prevRecord = stepRecords[stepRecords.length - 1] || null
+            stepRecords.push({
+              step,
+              dt: FIXED_ADVECTION_STEP_SEC,
+              x: roundDiagnosticValue(x),
+              y: roundDiagnosticValue(y),
+              cell: snapshotCell(cell),
+              visitsBefore: null,
+              visitsAfter: null,
+              gx: roundDiagnosticValue(gx),
+              gy: roundDiagnosticValue(gy),
+              start: null,
+              midX: null,
+              midY: null,
+              midpoint: null,
+              nx: null,
+              ny: null,
+              nextCell: null,
+              end: null,
+              sameCellAsPrev: !!(prevRecord?.cell && cell && prevRecord.cell.i === cell.i && prevRecord.cell.j === cell.j),
+              sameCellAsNext: null,
+              stepStopReason: 'current-cell-masked-or-out-of-bounds',
+            })
+          }
+          return finishTrail(points, segments, 'current-cell-masked-or-out-of-bounds', step)
+        }
         const key = `${cell.i}:${cell.j}`
-        const visits = (visitCounts.get(key) || 0) + 1
-        visitCounts.set(key, visits)
-        if (visits > 24) return finishTrail(points, segments, 'loop-guard', step)
+        const visitsBefore = visitCounts.get(key) || 0
+        const visitsAfter = visitsBefore + 1
+        visitCounts.set(key, visitsAfter)
+        if (sameCellKey === key) {
+          sameCellVisitCount += 1
+        } else {
+          sameCellKey = key
+          sameCellVisitCount = 1
+        }
+        const prevRecord = stepRecords[stepRecords.length - 1] || null
+        const stepRecord = collectDiagnostics ? {
+          step,
+          dt: FIXED_ADVECTION_STEP_SEC,
+          x: roundDiagnosticValue(x),
+          y: roundDiagnosticValue(y),
+          cell: snapshotCell(cell),
+          visitsBefore,
+          visitsAfter,
+          gx: roundDiagnosticValue(gx),
+          gy: roundDiagnosticValue(gy),
+          start: null,
+          midX: null,
+          midY: null,
+          midpoint: null,
+          nx: null,
+          ny: null,
+          nextCell: null,
+          end: null,
+          sameCellAsPrev: !!(prevRecord?.cell && prevRecord.cell.i === cell.i && prevRecord.cell.j === cell.j),
+          sameCellAsNext: null,
+          sameCellVisitCount,
+          stepStopReason: null,
+        } : null
 
         const advected = advectAlongFieldRK2(x, y, FIXED_ADVECTION_STEP_SEC)
-        if (!advected.valid) return finishTrail(points, segments, advected.reason || 'rk2-invalid', step)
+        if (stepRecord) {
+          stepRecord.start = snapshotFieldSample(advected.start)
+          stepRecord.midX = roundDiagnosticValue(advected.midX)
+          stepRecord.midY = roundDiagnosticValue(advected.midY)
+          stepRecord.midpoint = snapshotFieldSample(advected.midpoint)
+          stepRecord.nx = roundDiagnosticValue(advected.nx)
+          stepRecord.ny = roundDiagnosticValue(advected.ny)
+          stepRecord.end = snapshotFieldSample(advected.end)
+        }
+        if (!advected.valid) {
+          if (stepRecord) {
+            stepRecord.stepStopReason = advected.reason || 'rk2-invalid'
+            stepRecords.push(stepRecord)
+          }
+          return finishTrail(points, segments, advected.reason || 'rk2-invalid', step)
+        }
         const { x: nx, y: ny } = advected
         const nextCell = worldToCell(nx, ny)
-        if (!nextCell || isMaskedCell(nextCell.i, nextCell.j)) return finishTrail(points, segments, 'next-cell-masked-or-out-of-bounds', step)
+        if (stepRecord) {
+          stepRecord.nextCell = snapshotCell(nextCell)
+          stepRecord.sameCellAsNext = !!(nextCell && nextCell.i === cell.i && nextCell.j === cell.j)
+        }
+        if (!nextCell || isMaskedCell(nextCell.i, nextCell.j)) {
+          if (stepRecord) {
+            stepRecord.stepStopReason = 'next-cell-masked-or-out-of-bounds'
+            stepRecords.push(stepRecord)
+          }
+          return finishTrail(points, segments, 'next-cell-masked-or-out-of-bounds', step)
+        }
+
+        const stayedInSameCell = nextCell.i === cell.i && nextCell.j === cell.j
+        const recentNetDisplacement = stayedInSameCell
+          ? computeRecentNetDisplacement(nx, ny)
+          : null
+        if (stepRecord) {
+          stepRecord.recentNetDisplacement = roundDiagnosticValue(recentNetDisplacement)
+        }
+        if (stayedInSameCell && sameCellVisitCount > visitLimit && recentNetDisplacement <= progressThreshold) {
+          const loopGuardState = {
+            cell: snapshotCell(cell),
+            visitCount: sameCellVisitCount,
+            recentNetDisplacement: roundDiagnosticValue(recentNetDisplacement),
+          }
+          if (stepRecord) {
+            stepRecord.stepStopReason = 'loop-guard'
+            stepRecord.loopGuardState = loopGuardState
+            stepRecords.push(stepRecord)
+          }
+          return finishTrail(points, segments, 'loop-guard', step, { loopGuardState })
+        }
 
         segments.push({
           x0: x,
@@ -537,13 +857,16 @@ export default function CanvasWind({
           rgb: colorForCell(cell.i, cell.j),
         })
         points.push({ x: nx, y: ny })
+        recentPositions.push({ x: nx, y: ny })
+        if (recentPositions.length > recentWindowSize) recentPositions.shift()
+        if (stepRecord) stepRecords.push(stepRecord)
         x = nx
         y = ny
       }
       return finishTrail(points, segments, 'max-steps', maxSteps)
     }
 
-    function buildStaticTrailsFromSeeds(seeds) {
+    function buildStaticTrailsFromSeeds(seeds, options = {}) {
       if (!Array.isArray(seeds) || seeds.length === 0) return []
       const deduped = []
       const seen = new Set()
@@ -556,17 +879,17 @@ export default function CanvasWind({
         deduped.push(seed)
       }
       return deduped.map((seed) => ({
-        ...buildStaticTrail(seed.x, seed.y),
+        ...buildStaticTrail(seed.x, seed.y, { ...options, pointIndex: seed.pointIndex }),
         pointIndex: seed.pointIndex,
       }))
     }
 
-    function setStaticTrailSeeds(seeds) {
+    function setStaticTrailSeeds(seeds, options = {}) {
       const normalized = Array.isArray(seeds)
         ? seeds.map((seed) => resolveStaticTrailSeed(seed)).filter(Boolean)
         : []
       staticTrailSeedsRef.current = normalized
-      staticTrailsRef.current = buildStaticTrailsFromSeeds(normalized)
+      staticTrailsRef.current = buildStaticTrailsFromSeeds(normalized, options)
       return staticTrailsRef.current
     }
 
@@ -1602,7 +1925,10 @@ export default function CanvasWind({
       }
       if (clickedPointIdx >= 0) {
         const [px, py] = positions[clickedPointIdx]
-        const builtTrails = setStaticTrailSeeds([{ x: px, y: py, pointIndex: clickedPointIdx }])
+        const builtTrails = setStaticTrailSeeds(
+          [{ x: px, y: py, pointIndex: clickedPointIdx }],
+          { collectDiagnostics: true }
+        )
         const clickedTrail = builtTrails[0] || null
         const stopReason = clickedTrail?.stopReason || 'unknown'
         const stopStep = clickedTrail?.stopStep ?? 0
@@ -1613,6 +1939,7 @@ export default function CanvasWind({
           stopStep,
           segmentCount,
         })
+        logStaticTrailDiagnostics(clickedTrail)
       } else {
         setStaticTrailSeeds([])
       }
