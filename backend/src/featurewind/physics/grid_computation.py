@@ -8,8 +8,6 @@ of gradient vector fields for visualization and particle simulation.
 import os
 import numpy as np
 from scipy.interpolate import griddata, RegularGridInterpolator
-from scipy.spatial import cKDTree
-from scipy.ndimage import gaussian_filter, binary_closing
 from .. import config
 
 
@@ -35,6 +33,62 @@ def create_grid_coordinates(grid_res):
     grid_x, grid_y = np.meshgrid(cell_centers_x, cell_centers_y)
     
     return grid_x, grid_y, cell_centers_x, cell_centers_y
+
+
+def build_occupied_cell_mask(positions, grid_res, bbox=None):
+    """
+    Build a boolean occupied-cell grid from point positions.
+
+    A cell is occupied if it contains at least one data point.
+    """
+    xmin, xmax, ymin, ymax = bbox or config.bounding_box
+    occupied = np.zeros((grid_res, grid_res), dtype=bool)
+    if positions is None:
+        return occupied
+    cell_width = (xmax - xmin) / grid_res
+    cell_height = (ymax - ymin) / grid_res
+    try:
+        iterable = np.asarray(positions)
+    except Exception:
+        iterable = positions
+    for pos in iterable:
+        px, py = float(pos[0]), float(pos[1])
+        i = int((py - ymin) / cell_height)
+        j = int((px - xmin) / cell_width)
+        i = max(0, min(grid_res - 1, i))
+        j = max(0, min(grid_res - 1, j))
+        occupied[i, j] = True
+    return occupied
+
+
+def dilate_cell_mask(mask, radius_cells):
+    """
+    Dilate a cell mask by an integer Chebyshev radius using 8-neighborhood growth.
+    """
+    out = np.asarray(mask, dtype=bool).copy()
+    radius = max(0, int(radius_cells))
+    if radius == 0 or out.size == 0:
+        return out
+    h, w = out.shape
+    for _ in range(radius):
+        padded = np.pad(out, 1, mode='constant', constant_values=False)
+        grown = np.zeros_like(out, dtype=bool)
+        for di in range(3):
+            for dj in range(3):
+                grown |= padded[di:di + h, dj:dj + w]
+        out = grown
+    return out
+
+
+def build_dilated_support_mask(positions, grid_res, radius_cells=None, bbox=None):
+    """
+    Build occupied, unmasked, and final masked grids from cell-level dilation.
+    """
+    radius = getattr(config, "MASK_DILATE_RADIUS_CELLS", 1) if radius_cells is None else radius_cells
+    occupied_cells = build_occupied_cell_mask(positions, grid_res, bbox=bbox)
+    unmasked_cells = dilate_cell_mask(occupied_cells, radius)
+    final_mask = np.logical_not(unmasked_cells)
+    return occupied_cells, unmasked_cells, final_mask
 
 
 def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y):
@@ -114,46 +168,18 @@ def build_grids(positions, grid_res, top_k_indices, all_grad_vectors, col_labels
     grid_u_sum = np.sum(grid_u_feats, axis=0)  # shape: (grid_res, grid_res)
     grid_v_sum = np.sum(grid_v_feats, axis=0)  # shape: (grid_res, grid_res)
     
-    # Apply buffer-based masking on the final summed field only.
-    # Any cell outside data points and their buffer (defined by MASK_BUFFER_FACTOR)
-    # is zeroed out before building continuous interpolators.
+    # Apply occupied-cell dilation masking on the final summed field only.
+    # Any cell outside the dilated occupied-cell support is zeroed out before
+    # building continuous interpolators.
     final_mask = None
     try:
-        xmin, xmax, ymin, ymax = config.bounding_box
-        grid_res_local = grid_u_sum.shape[0]
-        # Cell sizes for cell-center grid
-        cell_width = (xmax - xmin) / grid_res_local
-        cell_height = (ymax - ymin) / grid_res_local
-        
-        # Initialize all cells as masked (True); we will unmask buffered regions
-        final_mask = np.ones_like(grid_u_sum, dtype=bool)
-        
-        buffer_x = cell_width * config.MASK_BUFFER_FACTOR
-        buffer_y = cell_height * config.MASK_BUFFER_FACTOR
-        
-        # Unmask cells within buffer of any data point
-        for pos in positions:
-            px, py = pos[0], pos[1]
-            i_start = max(0, int((py - buffer_y - ymin) / cell_height))
-            i_end = min(grid_res_local, int((py + buffer_y - ymin) / cell_height) + 1)
-            j_start = max(0, int((px - buffer_x - xmin) / cell_width))
-            j_end = min(grid_res_local, int((px + buffer_x - xmin) / cell_width) + 1)
-            final_mask[i_start:i_end, j_start:j_end] = False
-        
-        # Ensure the exact cell containing each point is unmasked
-        for pos in positions:
-            i = int((pos[1] - ymin) / cell_height)
-            j = int((pos[0] - xmin) / cell_width)
-            i = max(0, min(grid_res_local - 1, i))
-            j = max(0, min(grid_res_local - 1, j))
-            final_mask[i, j] = False
-        
+        _, _, final_mask = build_dilated_support_mask(positions, grid_u_sum.shape[0], bbox=config.bounding_box)
         # Apply mask to the final summed field
         grid_u_sum[final_mask] = 0.0
         grid_v_sum[final_mask] = 0.0
     except Exception as e:
         # If masking fails for any reason, proceed without final masking
-        print(f"Final buffer masking skipped due to error: {e}")
+        print(f"Final support masking skipped due to error: {e}")
     
     # Determine the dominant feature at each grid cell from ALL features
     # First, compute grids for ALL features to find true dominant feature

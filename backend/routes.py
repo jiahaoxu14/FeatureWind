@@ -298,12 +298,17 @@ def compute():
             selection_obj = {"topKIndices": top_k_indices}
 
     # Apply per-request config overrides safely
-    orig_MASK_BUFFER_FACTOR = getattr(fw_config, "MASK_BUFFER_FACTOR", 0.2)
+    orig_MASK_DILATE_RADIUS_CELLS = getattr(fw_config, "MASK_DILATE_RADIUS_CELLS", 1)
     try:
         if isinstance(cfg_overrides, dict):
-            if "maskBufferFactor" in cfg_overrides:
+            if "maskDilateRadiusCells" in cfg_overrides:
                 try:
-                    fw_config.MASK_BUFFER_FACTOR = float(cfg_overrides["maskBufferFactor"])  # type: ignore[attr-defined]
+                    fw_config.MASK_DILATE_RADIUS_CELLS = max(0, int(round(float(cfg_overrides["maskDilateRadiusCells"]))))  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            elif "maskBufferFactor" in cfg_overrides:
+                try:
+                    fw_config.MASK_DILATE_RADIUS_CELLS = max(0, int(round(float(cfg_overrides["maskBufferFactor"]))))  # type: ignore[attr-defined]
                 except Exception:
                     pass
 
@@ -326,7 +331,7 @@ def compute():
     finally:
         # Restore global to avoid cross-request bleed
         try:
-            fw_config.MASK_BUFFER_FACTOR = orig_MASK_BUFFER_FACTOR  # type: ignore[attr-defined]
+            fw_config.MASK_DILATE_RADIUS_CELLS = orig_MASK_DILATE_RADIUS_CELLS  # type: ignore[attr-defined]
         except Exception:
             pass
 

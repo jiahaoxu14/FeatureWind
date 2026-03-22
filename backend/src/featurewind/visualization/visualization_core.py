@@ -10,11 +10,12 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from scipy.spatial import ConvexHull
 from .. import config
+from ..physics.grid_computation import build_dilated_support_mask, build_occupied_cell_mask
 
 
 def highlight_unmasked_cells(ax, system, grid_res=None, valid_points=None):
     """
-    Highlight unmasked cells using the SAME buffer-based mask as the final field.
+    Highlight unmasked cells using the SAME occupied-cell dilation mask as the final field.
     This avoids mismatches between the visual overlay and runtime masking.
     """
     if grid_res is None:
@@ -24,44 +25,55 @@ def highlight_unmasked_cells(ax, system, grid_res=None, valid_points=None):
     dx = (xmax - xmin) / grid_res
     dy = (ymax - ymin) / grid_res
 
-    # Build buffer-based mask directly from data positions
-    positions = None
-    if valid_points:
+    unmasked_cells = None
+    occupied_cells = None
+    if isinstance(system, dict):
         try:
-            positions = np.array([p.position for p in valid_points])
+            cached_unmasked = system.get('unmasked_cells', None)
+            if cached_unmasked is not None:
+                arr = np.asarray(cached_unmasked, dtype=bool)
+                if arr.shape == (grid_res, grid_res):
+                    unmasked_cells = arr
+            cached_occupied = system.get('cells_with_data', None)
+            if cached_occupied is not None:
+                arr = np.asarray(cached_occupied, dtype=bool)
+                if arr.shape == (grid_res, grid_res):
+                    occupied_cells = arr
         except Exception:
-            positions = None
+            unmasked_cells = None
+            occupied_cells = None
 
-    # Default: if no positions available, fall back to all masked (no overlay)
-    if positions is None or len(positions) == 0:
-        return
-
-    # Initialize all cells as masked; unmask buffered regions around each point
-    unmasked_cells = np.zeros((grid_res, grid_res), dtype=bool)
-
-    buffer_x = dx * config.MASK_BUFFER_FACTOR
-    buffer_y = dy * config.MASK_BUFFER_FACTOR
-
-    for px, py in positions:
-        # Buffer rectangle in index space
-        i_start = max(0, int((py - buffer_y - ymin) / dy))
-        i_end   = min(grid_res, int((py + buffer_y - ymin) / dy) + 1)
-        j_start = max(0, int((px - buffer_x - xmin) / dx))
-        j_end   = min(grid_res, int((px + buffer_x - xmin) / dx) + 1)
-        unmasked_cells[i_start:i_end, j_start:j_end] = True
-
-        # Ensure exact cell is unmasked
-        i = int((py - ymin) / dy)
-        j = int((px - xmin) / dx)
-        i = max(0, min(grid_res - 1, i))
-        j = max(0, min(grid_res - 1, j))
-        unmasked_cells[i, j] = True
+    if unmasked_cells is None:
+        positions = None
+        if valid_points:
+            try:
+                positions = np.array([p.position for p in valid_points])
+            except Exception:
+                positions = None
+        if positions is None or len(positions) == 0:
+            return
+        occupied_cells, unmasked_cells, _ = build_dilated_support_mask(positions, grid_res, bbox=config.bounding_box)
+    elif occupied_cells is None:
+        positions = None
+        if isinstance(system, dict):
+            try:
+                positions = np.asarray(system.get('positions', None))
+            except Exception:
+                positions = None
+        if (positions is None or positions.size == 0) and valid_points:
+            try:
+                positions = np.array([p.position for p in valid_points])
+            except Exception:
+                positions = None
+        if positions is not None and getattr(positions, 'size', 0) > 0:
+            occupied_cells = build_occupied_cell_mask(positions, grid_res, bbox=config.bounding_box)
 
     # Persist mask for wind vane and other consumers
     try:
         system['unmasked_cells'] = unmasked_cells
-        system['cells_with_data'] = unmasked_cells.copy()
-        if positions is not None:
+        system['cells_with_data'] = occupied_cells.copy() if occupied_cells is not None else unmasked_cells.copy()
+        if 'positions' not in system and valid_points:
+            positions = np.array([p.position for p in valid_points])
             system['positions'] = positions
     except Exception:
         pass

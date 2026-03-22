@@ -51,6 +51,19 @@ function coerceFeatureIndex(value, count) {
   return idx
 }
 
+function sanitizePointIndices(indices, count) {
+  if (!Array.isArray(indices)) return []
+  const seen = new Set()
+  const out = []
+  for (const raw of indices) {
+    const idx = Number(raw)
+    if (!Number.isInteger(idx) || idx < 0 || idx >= count || seen.has(idx)) continue
+    seen.add(idx)
+    out.push(idx)
+  }
+  return out
+}
+
 export default function App() {
   const fileInputRef = useRef(null)
   const lastDatasetIdRef = useRef(null)
@@ -62,6 +75,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [hoverPos, setHoverPos] = useState(null)
   const [selectedCells, setSelectedCells] = useState([])
+  const [selectedPointIndices, setSelectedPointIndices] = useState([])
   const [windMapTool, setWindMapTool] = useState(WIND_MAP_TOOL_PAN)
   const [mode, setMode] = useState(MODE_DEFAULT)
   const [defaultFeatureIndex, setDefaultFeatureIndex] = useState(null)
@@ -71,6 +85,7 @@ export default function App() {
 
   // Interactive config (frontend + backend overrides)
   const [showGrid, setShowGrid] = useState(true)
+  const [showMaskOverlay, setShowMaskOverlay] = useState(false)
   const [particleCount, setParticleCount] = useState(1000)
   const [speedScale, setSpeedScale] = useState(1.0)
   const [tailDurationSec, setTailDurationSec] = useState(1.2)
@@ -78,7 +93,7 @@ export default function App() {
   const [trailTailExp, setTrailTailExp] = useState(2.0)
   const [trailLineWidth, setTrailLineWidth] = useState(2.0)
   const [lifetimeTailMultiplier, setLifetimeTailMultiplier] = useState(3.0)
-  const [maskBufferFactor, setMaskBufferFactor] = useState(0.2)
+  const [maskDilateRadiusCells, setMaskDilateRadiusCells] = useState(1)
   const [showHull, setShowHull] = useState(false)
   const [showVectorLabels, setShowVectorLabels] = useState(false)
   const [showAllVectors, setShowAllVectors] = useState(false)
@@ -112,6 +127,7 @@ export default function App() {
   }
 
   const featureCount = Array.isArray(payload?.col_labels) ? payload.col_labels.length : 0
+  const pointCount = Array.isArray(payload?.positions) ? payload.positions.length : 0
   const allFeatureIndices = useMemo(() => [...Array(featureCount).keys()], [featureCount])
   const featureRanking = useMemo(() => resolveFeatureRanking(payload, featureCount), [payload, featureCount])
 
@@ -186,7 +202,7 @@ export default function App() {
       const res = await compute({
         dataset_id: dsId,
         gridRes: Number(gridRes),
-        config: { maskBufferFactor: Number(maskBufferFactor) }
+        config: { maskDilateRadiusCells: Number(maskDilateRadiusCells) }
       })
 
       const nextCount = Array.isArray(res.col_labels) ? res.col_labels.length : 0
@@ -196,6 +212,7 @@ export default function App() {
 
       setPayload(res)
       setFeatureMessage('')
+      setSelectedPointIndices([])
 
       setDefaultFeatureIndex((prev) => {
         if (isNewDataset) return nextDefault
@@ -227,13 +244,14 @@ export default function App() {
       handleCompute(dsId)
     }, 200)
     return () => clearTimeout(t)
-  }, [dataset?.datasetId, gridRes, maskBufferFactor])
+  }, [dataset?.datasetId, gridRes, maskDilateRadiusCells])
 
   useEffect(() => {
     const n = Array.isArray(payload?.col_labels) ? payload.col_labels.length : 0
     if (!n) {
       setDefaultFeatureIndex(null)
       setCompareFeatureIndices([])
+      setSelectedPointIndices([])
       return
     }
     setDefaultFeatureIndex((prev) => {
@@ -427,7 +445,7 @@ export default function App() {
                 </div>
               </div>
               {payload && windMapTool === WIND_MAP_TOOL_BRUSH && (
-                <div className="panel-note">Brush mode: drag a rectangle to select cells. Hold Shift to add to the current selection.</div>
+                <div className="panel-note">Brush mode: drag a rectangle to select cells and trace all points inside it. Hold Shift to add to the current selection.</div>
               )}
               {payload ? (
                 <div className="wind-map-shell">
@@ -468,7 +486,25 @@ export default function App() {
                         })
                       }
                     }}
+                    onBrushPoints={(brushPayload) => {
+                      const replace = brushPayload?.replace !== false
+                      const nextIndices = sanitizePointIndices(brushPayload?.indices, pointCount)
+                      setSelectedPointIndices((prev) => {
+                        if (replace) return nextIndices
+                        const merged = sanitizePointIndices([...(Array.isArray(prev) ? prev : []), ...nextIndices], pointCount)
+                        return merged
+                      })
+                    }}
                     showGrid={showGrid}
+                    showMaskOverlay={showMaskOverlay}
+                    onSelectPoint={({ idx }) => {
+                      if (typeof idx === 'number' && idx >= 0) {
+                        setSelectedPointIndices([idx])
+                      } else {
+                        setSelectedPointIndices([])
+                      }
+                    }}
+                    selectedPointIndices={selectedPointIndices}
                     particleCount={particleCount}
                     speedScale={speedScale}
                     tailDurationSec={tailDurationSec}
@@ -571,14 +607,17 @@ export default function App() {
                       <span className="control-val">{gridRes}</span>
                     </div>
 
-                    <label>Mask Buffer</label>
+                    <label>Mask Radius</label>
                     <div className="slider-row">
-                      <input type="range" min={0} max={2} step={0.05} value={maskBufferFactor} onChange={(e) => setMaskBufferFactor(Number(e.target.value))} />
-                      <span className="control-val">{maskBufferFactor.toFixed(2)}</span>
+                      <input type="range" min={0} max={2} step={1} value={maskDilateRadiusCells} onChange={(e) => setMaskDilateRadiusCells(Number(e.target.value))} />
+                      <span className="control-val">{maskDilateRadiusCells} cell{maskDilateRadiusCells === 1 ? '' : 's'}</span>
                     </div>
 
                     <label>Show Grid</label>
                     <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+
+                    <label>Show Mask</label>
+                    <input type="checkbox" checked={showMaskOverlay} onChange={(e) => setShowMaskOverlay(e.target.checked)} />
 
                     <label>Hide Particles</label>
                     <input type="checkbox" checked={hideParticles} onChange={(e) => setHideParticles(e.target.checked)} />

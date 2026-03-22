@@ -50,6 +50,7 @@ export default function CanvasWind({
   onBrushPoints = null,
   selectedPointIndices = [],
   showGrid = true,
+  showMaskOverlay = false,
   showParticles = true,
   showPointGradients = false,
   showPointAggregatedGradients = false,
@@ -82,6 +83,7 @@ export default function CanvasWind({
   const brushingRef = useRef(false)
   const lastBrushRef = useRef({ i: -1, j: -1 })
   const showParticlesRef = useRef(!!showParticles)
+  const showMaskOverlayRef = useRef(!!showMaskOverlay)
   const showPointGradientsRef = useRef(!!showPointGradients)
   const showPointAggregatedGradientsRef = useRef(!!showPointAggregatedGradients)
   const showCellGradientsRef = useRef(!!showCellGradients)
@@ -96,8 +98,8 @@ export default function CanvasWind({
   const selectPointsModeRef = useRef(!!selectPointsMode)
   const pointBrushRadiusPxRef = useRef(Math.max(4, Math.floor(pointBrushRadiusPx || 14)))
   const selectedPointIndicesRef = useRef(Array.isArray(selectedPointIndices) ? selectedPointIndices : [])
-  const staticTrailSeedRef = useRef(null)
-  const staticTrailRef = useRef(null)
+  const staticTrailSeedsRef = useRef([])
+  const staticTrailsRef = useRef([])
   // Point brushing state: only becomes true after movement threshold
   const pointPointerDownRef = useRef(false)
   const pointBrushingRef = useRef(false)
@@ -122,6 +124,7 @@ export default function CanvasWind({
   // keep selection fresh for the draw loop without resetting particles
   useEffect(() => { selectedRef.current = selectedCells || [] }, [selectedCells])
   useEffect(() => { showGridRef.current = !!showGrid }, [showGrid])
+  useEffect(() => { showMaskOverlayRef.current = !!showMaskOverlay }, [showMaskOverlay])
   useEffect(() => { brushCbRef.current = onBrushCell }, [onBrushCell])
   useEffect(() => { showParticlesRef.current = !!showParticles }, [showParticles])
   useEffect(() => { showPointGradientsRef.current = !!showPointGradients }, [showPointGradients])
@@ -274,6 +277,7 @@ export default function CanvasWind({
 
     // Trail configuration (mirrors defaults in featurewind/config.py)
     const FIELD_EPS = 1e-8
+    const FIXED_ADVECTION_STEP_SEC = 1 / 60
     const DISPLAY_SPEED_PX = Math.max(1, 120 * (Number(speedScale) || 1))
     const TAIL_DURATION_SEC = Math.max(0.1, Number(tailDurationSec) || 1.2)
     const TRAIL_TAIL_MIN = Math.max(0, Math.min(1, trailTailMin))
@@ -383,7 +387,6 @@ export default function CanvasWind({
     }
 
     function isMaskedAt(x, y) {
-      const MASK_THRESHOLD = 1e-6
       const cell = worldToCell(x, y)
       if (!cell) return true
       const { i, j } = cell
@@ -391,7 +394,7 @@ export default function CanvasWind({
       const [gx, gy] = worldToGrid(x, y)
       const u = bilinearSample(uSum, gx, gy)
       const v = bilinearSample(vSum, gx, gy)
-      if (Math.hypot(u, v) <= MASK_THRESHOLD) return true
+      if (Math.hypot(u, v) < weakThreshold) return true
       if (dominant && dominant[i] && typeof dominant[i][j] === 'number') {
         return dominant[i][j] === -1
       }
@@ -399,7 +402,7 @@ export default function CanvasWind({
     }
 
     const activeFieldP99 = magInfo?.p99 || 1.0
-    const weakThreshold = Math.max(1e-6, 0.03 * activeFieldP99)
+    const weakThreshold = Math.max(1e-6, 0.015 * activeFieldP99)
 
     // Precompute list of valid cells for efficient, uniform respawn.
     const validSpawnCells = []
@@ -415,14 +418,17 @@ export default function CanvasWind({
     function sampleActiveField(x, y, view = viewRef.current) {
       const cell = worldToCell(x, y)
       if (!cell || isMaskedCell(cell.i, cell.j)) {
-        return { valid: false, u: 0, v: 0, mag: 0, dirX: 0, dirY: 0, screenDirX: 0, screenDirY: 0 }
+        return { valid: false, reason: 'masked-or-out-of-bounds', u: 0, v: 0, mag: 0, dirX: 0, dirY: 0, screenDirX: 0, screenDirY: 0 }
       }
       const [gx, gy] = worldToGrid(x, y)
       const u = bilinearSample(uSum, gx, gy)
       const v = bilinearSample(vSum, gx, gy)
       const mag = Math.hypot(u, v)
-      if (!(mag > FIELD_EPS) || mag < weakThreshold) {
-        return { valid: false, u, v, mag, dirX: 0, dirY: 0, screenDirX: 0, screenDirY: 0 }
+      if (!(Number.isFinite(mag) && mag > FIELD_EPS)) {
+        return { valid: false, reason: 'zero-or-nonfinite-magnitude', u, v, mag, dirX: 0, dirY: 0, screenDirX: 0, screenDirY: 0 }
+      }
+      if (mag < weakThreshold) {
+        return { valid: false, reason: 'below-weak-threshold', u, v, mag, dirX: 0, dirY: 0, screenDirX: 0, screenDirY: 0 }
       }
       const dirX = u / (mag + FIELD_EPS)
       const dirY = v / (mag + FIELD_EPS)
@@ -431,11 +437,12 @@ export default function CanvasWind({
       const screenDx = dirX * sxScale
       const screenDy = -dirY * syScale
       const screenMag = Math.hypot(screenDx, screenDy)
-      if (!(screenMag > FIELD_EPS)) {
-        return { valid: false, u, v, mag, dirX, dirY, screenDirX: 0, screenDirY: 0 }
+      if (!(Number.isFinite(screenMag) && screenMag > FIELD_EPS)) {
+        return { valid: false, reason: 'zero-or-nonfinite-screen-direction', u, v, mag, dirX, dirY, screenDirX: 0, screenDirY: 0 }
       }
       return {
         valid: true,
+        reason: null,
         u,
         v,
         mag,
@@ -458,57 +465,69 @@ export default function CanvasWind({
     function advectAlongFieldRK2(x, y, dtSec) {
       const view = viewRef.current
       const start = sampleActiveField(x, y, view)
-      if (!start.valid) return { valid: false, sample: start }
+      if (!start.valid) return { valid: false, reason: `start-${start.reason || 'invalid'}`, sample: start }
       const distancePx = DISPLAY_SPEED_PX * dtSec
       const halfDelta = worldDeltaFromScreenDirection(start.screenDirX, start.screenDirY, distancePx * 0.5, view)
       const midX = x + halfDelta.dx
       const midY = y + halfDelta.dy
       const midpoint = sampleActiveField(midX, midY, view)
-      if (!midpoint.valid) return { valid: false, sample: midpoint }
+      if (!midpoint.valid) return { valid: false, reason: `midpoint-${midpoint.reason || 'invalid'}`, sample: midpoint }
       const fullDelta = worldDeltaFromScreenDirection(midpoint.screenDirX, midpoint.screenDirY, distancePx, view)
       const nx = x + fullDelta.dx
       const ny = y + fullDelta.dy
-      if (!Number.isFinite(nx) || !Number.isFinite(ny)) return { valid: false, sample: midpoint }
+      if (!Number.isFinite(nx) || !Number.isFinite(ny)) return { valid: false, reason: 'nonfinite-endpoint', sample: midpoint }
       const end = sampleActiveField(nx, ny, view)
-      if (!end.valid) return { valid: false, sample: end }
-      return { valid: true, x: nx, y: ny, start, midpoint, end }
+      if (!end.valid) return { valid: false, reason: `end-${end.reason || 'invalid'}`, sample: end }
+      return { valid: true, reason: null, x: nx, y: ny, start, midpoint, end }
     }
 
-    function resolveStaticTrailStart(seed) {
+    function resolveStaticTrailSeed(seed) {
       if (!seed || typeof seed !== 'object') return null
       if (typeof seed.pointIndex === 'number' && seed.pointIndex >= 0 && seed.pointIndex < positions.length) {
         const pt = positions[seed.pointIndex]
-        if (Array.isArray(pt) && pt.length >= 2) return { x: pt[0], y: pt[1] }
+        if (Array.isArray(pt) && pt.length >= 2) return { x: pt[0], y: pt[1], pointIndex: seed.pointIndex }
       }
-      if (typeof seed.x === 'number' && typeof seed.y === 'number') return { x: seed.x, y: seed.y }
+      if (typeof seed.x === 'number' && typeof seed.y === 'number') {
+        return {
+          x: seed.x,
+          y: seed.y,
+          pointIndex: Number.isInteger(seed.pointIndex) ? seed.pointIndex : null,
+        }
+      }
       return null
     }
 
     function buildStaticTrail(startX, startY) {
+      const finishTrail = (points, segments, stopReason, stopStep = 0) => ({
+        points,
+        segments,
+        start: { x: startX, y: startY },
+        stopReason,
+        stopStep,
+      })
       const startCell = worldToCell(startX, startY)
-      if (!startCell || isMaskedCell(startCell.i, startCell.j)) return null
+      if (!startCell || isMaskedCell(startCell.i, startCell.j)) return finishTrail([], [], 'start-masked-or-out-of-bounds')
       const startSample = sampleActiveField(startX, startY)
-      if (!startSample.valid) return null
+      if (!startSample.valid) return finishTrail([], [], `start-${startSample.reason || 'invalid'}`)
       const points = [{ x: startX, y: startY }]
       const segments = []
-      const staticStepDt = 1 / 60
       const maxSteps = Math.max(64, Math.min(4000, W * H * 4))
       const visitCounts = new Map()
       let x = startX
       let y = startY
       for (let step = 0; step < maxSteps; step++) {
         const cell = worldToCell(x, y)
-        if (!cell || isMaskedCell(cell.i, cell.j)) break
+        if (!cell || isMaskedCell(cell.i, cell.j)) return finishTrail(points, segments, 'current-cell-masked-or-out-of-bounds', step)
         const key = `${cell.i}:${cell.j}`
         const visits = (visitCounts.get(key) || 0) + 1
         visitCounts.set(key, visits)
-        if (visits > 24) break
+        if (visits > 24) return finishTrail(points, segments, 'loop-guard', step)
 
-        const advected = advectAlongFieldRK2(x, y, staticStepDt)
-        if (!advected.valid) break
+        const advected = advectAlongFieldRK2(x, y, FIXED_ADVECTION_STEP_SEC)
+        if (!advected.valid) return finishTrail(points, segments, advected.reason || 'rk2-invalid', step)
         const { x: nx, y: ny } = advected
         const nextCell = worldToCell(nx, ny)
-        if (!nextCell || isMaskedCell(nextCell.i, nextCell.j)) break
+        if (!nextCell || isMaskedCell(nextCell.i, nextCell.j)) return finishTrail(points, segments, 'next-cell-masked-or-out-of-bounds', step)
 
         segments.push({
           x0: x,
@@ -521,7 +540,34 @@ export default function CanvasWind({
         x = nx
         y = ny
       }
-      return { points, segments, start: { x: startX, y: startY } }
+      return finishTrail(points, segments, 'max-steps', maxSteps)
+    }
+
+    function buildStaticTrailsFromSeeds(seeds) {
+      if (!Array.isArray(seeds) || seeds.length === 0) return []
+      const deduped = []
+      const seen = new Set()
+      for (const rawSeed of seeds) {
+        const seed = resolveStaticTrailSeed(rawSeed)
+        if (!seed) continue
+        const key = Number.isInteger(seed.pointIndex) ? `p:${seed.pointIndex}` : `${seed.x}:${seed.y}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        deduped.push(seed)
+      }
+      return deduped.map((seed) => ({
+        ...buildStaticTrail(seed.x, seed.y),
+        pointIndex: seed.pointIndex,
+      }))
+    }
+
+    function setStaticTrailSeeds(seeds) {
+      const normalized = Array.isArray(seeds)
+        ? seeds.map((seed) => resolveStaticTrailSeed(seed)).filter(Boolean)
+        : []
+      staticTrailSeedsRef.current = normalized
+      staticTrailsRef.current = buildStaticTrailsFromSeeds(normalized)
+      return staticTrailsRef.current
     }
 
     function shuffleCells(cells) {
@@ -613,6 +659,7 @@ export default function CanvasWind({
 
     // Particles with trail histories and lifetimes
     let simTimeSec = 0
+    let simAccumulatorSec = 0
     const particles = Array.from({ length: particleCount }, () => {
       const { x, y } = randomSpawn()
       return { x, y, ageSec: 0, hist: [{ x, y, t: simTimeSec }], initX: x, initY: y }
@@ -621,14 +668,11 @@ export default function CanvasWind({
     // Frame counter for periodic behaviors
     let frameCounter = 0
 
-    const currentStaticTrailStart = resolveStaticTrailStart(staticTrailSeedRef.current)
-    staticTrailRef.current = currentStaticTrailStart
-      ? buildStaticTrail(currentStaticTrailStart.x, currentStaticTrailStart.y)
-      : null
+    staticTrailsRef.current = buildStaticTrailsFromSeeds(staticTrailSeedsRef.current)
 
-    function step(dt) {
+    function stepFixed() {
       for (const p of particles) {
-        const advected = advectAlongFieldRK2(p.x, p.y, dt)
+        const advected = advectAlongFieldRK2(p.x, p.y, FIXED_ADVECTION_STEP_SEC)
         if (!advected.valid) {
           const { x: nx, y: ny } = randomSpawn()
           resetParticle(p, nx, ny, simTimeSec)
@@ -637,7 +681,7 @@ export default function CanvasWind({
 
         p.x = advected.x
         p.y = advected.y
-        p.ageSec += dt
+        p.ageSec += FIXED_ADVECTION_STEP_SEC
         p.hist.unshift({ x: p.x, y: p.y, t: simTimeSec })
         while (p.hist.length > 2 && (simTimeSec - p.hist[p.hist.length - 1].t) > TAIL_DURATION_SEC) {
           p.hist.pop()
@@ -672,11 +716,15 @@ export default function CanvasWind({
     function draw() {
       if (!runningRef.current) return
       const now = performance.now()
-      const dt = Math.min((now - last) / 1000, 0.05)
+      const frameDt = Math.min((now - last) / 1000, 0.05)
       last = now
-      simTimeSec += dt
       if (showParticlesRef.current) {
-        step(dt)
+        simAccumulatorSec += frameDt
+        while (simAccumulatorSec >= FIXED_ADVECTION_STEP_SEC) {
+          simAccumulatorSec -= FIXED_ADVECTION_STEP_SEC
+          simTimeSec += FIXED_ADVECTION_STEP_SEC
+          stepFixed()
+        }
       }
       ctx.clearRect(0, 0, Wpx, Hpx)
 
@@ -711,6 +759,23 @@ export default function CanvasWind({
             const sy1 = Hpx - (i + 1) * cellHpx
             ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.28)`
             ctx.fillRect(sx0, sy1, cellWpx, cellHpx)
+          }
+        }
+      }
+
+      if (showMaskOverlayRef.current && hasMask) {
+        const cellWpx = Wpx / W
+        const cellHpx = Hpx / H
+        ctx.lineWidth = 0.8
+        for (let i = 0; i < H; i++) {
+          for (let j = 0; j < W; j++) {
+            if (unmasked[i][j]) continue
+            const sx0 = j * cellWpx
+            const sy1 = Hpx - (i + 1) * cellHpx
+            ctx.fillStyle = 'rgba(15,23,42,0.28)'
+            ctx.fillRect(sx0, sy1, cellWpx, cellHpx)
+            ctx.strokeStyle = 'rgba(239,68,68,0.50)'
+            ctx.strokeRect(sx0 + 0.5, sy1 + 0.5, Math.max(0, cellWpx - 1), Math.max(0, cellHpx - 1))
           }
         }
       }
@@ -1281,8 +1346,9 @@ export default function CanvasWind({
         }
       }
 
-      const staticTrail = staticTrailRef.current
-      if (staticTrail && Array.isArray(staticTrail.points) && staticTrail.points.length > 0) {
+      const staticTrails = Array.isArray(staticTrailsRef.current) ? staticTrailsRef.current : []
+      for (const staticTrail of staticTrails) {
+        if (!staticTrail || !Array.isArray(staticTrail.points) || staticTrail.points.length === 0) continue
         const points = staticTrail.points
         const segments = Array.isArray(staticTrail.segments) ? staticTrail.segments : []
         if (points.length >= 2) {
@@ -1299,27 +1365,40 @@ export default function CanvasWind({
           }
           ctx.stroke()
 
-          ctx.lineWidth = Math.max(1.5, Number(trailLineWidth) + 0.8)
+          const minStaticWidth = Math.max(1.8, Number(trailLineWidth) * 0.95)
+          const maxStaticWidth = Math.max(minStaticWidth + 1.2, Number(trailLineWidth) + 2.0)
+          const staticWidthExp = 0.7
+          let lastVisibleSeg = null
+          let lastSegWidth = minStaticWidth
           for (const seg of segments) {
             const rgb = Array.isArray(seg.rgb) ? seg.rgb : [20, 20, 20]
+            const [gx1, gy1] = worldToGrid(seg.x1, seg.y1)
+            const u1 = bilinearSample(uSum, gx1, gy1)
+            const v1 = bilinearSample(vSum, gx1, gy1)
+            const m1 = Math.hypot(u1, v1)
+            const aField = Math.max(0, Math.min(1, m1 / p99))
+            const segWidth = minStaticWidth + (maxStaticWidth - minStaticWidth) * Math.pow(aField, staticWidthExp)
             const [sx0, sy0] = worldToScreen(seg.x0, seg.y0)
             const [sx1, sy1] = worldToScreen(seg.x1, seg.y1)
+            ctx.lineWidth = segWidth
             ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.98)`
             ctx.beginPath()
             ctx.moveTo(sx0, sy0)
             ctx.lineTo(sx1, sy1)
             ctx.stroke()
+            lastVisibleSeg = seg
+            lastSegWidth = segWidth
           }
 
-          const lastSeg = segments[segments.length - 1]
+          const lastSeg = lastVisibleSeg
           if (lastSeg) {
             const rgb = Array.isArray(lastSeg.rgb) ? lastSeg.rgb : [20, 20, 20]
             const [sx0, sy0] = worldToScreen(lastSeg.x0, lastSeg.y0)
             const [sx1, sy1] = worldToScreen(lastSeg.x1, lastSeg.y1)
             const ang = Math.atan2(sy1 - sy0, sx1 - sx0)
-            const headLen = Math.max(8, Math.min(16, Math.floor(Math.min(Wpx, Hpx) * 0.02)))
+            const headLen = Math.max(8, Math.min(18, 6 + lastSegWidth * 2.4))
             const phi = Math.PI / 7
-            ctx.lineWidth = Math.max(1.5, Number(trailLineWidth) + 0.8)
+            ctx.lineWidth = Math.max(1.6, lastSegWidth * 0.95)
             ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.98)`
             ctx.beginPath()
             ctx.moveTo(sx1, sy1)
@@ -1503,31 +1582,9 @@ export default function CanvasWind({
         suppressClickRef.current = false
         return
       }
-      if (selectPointsModeRef.current && typeof onSelectPoint === 'function') {
-        const rect = canvas.getBoundingClientRect()
-        const cx = e.clientX - rect.left
-        const cy = e.clientY - rect.top
-        const R = 14
-        const R2 = R*R
-        let best = -1
-        let bestD2 = Infinity
-        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
-          const [px, py] = positions[pIdx]
-          const [sx, sy] = worldToScreen(px, py)
-          const dx = sx - cx, dy = sy - cy
-          const d2 = dx*dx + dy*dy
-          if (d2 <= R2 && d2 < bestD2) { bestD2 = d2; best = pIdx }
-        }
-        if (best >= 0) { try { onSelectPoint({ idx: best, append: !!e.shiftKey }) } catch {} }
-        return
-      }
-      if (!onSelectCell || selectPointsModeRef.current) return
       const rect = canvas.getBoundingClientRect()
       const cx = e.clientX - rect.left
       const cy = e.clientY - rect.top
-      const v = viewRef.current
-      const x = v.xmin + (cx / Wpx) * (v.xmax - v.xmin)
-      const y = v.ymin + ((Hpx - cy) / Hpx) * (v.ymax - v.ymin)
       const clickRadius = Math.max(6, pointBrushRadiusPxRef.current || 14)
       const clickRadius2 = clickRadius * clickRadius
       let clickedPointIdx = -1
@@ -1545,16 +1602,24 @@ export default function CanvasWind({
       }
       if (clickedPointIdx >= 0) {
         const [px, py] = positions[clickedPointIdx]
-        staticTrailSeedRef.current = { x: px, y: py, pointIndex: clickedPointIdx }
-        staticTrailRef.current = buildStaticTrail(px, py)
+        const builtTrails = setStaticTrailSeeds([{ x: px, y: py, pointIndex: clickedPointIdx }])
+        const clickedTrail = builtTrails[0] || null
+        const stopReason = clickedTrail?.stopReason || 'unknown'
+        const stopStep = clickedTrail?.stopStep ?? 0
+        const segmentCount = Array.isArray(clickedTrail?.segments) ? clickedTrail.segments.length : 0
+        console.info('[Wind Map] Static trail stop', {
+          pointIndex: clickedPointIdx,
+          stopReason,
+          stopStep,
+          segmentCount,
+        })
       } else {
-        staticTrailSeedRef.current = null
-        staticTrailRef.current = null
+        setStaticTrailSeeds([])
       }
-      // grid indices
-      const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
-      const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
-      onSelectCell({ i, j, shift: !!e.shiftKey })
+      if (typeof onSelectPoint === 'function') {
+        try { onSelectPoint({ idx: clickedPointIdx }) } catch {}
+        return
+      }
     }
     canvas.addEventListener('click', handleClick)
 
@@ -1578,27 +1643,13 @@ export default function CanvasWind({
         areaBrushActiveRef.current = true
         areaBrushMovedRef.current = false
         areaBrushRectRef.current = { x0: cx, y0: cy, x1: cx, y1: cy }
-        staticTrailSeedRef.current = null
-        staticTrailRef.current = null
         canvas.style.cursor = 'crosshair'
         return
       }
-      if (!e.shiftKey) {
-        panPointerDownRef.current = true
-        panStartPosRef.current = { x: cx, y: cy }
-        panStartViewRef.current = { ...viewRef.current }
-        canvas.style.cursor = 'grabbing'
-        return
-      }
-      const x = xmin + (cx / Wpx) * (xmax - xmin)
-      const y = ymin + ((Hpx - cy) / Hpx) * (ymax - ymin)
-      const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
-      const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
-      lastBrushRef.current = { i, j }
-      brushingRef.current = true
-      if (typeof brushCbRef.current === 'function') {
-        try { brushCbRef.current({ i, j }) } catch {}
-      }
+      panPointerDownRef.current = true
+      panStartPosRef.current = { x: cx, y: cy }
+      panStartViewRef.current = { ...viewRef.current }
+      canvas.style.cursor = 'grabbing'
     }
     function handleUp(e) {
       if (areaBrushActiveRef.current) {
@@ -1638,6 +1689,23 @@ export default function CanvasWind({
           if (cells.length > 0) {
             try { brushCbRef.current({ cells, replace: !e?.shiftKey }) } catch {}
           }
+        }
+        const brushedIndices = []
+        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
+          const pt = positions[pIdx]
+          if (!Array.isArray(pt) || pt.length < 2) continue
+          const [px, py] = pt
+          if (px >= minX && px <= maxX && py >= minY && py <= maxY) brushedIndices.push(pIdx)
+        }
+        const replaceTrails = !e?.shiftKey
+        if (typeof onBrushPoints === 'function') {
+          try { onBrushPoints({ indices: brushedIndices, replace: replaceTrails }) } catch {}
+        }
+        if (replaceTrails) {
+          setStaticTrailSeeds(brushedIndices.map((pointIndex) => ({ pointIndex })))
+        } else if (brushedIndices.length > 0) {
+          const appendedSeeds = brushedIndices.map((pointIndex) => ({ pointIndex }))
+          setStaticTrailSeeds([...(Array.isArray(staticTrailSeedsRef.current) ? staticTrailSeedsRef.current : []), ...appendedSeeds])
         }
         areaBrushActiveRef.current = false
         areaBrushMovedRef.current = false
