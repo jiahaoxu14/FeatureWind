@@ -141,6 +141,11 @@ export default function CanvasWind({
   useEffect(() => { selectPointsModeRef.current = !!selectPointsMode }, [selectPointsMode])
   useEffect(() => { pointBrushRadiusPxRef.current = Math.max(4, Math.floor(pointBrushRadiusPx || 14)) }, [pointBrushRadiusPx])
   useEffect(() => { selectedPointIndicesRef.current = Array.isArray(selectedPointIndices) ? selectedPointIndices : [] }, [selectedPointIndices])
+  useEffect(() => {
+    staticTrailSeedsRef.current = []
+    staticTrailsRef.current = []
+    areaBrushRectRef.current = null
+  }, [interactionMode])
 
   // Expose canvas element to parent for saving snapshots
   useEffect(() => {
@@ -380,6 +385,20 @@ export default function CanvasWind({
       return hexToRgb(neutralColor)
     }
 
+    function sampleFieldMagnitudeAt(x, y, featureIndex = null) {
+      const useFeatureField = Number.isInteger(featureIndex) && featureIndex >= 0 && featureIndex < uAll.length && featureIndex < vAll.length
+      const [gx, gy] = worldToGrid(x, y)
+      const uGrid = useFeatureField ? uAll[featureIndex] : uSum
+      const vGrid = useFeatureField ? vAll[featureIndex] : vSum
+      const u = bilinearSample(uGrid, gx, gy)
+      const v = bilinearSample(vGrid, gx, gy)
+      const mag = Math.hypot(u, v)
+      const denom = (useFeatureField && p99ByFeature && featureIndex < p99ByFeature.length && p99ByFeature[featureIndex] > 0)
+        ? p99ByFeature[featureIndex]
+        : activeFieldP99
+      return Math.max(0, Math.min(1, mag / Math.max(denom, 1e-6)))
+    }
+
     function isMaskedCell(i, j) {
       if (i < 0 || i >= H || j < 0 || j >= W) return true
       if (hasMask) return !unmasked[i][j]
@@ -415,19 +434,26 @@ export default function CanvasWind({
     }
     if (validSpawnCells.length === 0 && hasMask) hasMask = false
 
-    function sampleActiveField(x, y, view = viewRef.current) {
+    function sampleActiveField(x, y, view = viewRef.current, featureIndex = null) {
       const cell = worldToCell(x, y)
       if (!cell || isMaskedCell(cell.i, cell.j)) {
         return { valid: false, reason: 'masked-or-out-of-bounds', u: 0, v: 0, mag: 0, dirX: 0, dirY: 0, screenDirX: 0, screenDirY: 0 }
       }
+      const useFeatureField = Number.isInteger(featureIndex) && featureIndex >= 0 && featureIndex < uAll.length && featureIndex < vAll.length
+      const uGrid = useFeatureField ? uAll[featureIndex] : uSum
+      const vGrid = useFeatureField ? vAll[featureIndex] : vSum
+      const fieldP99 = (useFeatureField && p99ByFeature && featureIndex < p99ByFeature.length && p99ByFeature[featureIndex] > 0)
+        ? p99ByFeature[featureIndex]
+        : activeFieldP99
+      const fieldWeakThreshold = Math.max(1e-6, 0.015 * fieldP99)
       const [gx, gy] = worldToGrid(x, y)
-      const u = bilinearSample(uSum, gx, gy)
-      const v = bilinearSample(vSum, gx, gy)
+      const u = bilinearSample(uGrid, gx, gy)
+      const v = bilinearSample(vGrid, gx, gy)
       const mag = Math.hypot(u, v)
       if (!(Number.isFinite(mag) && mag > FIELD_EPS)) {
         return { valid: false, reason: 'zero-or-nonfinite-magnitude', u, v, mag, dirX: 0, dirY: 0, screenDirX: 0, screenDirY: 0 }
       }
-      if (mag < weakThreshold) {
+      if (mag < fieldWeakThreshold) {
         return { valid: false, reason: 'below-weak-threshold', u, v, mag, dirX: 0, dirY: 0, screenDirX: 0, screenDirY: 0 }
       }
       const dirX = u / (mag + FIELD_EPS)
@@ -462,9 +488,9 @@ export default function CanvasWind({
       }
     }
 
-    function advectAlongFieldRK2(x, y, dtSec) {
+    function advectAlongFieldRK2(x, y, dtSec, featureIndex = null) {
       const view = viewRef.current
-      const start = sampleActiveField(x, y, view)
+      const start = sampleActiveField(x, y, view, featureIndex)
       if (!start.valid) {
         return {
           valid: false,
@@ -483,7 +509,7 @@ export default function CanvasWind({
       const halfDelta = worldDeltaFromScreenDirection(start.screenDirX, start.screenDirY, distancePx * 0.5, view)
       const midX = x + halfDelta.dx
       const midY = y + halfDelta.dy
-      const midpoint = sampleActiveField(midX, midY, view)
+      const midpoint = sampleActiveField(midX, midY, view, featureIndex)
       if (!midpoint.valid) {
         return {
           valid: false,
@@ -515,7 +541,7 @@ export default function CanvasWind({
           ny,
         }
       }
-      const end = sampleActiveField(nx, ny, view)
+      const end = sampleActiveField(nx, ny, view, featureIndex)
       if (!end.valid) {
         return {
           valid: false,
@@ -636,6 +662,7 @@ export default function CanvasWind({
 
     function buildStaticTrail(startX, startY, options = {}) {
       const collectDiagnostics = !!options.collectDiagnostics
+      const trailFeatureIndex = Number.isInteger(options.featureIndex) ? options.featureIndex : null
       const stepRecords = []
       const visitCounts = new Map()
       const cellPxX = Wpx / W
@@ -658,6 +685,7 @@ export default function CanvasWind({
           y: roundDiagnosticValue(startY),
           pointIndex: Number.isInteger(options.pointIndex) ? options.pointIndex : null,
         },
+        featureIndex: trailFeatureIndex,
         grid_res: grid_res,
         canvasSize: { Wpx, Hpx },
         bbox: [xmin, xmax, ymin, ymax].map((value) => roundDiagnosticValue(value)),
@@ -680,6 +708,7 @@ export default function CanvasWind({
           points,
           segments,
           start: { x: startX, y: startY },
+          featureIndex: trailFeatureIndex,
           stopReason,
           stopStep,
           loopGuard,
@@ -709,7 +738,7 @@ export default function CanvasWind({
           initialSample: null,
         })
       }
-      const startSample = sampleActiveField(startX, startY)
+      const startSample = sampleActiveField(startX, startY, viewRef.current, trailFeatureIndex)
       if (!startSample.valid) {
         return finishTrail([], [], `start-${startSample.reason || 'invalid'}`, 0, {
           startCell: snapshotCell(startCell),
@@ -797,7 +826,7 @@ export default function CanvasWind({
           stepStopReason: null,
         } : null
 
-        const advected = advectAlongFieldRK2(x, y, FIXED_ADVECTION_STEP_SEC)
+        const advected = advectAlongFieldRK2(x, y, FIXED_ADVECTION_STEP_SEC, trailFeatureIndex)
         if (stepRecord) {
           stepRecord.start = snapshotFieldSample(advected.start)
           stepRecord.midX = roundDiagnosticValue(advected.midX)
@@ -854,7 +883,7 @@ export default function CanvasWind({
           y0: y,
           x1: nx,
           y1: ny,
-          rgb: colorForCell(cell.i, cell.j),
+          rgb: trailFeatureIndex !== null ? hexToRgb(featureHex(trailFeatureIndex)) : colorForCell(cell.i, cell.j),
         })
         points.push({ x: nx, y: ny })
         recentPositions.push({ x: nx, y: ny })
@@ -878,10 +907,16 @@ export default function CanvasWind({
         seen.add(key)
         deduped.push(seed)
       }
-      return deduped.map((seed) => ({
-        ...buildStaticTrail(seed.x, seed.y, { ...options, pointIndex: seed.pointIndex }),
-        pointIndex: seed.pointIndex,
-      }))
+      const staticTrailFeatureIndices = (mode === 'compare' && Array.isArray(featureIndices) && featureIndices.length > 1)
+        ? featureIndices
+        : [null]
+      return deduped.flatMap((seed) => (
+        staticTrailFeatureIndices.map((featureIndex) => ({
+          ...buildStaticTrail(seed.x, seed.y, { ...options, pointIndex: seed.pointIndex, featureIndex }),
+          pointIndex: seed.pointIndex,
+          featureIndex,
+        }))
+      ))
     }
 
     function setStaticTrailSeeds(seeds, options = {}) {
@@ -1674,6 +1709,7 @@ export default function CanvasWind({
         if (!staticTrail || !Array.isArray(staticTrail.points) || staticTrail.points.length === 0) continue
         const points = staticTrail.points
         const segments = Array.isArray(staticTrail.segments) ? staticTrail.segments : []
+        const trailFeatureIndex = Number.isInteger(staticTrail.featureIndex) ? staticTrail.featureIndex : null
         if (points.length >= 2) {
           ctx.lineJoin = 'round'
           ctx.lineCap = 'round'
@@ -1695,11 +1731,7 @@ export default function CanvasWind({
           let lastSegWidth = minStaticWidth
           for (const seg of segments) {
             const rgb = Array.isArray(seg.rgb) ? seg.rgb : [20, 20, 20]
-            const [gx1, gy1] = worldToGrid(seg.x1, seg.y1)
-            const u1 = bilinearSample(uSum, gx1, gy1)
-            const v1 = bilinearSample(vSum, gx1, gy1)
-            const m1 = Math.hypot(u1, v1)
-            const aField = Math.max(0, Math.min(1, m1 / p99))
+            const aField = sampleFieldMagnitudeAt(seg.x1, seg.y1, trailFeatureIndex)
             const segWidth = minStaticWidth + (maxStaticWidth - minStaticWidth) * Math.pow(aField, staticWidthExp)
             const [sx0, sy0] = worldToScreen(seg.x0, seg.y0)
             const [sx1, sy1] = worldToScreen(seg.x1, seg.y1)
@@ -1735,7 +1767,9 @@ export default function CanvasWind({
         const start = staticTrail.start || points[0]
         if (start) {
           const cell = worldToCell(start.x, start.y)
-          const rgb = cell ? colorForCell(cell.i, cell.j) : [20, 20, 20]
+          const rgb = trailFeatureIndex !== null
+            ? hexToRgb(featureHex(trailFeatureIndex))
+            : (cell ? colorForCell(cell.i, cell.j) : [20, 20, 20])
           const [sx, sy] = worldToScreen(start.x, start.y)
           ctx.fillStyle = 'rgba(255,255,255,0.98)'
           ctx.beginPath()

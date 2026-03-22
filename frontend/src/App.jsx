@@ -284,6 +284,14 @@ export default function App() {
 
   function clearSelection() { setSelectedCells([]) }
 
+  function handleWindMapToolChange(nextTool) {
+    if (nextTool === windMapTool) return
+    setSelectedCells([])
+    setSelectedPointIndices([])
+    setHoverPos(null)
+    setWindMapTool(nextTool)
+  }
+
   useEffect(() => {
     function onKey(e) { if (e.key === 'c' || e.key === 'C') clearSelection() }
     window.addEventListener('keydown', onKey)
@@ -422,7 +430,7 @@ export default function App() {
                   <button
                     className={`toolbar-btn${windMapTool === WIND_MAP_TOOL_PAN ? ' active' : ''}`}
                     type="button"
-                    onClick={() => setWindMapTool(WIND_MAP_TOOL_PAN)}
+                    onClick={() => handleWindMapToolChange(WIND_MAP_TOOL_PAN)}
                     title="Pan and zoom the wind map"
                   >
                     Pan
@@ -430,7 +438,7 @@ export default function App() {
                   <button
                     className={`toolbar-btn${windMapTool === WIND_MAP_TOOL_BRUSH ? ' active' : ''}`}
                     type="button"
-                    onClick={() => setWindMapTool(WIND_MAP_TOOL_BRUSH)}
+                    onClick={() => handleWindMapToolChange(WIND_MAP_TOOL_BRUSH)}
                     title="Drag a rectangle to select grid cells"
                   >
                     Brush
