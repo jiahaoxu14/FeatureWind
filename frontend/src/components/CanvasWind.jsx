@@ -112,6 +112,7 @@ export default function CanvasWind({
   const areaBrushActiveRef = useRef(false)
   const areaBrushMovedRef = useRef(false)
   const areaBrushRectRef = useRef(null)
+  const hoverCellRef = useRef(null)
   const gradientFeatureIndicesRef = useRef(Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [])
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
@@ -145,6 +146,9 @@ export default function CanvasWind({
     staticTrailSeedsRef.current = []
     staticTrailsRef.current = []
     areaBrushRectRef.current = null
+    hoverCellRef.current = null
+    brushingRef.current = false
+    lastBrushRef.current = { i: -1, j: -1 }
   }, [interactionMode])
 
   // Expose canvas element to parent for saving snapshots
@@ -1212,19 +1216,22 @@ export default function CanvasWind({
         }
       }
 
-      if (areaBrushRectRef.current) {
-        const { x0, y0, x1, y1 } = areaBrushRectRef.current
-        const left = Math.min(x0, x1)
-        const top = Math.min(y0, y1)
-        const width = Math.abs(x1 - x0)
-        const height = Math.abs(y1 - y0)
-        ctx.fillStyle = 'rgba(37,99,235,0.12)'
-        ctx.strokeStyle = 'rgba(37,99,235,0.9)'
+      if (hoverCellRef.current && interactionMode === 'brush') {
+        const { i: hi, j: hj } = hoverCellRef.current
+        const x0 = xmin + (hj / W) * (xmax - xmin)
+        const x1 = xmin + ((hj + 1) / W) * (xmax - xmin)
+        const y0 = ymin + (hi / H) * (ymax - ymin)
+        const y1 = ymin + ((hi + 1) / H) * (ymax - ymin)
+        const sx0 = (x0 - xmin) / (xmax - xmin) * Wpx
+        const sx1 = (x1 - xmin) / (xmax - xmin) * Wpx
+        const sy0 = Hpx - (y0 - ymin) / (ymax - ymin) * Hpx
+        const sy1 = Hpx - (y1 - ymin) / (ymax - ymin) * Hpx
+        ctx.fillStyle = 'rgba(37,99,235,0.22)'
+        ctx.strokeStyle = 'rgba(37,99,235,0.95)'
         ctx.lineWidth = 1.5
-        ctx.setLineDash([6, 4])
-        ctx.fillRect(left, top, width, height)
-        ctx.strokeRect(left, top, width, height)
         ctx.setLineDash([])
+        ctx.fillRect(sx0, sy1, sx1 - sx0, sy0 - sy1)
+        ctx.strokeRect(sx0, sy1, sx1 - sx0, sy0 - sy1)
       }
 
       // Optional: draw base points with shapes per label (like Python)
@@ -1880,14 +1887,20 @@ export default function CanvasWind({
 
     // Hover handler to report world coords
     function handleMove(e) {
-      if (!onHover) return
       const rect = canvas.getBoundingClientRect()
       const cx = e.clientX - rect.left
       const cy = e.clientY - rect.top
       const v = viewRef.current
       const x = v.xmin + (cx / Wpx) * (v.xmax - v.xmin)
       const y = v.ymin + ((Hpx - cy) / Hpx) * (v.ymax - v.ymin)
-      onHover({ x, y })
+      if (onHover) onHover({ x, y })
+      if (interactionMode === 'brush') {
+        const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
+        const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
+        hoverCellRef.current = { i, j }
+      } else {
+        hoverCellRef.current = null
+      }
       // Brush selection while dragging
       if (selectPointsModeRef.current && typeof onBrushPoints === 'function') {
         // Activate point brushing after small movement threshold from mousedown
@@ -2025,9 +2038,16 @@ export default function CanvasWind({
         return
       }
       if (interactionMode === 'brush') {
-        areaBrushActiveRef.current = true
-        areaBrushMovedRef.current = false
-        areaBrushRectRef.current = { x0: cx, y0: cy, x1: cx, y1: cy }
+        const v2 = viewRef.current
+        const x = v2.xmin + (cx / Wpx) * (v2.xmax - v2.xmin)
+        const y = v2.ymin + ((Hpx - cy) / Hpx) * (v2.ymax - v2.ymin)
+        const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
+        const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
+        brushingRef.current = true
+        lastBrushRef.current = { i, j }
+        if (typeof brushCbRef.current === 'function') {
+          try { brushCbRef.current({ cells: [{ i, j }], replace: !e.shiftKey }) } catch {}
+        }
         canvas.style.cursor = 'crosshair'
         return
       }
@@ -2037,64 +2057,7 @@ export default function CanvasWind({
       canvas.style.cursor = 'grabbing'
     }
     function handleUp(e) {
-      if (areaBrushActiveRef.current) {
-        const rect = canvas.getBoundingClientRect()
-        let cx = areaBrushRectRef.current?.x1 ?? areaBrushRectRef.current?.x0 ?? 0
-        let cy = areaBrushRectRef.current?.y1 ?? areaBrushRectRef.current?.y0 ?? 0
-        if (e && typeof e.clientX === 'number' && typeof e.clientY === 'number') {
-          cx = e.clientX - rect.left
-          cy = e.clientY - rect.top
-        }
-        cx = Math.max(0, Math.min(Wpx, cx))
-        cy = Math.max(0, Math.min(Hpx, cy))
-        const currentRect = areaBrushRectRef.current || { x0: cx, y0: cy, x1: cx, y1: cy }
-        currentRect.x1 = cx
-        currentRect.y1 = cy
-        areaBrushRectRef.current = currentRect
-        const { x: wx0, y: wy0 } = screenToWorld(currentRect.x0, currentRect.y0)
-        const { x: wx1, y: wy1 } = screenToWorld(currentRect.x1, currentRect.y1)
-        const minX = Math.min(wx0, wx1)
-        const maxX = Math.max(wx0, wx1)
-        const minY = Math.min(wy0, wy1)
-        const maxY = Math.max(wy0, wy1)
-        const startCell = worldToCell(minX, minY)
-        const endCell = worldToCell(maxX, maxY)
-        if (startCell && endCell && typeof brushCbRef.current === 'function') {
-          const i0 = Math.min(startCell.i, endCell.i)
-          const i1 = Math.max(startCell.i, endCell.i)
-          const j0 = Math.min(startCell.j, endCell.j)
-          const j1 = Math.max(startCell.j, endCell.j)
-          const cells = []
-          for (let i = i0; i <= i1; i++) {
-            for (let j = j0; j <= j1; j++) {
-              if (hasMask && !unmasked[i][j]) continue
-              cells.push({ i, j })
-            }
-          }
-          if (cells.length > 0) {
-            try { brushCbRef.current({ cells, replace: !e?.shiftKey }) } catch {}
-          }
-        }
-        const brushedIndices = []
-        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
-          const pt = positions[pIdx]
-          if (!Array.isArray(pt) || pt.length < 2) continue
-          const [px, py] = pt
-          if (px >= minX && px <= maxX && py >= minY && py <= maxY) brushedIndices.push(pIdx)
-        }
-        const replaceTrails = !e?.shiftKey
-        if (typeof onBrushPoints === 'function') {
-          try { onBrushPoints({ indices: brushedIndices, replace: replaceTrails }) } catch {}
-        }
-        if (replaceTrails) {
-          setStaticTrailSeeds(brushedIndices.map((pointIndex) => ({ pointIndex })))
-        } else if (brushedIndices.length > 0) {
-          const appendedSeeds = brushedIndices.map((pointIndex) => ({ pointIndex }))
-          setStaticTrailSeeds([...(Array.isArray(staticTrailSeedsRef.current) ? staticTrailSeedsRef.current : []), ...appendedSeeds])
-        }
-        areaBrushActiveRef.current = false
-        areaBrushMovedRef.current = false
-        areaBrushRectRef.current = null
+      if (brushingRef.current && interactionMode === 'brush') {
         suppressClickRef.current = true
       }
       pointPointerDownRef.current = false
@@ -2113,18 +2076,6 @@ export default function CanvasWind({
       const rect = canvas.getBoundingClientRect()
       const cx = e.clientX - rect.left
       const cy = e.clientY - rect.top
-      if (areaBrushActiveRef.current && areaBrushRectRef.current) {
-        const dx = cx - areaBrushRectRef.current.x0
-        const dy = cy - areaBrushRectRef.current.y0
-        if (!areaBrushMovedRef.current && (dx * dx + dy * dy > PAN_THRESHOLD2)) {
-          areaBrushMovedRef.current = true
-        }
-        areaBrushRectRef.current = {
-          ...areaBrushRectRef.current,
-          x1: cx,
-          y1: cy,
-        }
-      }
       if (panPointerDownRef.current && panStartViewRef.current) {
         const dx = cx - panStartPosRef.current.x
         const dy = cy - panStartPosRef.current.y

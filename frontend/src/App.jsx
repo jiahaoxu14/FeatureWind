@@ -470,7 +470,7 @@ export default function App() {
                 </div>
               </div>
               {payload && windMapTool === WIND_MAP_TOOL_BRUSH && (
-                <div className="panel-note">Brush mode: drag a rectangle to select cells and trace all points inside it. Hold Shift to add to the current selection.</div>
+                <div className="panel-note">Brush mode: click or drag to paint grid cells. Hold Shift to add to the current selection.</div>
               )}
               {payload ? (
                 <div className="wind-map-shell">

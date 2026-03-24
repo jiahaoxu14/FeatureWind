@@ -12,11 +12,7 @@
   --workspace-gap: 20px;
   --app-chrome-height: 98px;
   --map-panel-chrome: 88px;
-  --map-canvas-size: min(
-    calc(100dvh - var(--app-chrome-height) - var(--map-panel-chrome)),
-    calc(100vw - var(--sidebar-width) - var(--features-width) - 2 * var(--workspace-gap) - 88px)
-  );
-  --map-panel-width: calc(var(--map-canvas-size) + 24px);
+  --map-canvas-size: calc(100dvh - var(--app-chrome-height) - var(--map-panel-chrome));
 }
 
 * { box-sizing: border-box; }
@@ -56,7 +52,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
 .rows-below {}
 .upload-panel {}
 .workspace { display: flex; gap: var(--workspace-gap); align-items: stretch; justify-content: center; height: 100%; min-height: 0; }
-.main-column { flex: 0 1 var(--map-panel-width); width: var(--map-panel-width); min-width: 0; min-height: 0; display: flex; }
+.main-column { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; }
 .sidebar-column { flex: 0 0 var(--sidebar-width); width: min(100%, var(--sidebar-width)); min-width: 320px; max-width: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--workspace-gap); align-items: stretch; height: 100%; }
 .features-column { flex: 0 0 var(--features-width); width: min(100%, var(--features-width)); min-width: 260px; max-width: 100%; min-height: 0; display: flex; flex-direction: column; height: 100%; }
 .panel-section { min-width: 0; min-height: 0; }
