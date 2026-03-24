@@ -293,6 +293,7 @@ export default function CanvasWind({
     // Optional mask helpers
     let hasMask = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
     const isOverviewMode = mode === 'overview'
+    const isCompareMode = mode === 'compare'
 
     const dxWorld = (xmax - xmin) / W
     const dyWorld = (ymax - ymin) / H
@@ -385,18 +386,24 @@ export default function CanvasWind({
       return hexToRgb(neutralColor)
     }
 
-    function sampleFieldMagnitudeAt(x, y, featureIndex = null) {
+    function resolveFieldContext(featureIndex = null) {
       const useFeatureField = Number.isInteger(featureIndex) && featureIndex >= 0 && featureIndex < uAll.length && featureIndex < vAll.length
-      const [gx, gy] = worldToGrid(x, y)
       const uGrid = useFeatureField ? uAll[featureIndex] : uSum
       const vGrid = useFeatureField ? vAll[featureIndex] : vSum
+      const fieldP99 = (useFeatureField && p99ByFeature && featureIndex < p99ByFeature.length && p99ByFeature[featureIndex] > 0)
+        ? p99ByFeature[featureIndex]
+        : activeFieldP99
+      const fieldWeakThreshold = Math.max(1e-6, 0.015 * fieldP99)
+      return { useFeatureField, uGrid, vGrid, fieldP99, fieldWeakThreshold }
+    }
+
+    function sampleFieldMagnitudeAt(x, y, featureIndex = null) {
+      const [gx, gy] = worldToGrid(x, y)
+      const { uGrid, vGrid, fieldP99 } = resolveFieldContext(featureIndex)
       const u = bilinearSample(uGrid, gx, gy)
       const v = bilinearSample(vGrid, gx, gy)
       const mag = Math.hypot(u, v)
-      const denom = (useFeatureField && p99ByFeature && featureIndex < p99ByFeature.length && p99ByFeature[featureIndex] > 0)
-        ? p99ByFeature[featureIndex]
-        : activeFieldP99
-      return Math.max(0, Math.min(1, mag / Math.max(denom, 1e-6)))
+      return Math.max(0, Math.min(1, mag / Math.max(fieldP99, 1e-6)))
     }
 
     function isMaskedCell(i, j) {
@@ -405,15 +412,16 @@ export default function CanvasWind({
       return false
     }
 
-    function isMaskedAt(x, y) {
+    function isMaskedAt(x, y, featureIndex = null) {
       const cell = worldToCell(x, y)
       if (!cell) return true
       const { i, j } = cell
       if (hasMask) return !unmasked[i][j]
       const [gx, gy] = worldToGrid(x, y)
-      const u = bilinearSample(uSum, gx, gy)
-      const v = bilinearSample(vSum, gx, gy)
-      if (Math.hypot(u, v) < weakThreshold) return true
+      const { uGrid, vGrid, fieldWeakThreshold } = resolveFieldContext(featureIndex)
+      const u = bilinearSample(uGrid, gx, gy)
+      const v = bilinearSample(vGrid, gx, gy)
+      if (Math.hypot(u, v) < fieldWeakThreshold) return true
       if (dominant && dominant[i] && typeof dominant[i][j] === 'number') {
         return dominant[i][j] === -1
       }
@@ -422,6 +430,9 @@ export default function CanvasWind({
 
     const activeFieldP99 = magInfo?.p99 || 1.0
     const weakThreshold = Math.max(1e-6, 0.015 * activeFieldP99)
+    const compareFeatureIndices = (isCompareMode && Array.isArray(featureIndices))
+      ? featureIndices.filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < uAll.length && idx < vAll.length)
+      : []
 
     // Precompute list of valid cells for efficient, uniform respawn.
     const validSpawnCells = []
@@ -432,20 +443,25 @@ export default function CanvasWind({
         if (mag >= weakThreshold) validSpawnCells.push([i, j])
       }
     }
-    if (validSpawnCells.length === 0 && hasMask) hasMask = false
-
+    const validSpawnCellsByFeature = new Map()
+    for (const featureIndex of compareFeatureIndices) {
+      const { uGrid, vGrid, fieldWeakThreshold } = resolveFieldContext(featureIndex)
+      const cells = []
+      for (let i = 0; i < H; i++) {
+        for (let j = 0; j < W; j++) {
+          if (hasMask && !unmasked[i][j]) continue
+          const mag = Math.hypot(uGrid?.[i]?.[j] ?? 0, vGrid?.[i]?.[j] ?? 0)
+          if (mag >= fieldWeakThreshold) cells.push([i, j])
+        }
+      }
+      validSpawnCellsByFeature.set(featureIndex, cells)
+    }
     function sampleActiveField(x, y, view = viewRef.current, featureIndex = null) {
       const cell = worldToCell(x, y)
       if (!cell || isMaskedCell(cell.i, cell.j)) {
         return { valid: false, reason: 'masked-or-out-of-bounds', u: 0, v: 0, mag: 0, dirX: 0, dirY: 0, screenDirX: 0, screenDirY: 0 }
       }
-      const useFeatureField = Number.isInteger(featureIndex) && featureIndex >= 0 && featureIndex < uAll.length && featureIndex < vAll.length
-      const uGrid = useFeatureField ? uAll[featureIndex] : uSum
-      const vGrid = useFeatureField ? vAll[featureIndex] : vSum
-      const fieldP99 = (useFeatureField && p99ByFeature && featureIndex < p99ByFeature.length && p99ByFeature[featureIndex] > 0)
-        ? p99ByFeature[featureIndex]
-        : activeFieldP99
-      const fieldWeakThreshold = Math.max(1e-6, 0.015 * fieldP99)
+      const { uGrid, vGrid, fieldWeakThreshold } = resolveFieldContext(featureIndex)
       const [gx, gy] = worldToGrid(x, y)
       const u = bilinearSample(uGrid, gx, gy)
       const v = bilinearSample(vGrid, gx, gy)
@@ -907,7 +923,7 @@ export default function CanvasWind({
         seen.add(key)
         deduped.push(seed)
       }
-      const staticTrailFeatureIndices = (mode === 'compare' && Array.isArray(featureIndices) && featureIndices.length > 1)
+      const staticTrailFeatureIndices = (isCompareMode && Array.isArray(featureIndices) && featureIndices.length > 1)
         ? featureIndices
         : [null]
       return deduped.flatMap((seed) => (
@@ -939,13 +955,16 @@ export default function CanvasWind({
       return out
     }
 
-    const globalSpawnState = { order: shuffleCells(validSpawnCells), index: 0 }
-    const selectedSpawnState = { key: '', order: [], index: 0 }
+    const spawnStateByKey = new Map()
 
-    function nextSpawnCell(state, cells, key = '') {
+    function nextSpawnCell(cells, key = '') {
       if (!Array.isArray(cells) || cells.length === 0) return null
-      if (state.key !== key || state.index >= state.order.length) {
-        state.key = key
+      let state = spawnStateByKey.get(key)
+      if (!state) {
+        state = { key, order: [], index: 0 }
+        spawnStateByKey.set(key, state)
+      }
+      if (state.index >= state.order.length) {
         state.order = shuffleCells(cells)
         state.index = 0
       }
@@ -954,35 +973,40 @@ export default function CanvasWind({
       return cell
     }
 
-    function randomSpawn() {
+    function spawnPointInCell(cell) {
+      const [i, j] = cell
+      const dx = (xmax - xmin) / W
+      const dy = (ymax - ymin) / H
+      return {
+        x: xmin + j * dx + Math.random() * dx,
+        y: ymin + i * dy + Math.random() * dy,
+      }
+    }
+
+    function randomSpawn(featureIndex = null) {
+      const featurePool = Number.isInteger(featureIndex)
+        ? (validSpawnCellsByFeature.get(featureIndex) || [])
+        : validSpawnCells
       // If restriction is enabled and we have selected cells, spawn within them (respecting mask)
       if (restrictSpawnToSelectionRef.current && Array.isArray(selectedRef.current) && selectedRef.current.length > 0) {
+        const { uGrid, vGrid, fieldWeakThreshold } = resolveFieldContext(featureIndex)
         const valid = []
         for (const c of selectedRef.current) {
           const i = Math.max(0, Math.min(H - 1, (c.i|0)))
           const j = Math.max(0, Math.min(W - 1, (c.j|0)))
-          const mag = Math.hypot(uSum?.[i]?.[j] ?? 0, vSum?.[i]?.[j] ?? 0)
-          if ((!hasMask || unmasked[i][j]) && mag >= weakThreshold) valid.push([i, j])
+          const mag = Math.hypot(uGrid?.[i]?.[j] ?? 0, vGrid?.[i]?.[j] ?? 0)
+          if ((!hasMask || unmasked[i][j]) && mag >= fieldWeakThreshold) valid.push([i, j])
         }
         if (valid.length > 0) {
-          const key = valid.map(([i, j]) => `${i}:${j}`).join('|')
-          const picked = nextSpawnCell(selectedSpawnState, valid, key) || valid[0]
-          const [i, j] = picked
-          const dx = (xmax - xmin) / W
-          const dy = (ymax - ymin) / H
-          const x = xmin + j * dx + Math.random() * dx
-          const y = ymin + i * dy + Math.random() * dy
-          return { x, y }
+          const key = `selected:${featureIndex ?? 'aggregate'}:${valid.map(([i, j]) => `${i}:${j}`).join('|')}`
+          const picked = nextSpawnCell(valid, key) || valid[0]
+          return spawnPointInCell(picked)
         }
       }
-      if (validSpawnCells.length) {
-        const picked = nextSpawnCell(globalSpawnState, validSpawnCells, 'global') || validSpawnCells[0]
-        const [i, j] = picked
-        const dx = (xmax - xmin) / W
-        const dy = (ymax - ymin) / H
-        const x = xmin + j * dx + Math.random() * dx
-        const y = ymin + i * dy + Math.random() * dy
-        return { x, y }
+      if (featurePool.length) {
+        const key = Number.isInteger(featureIndex) ? `feature:${featureIndex}` : 'global'
+        const picked = nextSpawnCell(featurePool, key) || featurePool[0]
+        return spawnPointInCell(picked)
       } else if (hasMask) {
         const fallback = []
         for (let i = 0; i < H; i++) {
@@ -991,13 +1015,7 @@ export default function CanvasWind({
           }
         }
         if (fallback.length) {
-          const [i, j] = fallback[Math.floor(Math.random() * fallback.length)]
-          const dx = (xmax - xmin) / W
-          const dy = (ymax - ymin) / H
-          return {
-            x: xmin + j * dx + Math.random() * dx,
-            y: ymin + i * dy + Math.random() * dy,
-          }
+          return spawnPointInCell(fallback[Math.floor(Math.random() * fallback.length)])
         }
       }
       return {
@@ -1018,9 +1036,12 @@ export default function CanvasWind({
     // Particles with trail histories and lifetimes
     let simTimeSec = 0
     let simAccumulatorSec = 0
-    const particles = Array.from({ length: particleCount }, () => {
-      const { x, y } = randomSpawn()
-      return { x, y, ageSec: 0, hist: [{ x, y, t: simTimeSec }], initX: x, initY: y }
+    const particles = Array.from({ length: particleCount }, (_, particleIndex) => {
+      const particleFeatureIndex = compareFeatureIndices.length > 0
+        ? compareFeatureIndices[particleIndex % compareFeatureIndices.length]
+        : null
+      const { x, y } = randomSpawn(particleFeatureIndex)
+      return { x, y, ageSec: 0, hist: [{ x, y, t: simTimeSec }], initX: x, initY: y, featureIndex: particleFeatureIndex }
     })
 
     // Frame counter for periodic behaviors
@@ -1030,9 +1051,10 @@ export default function CanvasWind({
 
     function stepFixed() {
       for (const p of particles) {
-        const advected = advectAlongFieldRK2(p.x, p.y, FIXED_ADVECTION_STEP_SEC)
+        const particleFeatureIndex = Number.isInteger(p.featureIndex) ? p.featureIndex : null
+        const advected = advectAlongFieldRK2(p.x, p.y, FIXED_ADVECTION_STEP_SEC, particleFeatureIndex)
         if (!advected.valid) {
-          const { x: nx, y: ny } = randomSpawn()
+          const { x: nx, y: ny } = randomSpawn(particleFeatureIndex)
           resetParticle(p, nx, ny, simTimeSec)
           continue
         }
@@ -1048,9 +1070,9 @@ export default function CanvasWind({
         // Respawn if out of bounds, over-age, or in masked region
         const outOfBounds = p.x < xmin || p.x > xmax || p.y < ymin || p.y > ymax
         const overAge = p.ageSec > MAX_LIFETIME_SEC
-        const inMasked = isMaskedAt(p.x, p.y)
+        const inMasked = isMaskedAt(p.x, p.y, particleFeatureIndex)
         if (outOfBounds || overAge || inMasked) {
-          const { x: nx, y: ny } = randomSpawn()
+          const { x: nx, y: ny } = randomSpawn(particleFeatureIndex)
           resetParticle(p, nx, ny, simTimeSec)
         }
       }
@@ -1064,7 +1086,8 @@ export default function CanvasWind({
         for (let k = 0; k < count; k++) {
           const idx = Math.floor(Math.random() * particles.length)
           const p = particles[idx]
-          const { x: nx, y: ny } = randomSpawn()
+          const particleFeatureIndex = Number.isInteger(p.featureIndex) ? p.featureIndex : null
+          const { x: nx, y: ny } = randomSpawn(particleFeatureIndex)
           resetParticle(p, nx, ny, simTimeSec)
         }
       }
@@ -1591,7 +1614,6 @@ export default function CanvasWind({
       // Draw trails as fading line segments (colored by the active feature mode)
       ctx.lineWidth = Math.max(0.5, Number(trailLineWidth) || 1.2)
       ctx.lineCap = 'round'
-      const p99 = activeFieldP99
       // If exactly one feature is manually selected, force its color globally
       const singleColorOverride = (Array.isArray(featureIndices) && featureIndices.length === 1)
         ? (function () {
@@ -1617,17 +1639,16 @@ export default function CanvasWind({
           const y1 = tail.y
           const x0 = head.x
           const y0 = head.y
-          // Field-strength based alpha at segment head
+          const particleFeatureIndex = Number.isInteger(p.featureIndex) ? p.featureIndex : null
+          const aField = sampleFieldMagnitudeAt(x0, y0, particleFeatureIndex)
           const [gx0, gy0] = worldToGrid(x0, y0)
-          const u0 = bilinearSample(uSum, gx0, gy0)
-          const v0 = bilinearSample(vSum, gx0, gy0)
-          const m = Math.hypot(u0, v0)
-          const aField = Math.max(0, Math.min(1, m / p99))
 
           // Determine segment color by family
           let rgb = hexToRgb(neutralColor)
           if (isOverviewMode) {
             rgb = hexToRgb(neutralColor)
+          } else if (particleFeatureIndex !== null) {
+            rgb = hexToRgb(featureHex(particleFeatureIndex))
           } else if (singleColorOverride) {
             rgb = singleColorOverride
           } else {
@@ -1783,9 +1804,8 @@ export default function CanvasWind({
         }
       }
 
-      // Draw particle initialization places and their driving vectors (from summed field)
+      // Draw particle initialization places and their driving vectors.
       if (showParticleInitsRef.current) {
-        const p99 = magInfo?.p99 || 1.0
         const sxScale = Wpx / (xmax - xmin)
         const syScale = Hpx / (ymax - ymin)
         const headLen = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
@@ -1796,22 +1816,26 @@ export default function CanvasWind({
           const x0 = p.initX
           const y0 = p.initY
           const [gx0, gy0] = worldToGrid(x0, y0)
+          const particleFeatureIndex = Number.isInteger(p.featureIndex) ? p.featureIndex : null
+          const { uGrid, vGrid, fieldP99 } = resolveFieldContext(particleFeatureIndex)
           // Respect mask (skip masked cells)
           if (hasMask) {
             const mi = Math.max(0, Math.min(H - 1, Math.round(gy0)))
             const mj = Math.max(0, Math.min(W - 1, Math.round(gx0)))
             if (!unmasked[mi][mj]) continue
           }
-          const u0 = bilinearSample(uSum, gx0, gy0)
-          const v0 = bilinearSample(vSum, gx0, gy0)
+          const u0 = bilinearSample(uGrid, gx0, gy0)
+          const v0 = bilinearSample(vGrid, gx0, gy0)
           const m = Math.hypot(u0, v0)
-          const aField = Math.max(0, Math.min(1, m / p99))
+          const aField = Math.max(0, Math.min(1, m / Math.max(fieldP99, 1e-6)))
           const [sx0, sy0] = worldToScreen(x0, y0)
           // Choose color by dominant feature at init cell (respect current selection if provided)
           let colorHex = neutralColor
           const mi = Math.max(0, Math.min(H - 1, Math.round(gy0)))
           const mj = Math.max(0, Math.min(W - 1, Math.round(gx0)))
-          if (!isOverviewMode && Array.isArray(featureIndices) && featureIndices.length > 1) {
+          if (particleFeatureIndex !== null) {
+            colorHex = featureHex(particleFeatureIndex)
+          } else if (!isOverviewMode && Array.isArray(featureIndices) && featureIndices.length > 1) {
             let bestIdx = -1, bestMag2 = -1
             for (const fi of featureIndices) {
               const uu = (uAll[fi]?.[mi]?.[mj] ?? 0), vv = (vAll[fi]?.[mi]?.[mj] ?? 0)

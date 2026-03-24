@@ -112,7 +112,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
 .legend-swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); }
 
 .feature-panel { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1 1 auto; }
-.mode-tabs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.mode-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .mode-tab {
   height: 34px;
   border-radius: 8px;

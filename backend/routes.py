@@ -335,13 +335,25 @@ def compute():
         except Exception:
             pass
 
-    # Stable per-feature colors for optional frontend use. The redesigned web app
-    # owns mode-specific coloring and does not rely on family/group metadata.
+    # Family-based per-feature colors for frontend and backend consistency.
     try:
-        palette = list(getattr(fw_config, "GLASBEY_COLORS", [])) or ["#1f77b4"]
-        colors = [palette[i % len(palette)] for i in range(n_features)]
+        if bool(getattr(fw_config, "USE_PER_FEATURE_COLORS", False)):
+            palette = list(getattr(fw_config, "GLASBEY_COLORS", [])) or ["#1f77b4"]
+            colors = [palette[i % len(palette)] for i in range(n_features)]
+            family_assignments = list(range(n_features))
+        else:
+            from featurewind.analysis import feature_clustering
+            from featurewind.visualization import color_system
+
+            n_families = max(1, min(int(getattr(fw_config, "MAX_FEATURE_FAMILIES", 4)), n_features))
+            family_assignments, _, _ = feature_clustering.cluster_features_by_direction(
+                grid_u_all_feats,
+                grid_v_all_feats,
+                n_families=n_families,
+            )
+            colors = color_system.assign_family_colors(family_assignments)
     except Exception:
-        # Fallback: simple distinct palette
+        family_assignments = list(range(n_features))
         palette = list(getattr(fw_config, "GLASBEY_COLORS", [])) or ["#1f77b4"]
         colors = [palette[i % len(palette)] for i in range(n_features)]
 
@@ -377,6 +389,7 @@ def compute():
         "vAll": tolist(grid_v_all_feats),
         "dominant": tolist(cell_dominant_features),
         "colors": colors,
+        "familyAssignments": tolist(family_assignments),
         "featureRanking": feature_ranking,
         "defaultFeatureIndex": default_feature_index,
         "featureMagnitudes": tolist(avg_magnitudes),

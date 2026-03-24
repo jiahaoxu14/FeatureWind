@@ -6,6 +6,7 @@ import WindVane from './components/WindVane.jsx'
 import ColorLegend from './components/ColorLegend.jsx'
 
 const MODE_DEFAULT = 'default'
+const MODE_AGGREGATE = 'aggregate'
 const MODE_COMPARE = 'compare'
 const MODE_OVERVIEW = 'overview'
 const COMPARE_MAX = 4
@@ -141,6 +142,10 @@ export default function App() {
     return null
   }, [defaultFeatureIndex, payload?.defaultFeatureIndex, featureCount, featureRanking])
 
+  const selectedMultiFeatureIndices = useMemo(() => {
+    return sanitizeFeatureIndices(compareFeatureIndices, featureCount)
+  }, [compareFeatureIndices, featureCount])
+
   const effectiveCompareFeatureIndices = useMemo(() => {
     return sanitizeFeatureIndices(compareFeatureIndices, featureCount, COMPARE_MAX)
   }, [compareFeatureIndices, featureCount])
@@ -148,23 +153,28 @@ export default function App() {
   const activeFeatureIndices = useMemo(() => {
     if (!payload) return []
     if (mode === MODE_OVERVIEW) return allFeatureIndices
+    if (mode === MODE_AGGREGATE) return selectedMultiFeatureIndices
     if (mode === MODE_COMPARE) return effectiveCompareFeatureIndices
     return effectiveDefaultFeatureIndex !== null ? [effectiveDefaultFeatureIndex] : []
-  }, [payload, mode, allFeatureIndices, effectiveCompareFeatureIndices, effectiveDefaultFeatureIndex])
+  }, [payload, mode, allFeatureIndices, selectedMultiFeatureIndices, effectiveCompareFeatureIndices, effectiveDefaultFeatureIndex])
 
   const activeFeatureColorMap = useMemo(() => {
     const out = {}
-    if (mode === MODE_DEFAULT) {
-      if (effectiveDefaultFeatureIndex !== null) out[effectiveDefaultFeatureIndex] = DEFAULT_FEATURE_HUE
-      return out
-    }
-    if (mode === MODE_COMPARE) {
-      effectiveCompareFeatureIndices.forEach((idx, order) => {
-        out[idx] = COMPARE_PALETTE[order % COMPARE_PALETTE.length]
-      })
+    const backendColors = Array.isArray(payload?.colors) ? payload.colors : []
+    for (let idx = 0; idx < featureCount; idx++) {
+      const color = backendColors[idx]
+      if (typeof color === 'string' && color) {
+        out[idx] = color
+        continue
+      }
+      if (mode === MODE_DEFAULT && idx === effectiveDefaultFeatureIndex) {
+        out[idx] = DEFAULT_FEATURE_HUE
+        continue
+      }
+      out[idx] = COMPARE_PALETTE[idx % COMPARE_PALETTE.length]
     }
     return out
-  }, [mode, effectiveDefaultFeatureIndex, effectiveCompareFeatureIndices])
+  }, [payload?.colors, featureCount, mode, effectiveDefaultFeatureIndex])
 
   const vaneFeatureIndices = useMemo(() => {
     if (mode === MODE_OVERVIEW) return allFeatureIndices
@@ -223,7 +233,7 @@ export default function App() {
       setCompareFeatureIndices((prev) => {
         if (isNewDataset) return nextDefault !== null ? [nextDefault] : []
         if (Array.isArray(prev) && prev.length === 0) return []
-        const cleaned = sanitizeFeatureIndices(prev, nextCount, COMPARE_MAX)
+        const cleaned = sanitizeFeatureIndices(prev, nextCount)
         if (cleaned.length > 0) return cleaned
         return nextDefault !== null ? [nextDefault] : []
       })
@@ -262,7 +272,7 @@ export default function App() {
     })
     setCompareFeatureIndices((prev) => {
       if (Array.isArray(prev) && prev.length === 0) return []
-      const cleaned = sanitizeFeatureIndices(prev, n, COMPARE_MAX)
+      const cleaned = sanitizeFeatureIndices(prev, n)
       if (cleaned.length > 0) return cleaned
       const fallback = coerceFeatureIndex(payload?.defaultFeatureIndex, n)
       if (fallback !== null) return [fallback]
@@ -300,13 +310,19 @@ export default function App() {
 
   function handleModeChange(nextMode) {
     setFeatureMessage('')
-    if (nextMode === MODE_COMPARE) {
+    if (nextMode === MODE_AGGREGATE) {
+      setCompareFeatureIndices((prev) => {
+        const cleaned = sanitizeFeatureIndices(prev, featureCount)
+        if (cleaned.length > 0) return cleaned
+        return effectiveDefaultFeatureIndex !== null ? [effectiveDefaultFeatureIndex] : []
+      })
+    } else if (nextMode === MODE_COMPARE) {
       setCompareFeatureIndices((prev) => {
         const cleaned = sanitizeFeatureIndices(prev, featureCount, COMPARE_MAX)
         if (cleaned.length > 0) return cleaned
         return effectiveDefaultFeatureIndex !== null ? [effectiveDefaultFeatureIndex] : []
       })
-    } else if (nextMode === MODE_DEFAULT && mode === MODE_COMPARE) {
+    } else if (nextMode === MODE_DEFAULT && (mode === MODE_AGGREGATE || mode === MODE_COMPARE)) {
       const nextDefault = effectiveCompareFeatureIndices[0] ?? effectiveDefaultFeatureIndex
       if (nextDefault !== null) setDefaultFeatureIndex(nextDefault)
     }
@@ -324,7 +340,7 @@ export default function App() {
     setFeatureMessage('')
     setDefaultFeatureIndex(next)
     setCompareFeatureIndices((prev) => {
-      const cleaned = sanitizeFeatureIndices(prev, featureCount, COMPARE_MAX)
+      const cleaned = sanitizeFeatureIndices(prev, featureCount)
       return cleaned.length > 0 ? cleaned : [next]
     })
     setMode(MODE_DEFAULT)
@@ -335,22 +351,23 @@ export default function App() {
     if (!Number.isInteger(nextIdx) || nextIdx < 0 || nextIdx >= featureCount) return
     setFeatureMessage('')
     setCompareFeatureIndices((prev) => {
-      const cleaned = sanitizeFeatureIndices(prev, featureCount, COMPARE_MAX)
+      const isCompareMode = mode === MODE_COMPARE
+      const cleaned = sanitizeFeatureIndices(prev, featureCount, isCompareMode ? COMPARE_MAX : Infinity)
       const exists = cleaned.includes(nextIdx)
       if (exists) return cleaned.filter((value) => value !== nextIdx)
-      if (cleaned.length >= COMPARE_MAX) {
+      if (isCompareMode && cleaned.length >= COMPARE_MAX) {
         setFeatureMessage(`Compare mode supports up to ${COMPARE_MAX} features.`)
         return cleaned
       }
       return [...cleaned, nextIdx]
     })
-    setMode(MODE_COMPARE)
+    setMode((prevMode) => (prevMode === MODE_AGGREGATE ? MODE_AGGREGATE : MODE_COMPARE))
   }
 
   function handleClearCompareFeatures() {
     setFeatureMessage('')
     setCompareFeatureIndices([])
-    setMode(MODE_COMPARE)
+    setMode((prevMode) => (prevMode === MODE_AGGREGATE ? MODE_AGGREGATE : MODE_COMPARE))
   }
 
   const vaneFocus = (() => {
@@ -587,7 +604,7 @@ export default function App() {
                   mode={mode}
                   onChangeMode={handleModeChange}
                   defaultFeatureIndex={effectiveDefaultFeatureIndex}
-                  compareFeatureIndices={effectiveCompareFeatureIndices}
+                  compareFeatureIndices={selectedMultiFeatureIndices}
                   onSelectFeature={handleSelectFeature}
                   onSelectAll={handleSelectAllFeatures}
                   onToggleCompareFeature={handleToggleCompareFeature}

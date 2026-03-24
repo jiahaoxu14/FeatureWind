@@ -67,3 +67,6 @@ Thumbs.db
 tmp/
 *.tmp
 *.temp
+
+# Local vendored Python deps
+backend/.pydeps/

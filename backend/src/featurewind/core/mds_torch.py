@@ -16,7 +16,16 @@ def stress_tensor(distHD, dist2D):  # distHD, dist2D are tensors
     return s
 
 
-def mds(dataHDw, n_components=2, n_init=10, max_iter=1000, random_state=101, eps=1e-9, n_jobs=12):
+def mds(
+    dataHDw,
+    n_components=2,
+    n_init=10,
+    max_iter=1000,
+    random_state=101,
+    eps=1e-9,
+    n_jobs=12,
+    initY=None,
+):
     # we will denote the original distance metric with D
     def mds_stress(d):
         return ((dataHDw - d) ** 2).sum()
@@ -39,8 +48,14 @@ def mds(dataHDw, n_components=2, n_init=10, max_iter=1000, random_state=101, eps
     # Device follows input tensor
     device = dataHDw.device
     n, m = dataHDw.shape
-    # Random initialization on the correct device
-    x_m = torch.randn(n, n_components, device=device)
+    if initY is not None:
+        x_m = torch.as_tensor(initY, dtype=dataHDw.dtype, device=device).clone()
+        if x_m.shape != (n, n_components):
+            raise ValueError(f"initY must have shape {(n, n_components)}, got {tuple(x_m.shape)}")
+    else:
+        # Keep initialization deterministic when a seed is provided.
+        torch.manual_seed(int(random_state))
+        x_m = torch.randn(n, n_components, device=device, dtype=dataHDw.dtype)
 
     # denote the subspace distance matrix as d
     d = distance_matrix_HD_tensor(x_m)
@@ -48,6 +63,7 @@ def mds(dataHDw, n_components=2, n_init=10, max_iter=1000, random_state=101, eps
     stress_old = mds_stress(d)
 
     tol = 1e-4
+    x_min = x_m
     for i in range(max_iter):
         B = create_B(d.clone())
 
@@ -60,5 +76,4 @@ def mds(dataHDw, n_components=2, n_init=10, max_iter=1000, random_state=101, eps
         else:
             x_m = x_min
             stress_old = stress_new
-
     return x_min[:, :n_components]

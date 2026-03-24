@@ -1,24 +1,37 @@
 """
 Feature clustering module for FeatureWind visualization.
 
-This module implements feature-agnostic clustering based on vector field
+This module implements feature-agnostic clustering based on signed vector-field
 directional similarity, completely independent of feature names.
 """
 
 import numpy as np
-from sklearn.cluster import SpectralClustering
+from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_score
 
 
-def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families=6, 
+def _fit_agglomerative(distance_matrix, n_clusters):
+    """Compatibility wrapper for sklearn's agglomerative clustering API."""
+    kwargs = {
+        "n_clusters": int(n_clusters),
+        "linkage": "average",
+    }
+    try:
+        clustering = AgglomerativeClustering(metric="precomputed", **kwargs)
+    except TypeError:
+        clustering = AgglomerativeClustering(affinity="precomputed", **kwargs)
+    return clustering.fit_predict(distance_matrix)
+
+
+def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families=4,
                                  min_magnitude_threshold=1e-6):
     """
-    Cluster features based on vector field directional similarity using cosine similarity.
+    Cluster features by signed average cosine similarity of their vector fields.
     
     Args:
         grid_u_all_feats: numpy array of shape (M_features, grid_res, grid_res) - U components
         grid_v_all_feats: numpy array of shape (M_features, grid_res, grid_res) - V components  
-        n_families: int, target number of families (5-8 recommended for colors)
+        n_families: int, target number of families
         min_magnitude_threshold: float, minimum magnitude to consider valid vectors
     
     Returns:
@@ -28,9 +41,19 @@ def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families
             - clustering_metrics: dict with quality metrics
     """
     n_features = grid_u_all_feats.shape[0]
-    grid_res = grid_u_all_feats.shape[1]
-    
-    
+    if n_features == 0:
+        raise ValueError("Cannot cluster an empty feature set.")
+    if n_features == 1:
+        similarity_matrix = np.ones((1, 1), dtype=float)
+        clustering_metrics = {
+            'silhouette': 0.0,
+            'avg_within_cluster_similarity': 1.0,
+            'avg_between_cluster_similarity': 0.0,
+        }
+        return np.array([0], dtype=int), similarity_matrix, clustering_metrics
+
+    n_families = max(1, min(int(n_families), int(n_features)))
+
     # Combine U and V components into vector fields
     vector_fields = np.stack([grid_u_all_feats, grid_v_all_feats], axis=-1)  # (M, grid_res, grid_res, 2)
     
@@ -68,52 +91,29 @@ def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families
             # Compute cosine similarity at each grid point
             cosine_sim = np.sum(unit_i * unit_j, axis=-1)  # (grid_res, grid_res)
             
-            # Average cosine similarity over valid regions
+            # Average signed cosine similarity over valid regions.
             valid_cosine_values = cosine_sim[valid_mask]
             if len(valid_cosine_values) > 0:
                 avg_similarity = np.mean(valid_cosine_values)
             else:
                 avg_similarity = 0.0  # Default similarity for empty regions
-            
-            # Ensure similarity is non-negative (handle numerical issues)
-            avg_similarity = max(0.0, avg_similarity)
-            
+
+            avg_similarity = float(np.clip(avg_similarity, -1.0, 1.0))
             similarity_matrix[i, j] = similarity_matrix[j, i] = avg_similarity
-    
-    
-    # Perform spectral clustering
-    
-    try:
-        clustering = SpectralClustering(
-            n_clusters=n_families,
-            affinity='precomputed',
-            random_state=42,
-            n_init=10,
-            assign_labels='kmeans'
-        )
-        
-        family_assignments = clustering.fit_predict(similarity_matrix)
-        
-    except Exception as e:
-        pass  # Use fallback k-means clustering
-        # Fallback to distance-based clustering
-        distance_matrix = 1 - similarity_matrix
-        from sklearn.cluster import KMeans
-        from sklearn.manifold import MDS
-        
-        # Use MDS to embed in Euclidean space, then k-means
-        mds = MDS(n_components=min(10, n_features-1), dissimilarity='precomputed', random_state=42)
-        embeddings = mds.fit_transform(distance_matrix)
-        
-        kmeans = KMeans(n_clusters=n_families, random_state=42, n_init=10)
-        family_assignments = kmeans.fit_predict(embeddings)
+
+    distance_matrix = np.clip(1.0 - similarity_matrix, 0.0, 2.0)
+    np.fill_diagonal(distance_matrix, 0.0)
+
+    if n_families == 1:
+        family_assignments = np.zeros(n_features, dtype=int)
+    else:
+        family_assignments = _fit_agglomerative(distance_matrix, n_families)
     
     # Compute clustering quality metrics
     clustering_metrics = {}
     
     try:
         # Silhouette score (higher is better, range [-1, 1])
-        distance_matrix = 1 - similarity_matrix
         silhouette = silhouette_score(distance_matrix, family_assignments, metric='precomputed')
         clustering_metrics['silhouette'] = silhouette
         
@@ -158,14 +158,10 @@ def cluster_features_by_direction(grid_u_all_feats, grid_v_all_feats, n_families
     else:
         clustering_metrics['avg_between_cluster_similarity'] = 0.0
     
-    # Print results
-    unique_families, family_counts = np.unique(family_assignments, return_counts=True)
-    
-    
     return family_assignments, similarity_matrix, clustering_metrics
 
 
-def auto_select_n_families(grid_u_all_feats, grid_v_all_feats, k_range=(4, 8), 
+def auto_select_n_families(grid_u_all_feats, grid_v_all_feats, k_range=(2, 5), 
                           min_magnitude_threshold=1e-6):
     """
     Automatically select the optimal number of families using silhouette analysis.

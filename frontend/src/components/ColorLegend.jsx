@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react'
 
 const MODE_META = {
-  default: { label: 'Default', hint: 'Single feature, single hue.' },
-  compare: { label: 'Compare', hint: 'Select up to 4 features.' },
+  default: { label: 'Single', hint: 'Single feature, single hue.' },
+  aggregate: { label: 'Aggregate', hint: 'Select any number of features. Trails and particles follow the summed field.' },
+  compare: { label: 'Compare', hint: 'Select up to 4 features. Each trail and particle stays on one feature.' },
 }
 
 export default function ColorLegend({
@@ -22,8 +23,11 @@ export default function ColorLegend({
   const { col_labels = [], featureRanking = null } = payload || {}
   const [query, setQuery] = useState('')
   const isOverviewMode = mode === 'overview'
+  const isAggregateMode = mode === 'aggregate'
   const isCompareMode = mode === 'compare'
-  const defaultTabActive = mode === 'default' || isOverviewMode
+  const isMultiFeatureMode = isAggregateMode || isCompareMode
+  const defaultTabActive = mode === 'default'
+  const aggregateTabActive = isAggregateMode || isOverviewMode
 
   useEffect(() => {
     setQuery('')
@@ -59,13 +63,14 @@ export default function ColorLegend({
     return (Array.isArray(compareFeatureIndices) ? compareFeatureIndices : [])
       .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < col_labels.length)
   }, [compareFeatureIndices, col_labels.length])
+  const compareLimitReached = isCompareMode && compareSelected.length >= compareCap
 
   function handleMode(nextMode) {
     if (typeof onChangeMode === 'function') onChangeMode(nextMode)
   }
 
   function handleFeatureAction(idx) {
-    if (isCompareMode) {
+    if (isMultiFeatureMode) {
       if (typeof onToggleCompareFeature === 'function') onToggleCompareFeature(idx)
       return
     }
@@ -74,12 +79,12 @@ export default function ColorLegend({
 
   function isSelected(idx) {
     if (mode === 'default') return idx === defaultFeatureIndex
-    if (isCompareMode) return compareSet.has(idx)
+    if (isMultiFeatureMode) return compareSet.has(idx)
     return false
   }
 
   function rowActionLabel(idx) {
-    if (isCompareMode) return compareSet.has(idx) ? 'Selected' : 'Add'
+    if (isMultiFeatureMode) return compareSet.has(idx) ? 'Selected' : 'Add'
     if (isOverviewMode) return 'Open'
     return 'Select'
   }
@@ -96,6 +101,13 @@ export default function ColorLegend({
         </button>
         <button
           type="button"
+          className={`mode-tab${aggregateTabActive ? ' active' : ''}`}
+          onClick={() => handleMode('aggregate')}
+        >
+          {MODE_META.aggregate.label}
+        </button>
+        <button
+          type="button"
           className={`mode-tab${isCompareMode ? ' active' : ''}`}
           onClick={() => handleMode('compare')}
         >
@@ -106,13 +118,17 @@ export default function ColorLegend({
       <p className="feature-mode-hint">
         {isCompareMode
           ? MODE_META.compare.hint
+          : aggregateTabActive
+            ? (isOverviewMode
+                ? 'All features aggregated in grayscale. Choose a feature to return to single-feature view.'
+                : MODE_META.aggregate.hint)
           : isOverviewMode
             ? 'All features aggregated in grayscale. Choose a feature to return to single-feature view.'
             : MODE_META.default.hint}
       </p>
 
       <div className="feature-toolbar">
-        {!isCompareMode && (
+        {aggregateTabActive && (
           <button
             type="button"
             className="btn"
@@ -120,6 +136,16 @@ export default function ColorLegend({
             disabled={isOverviewMode}
           >
             {isOverviewMode ? 'Showing All' : 'Select All'}
+          </button>
+        )}
+        {isAggregateMode && (
+          <button
+            type="button"
+            className="btn"
+            onClick={() => typeof onClearCompare === 'function' && onClearCompare()}
+            disabled={compareSelected.length === 0}
+          >
+            Clear
           </button>
         )}
         {isCompareMode && (
@@ -144,7 +170,7 @@ export default function ColorLegend({
         />
       </div>
 
-      {isCompareMode && compareSelected.length > 0 && (
+      {isMultiFeatureMode && compareSelected.length > 0 && (
         <div className="feature-chip-list">
           {compareSelected.map((idx) => (
             <button
@@ -169,6 +195,7 @@ export default function ColorLegend({
         {mode === 'default' && defaultFeatureIndex !== null && defaultFeatureIndex >= 0 && defaultFeatureIndex < col_labels.length
           ? `Active feature: ${col_labels[defaultFeatureIndex]}`
           : null}
+        {isAggregateMode ? `Selected: ${compareSelected.length}` : null}
         {isCompareMode ? `Selected: ${compareSelected.length}/${compareCap}` : null}
         {isOverviewMode ? 'All features selected.' : null}
       </div>
@@ -176,8 +203,8 @@ export default function ColorLegend({
       <div className="legend-list">
         {filtered.map((idx) => {
           const selected = isSelected(idx)
-          const disabled = isCompareMode && !selected && compareSelected.length >= compareCap
-          const controlType = isCompareMode ? 'checkbox' : 'radio'
+          const disabled = isCompareMode && !selected && compareLimitReached
+          const controlType = isMultiFeatureMode ? 'checkbox' : 'radio'
           return (
             <button
               key={idx}

@@ -312,11 +312,11 @@ def main():
     from featurewind.analysis import feature_clustering
     from featurewind.visualization import color_system
     
-    # Determine number of families: use actual count if ≤6, otherwise fix to 6
+    # Determine number of color families. Keep this small so family hues remain readable.
     n_features = len(col_labels)
     n_families = min(n_features, config.MAX_FEATURE_FAMILIES)
     
-    # Perform feature clustering based on vector field directional similarity
+    # Cluster features by signed average cosine similarity of their vector fields.
     family_assignments, similarity_matrix, clustering_metrics = feature_clustering.cluster_features_by_direction(
         grid_u_all_feats, grid_v_all_feats, n_families=n_families
     )
