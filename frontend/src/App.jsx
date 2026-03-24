@@ -594,30 +594,6 @@ export default function App() {
               )}
             </div>
 
-            <div className="panel padded panel-section sidebar-panel color-panel features-panel">
-              <div className="panel-header">
-                <p className="panel-title">Features</p>
-              </div>
-              {payload ? (
-                <ColorLegend
-                  payload={payload}
-                  mode={mode}
-                  onChangeMode={handleModeChange}
-                  defaultFeatureIndex={effectiveDefaultFeatureIndex}
-                  compareFeatureIndices={selectedMultiFeatureIndices}
-                  onSelectFeature={handleSelectFeature}
-                  onSelectAll={handleSelectAllFeatures}
-                  onToggleCompareFeature={handleToggleCompareFeature}
-                  onClearCompare={handleClearCompareFeatures}
-                  compareCap={COMPARE_MAX}
-                  message={featureMessage}
-                  activeFeatureColorMap={activeFeatureColorMap}
-                />
-              ) : (
-                <div className="hint">Upload a dataset to browse features</div>
-              )}
-            </div>
-
             <div className="panel padded panel-section sidebar-panel controls-panel">
               <div className="panel-header">
                 <p className="panel-title">Controls</p>
@@ -778,6 +754,32 @@ export default function App() {
 
                 {error && <div className="hint controls-error">{error}</div>}
               </div>
+            </div>
+          </div>
+
+          <div className="features-column">
+            <div className="panel padded panel-section features-panel">
+              <div className="panel-header">
+                <p className="panel-title">Features</p>
+              </div>
+              {payload ? (
+                <ColorLegend
+                  payload={payload}
+                  mode={mode}
+                  onChangeMode={handleModeChange}
+                  defaultFeatureIndex={effectiveDefaultFeatureIndex}
+                  compareFeatureIndices={selectedMultiFeatureIndices}
+                  onSelectFeature={handleSelectFeature}
+                  onSelectAll={handleSelectAllFeatures}
+                  onToggleCompareFeature={handleToggleCompareFeature}
+                  onClearCompare={handleClearCompareFeatures}
+                  compareCap={COMPARE_MAX}
+                  message={featureMessage}
+                  activeFeatureColorMap={activeFeatureColorMap}
+                />
+              ) : (
+                <div className="hint">Upload a dataset to browse features</div>
+              )}
             </div>
           </div>
         </div>

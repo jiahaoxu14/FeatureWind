@@ -70,3 +70,6 @@ tmp/
 
 # Local vendored Python deps
 backend/.pydeps/
+
+# Claude Code
+CLAUDE.md
