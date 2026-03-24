@@ -51,21 +51,8 @@ output/
 *.csv
 *.tmap
 
-# Paper figures (override *.png exclusion)
-!paper/figures/**/*.png
-!paper/figures/**/*.pdf
-!paper/figures/**/*.svg
-
-# LaTeX build artifacts
-paper/manuscript/*.pdf
-paper/manuscript/*.aux
-paper/manuscript/*.log
-paper/manuscript/*.out
-paper/manuscript/*.synctex.gz
-paper/manuscript/*.bbl
-paper/manuscript/*.blg
-paper/manuscript/*.fls
-paper/manuscript/*.fdb_latexmk
+# Paper materials
+paper/
 
 # Jupyter Notebook
 .ipynb_checkpoints
