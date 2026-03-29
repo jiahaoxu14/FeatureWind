@@ -680,9 +680,6 @@ export default function App() {
                         ))}
                       </select>
 
-                      <label>Use Circle Markers</label>
-                      <input type="checkbox" checked={uniformPointShape} onChange={(e) => setUniformPointShape(e.target.checked)} />
-
                       <label>Particle Arrowheads</label>
                       <input type="checkbox" checked={showParticleArrowheads} onChange={(e) => setShowParticleArrowheads(e.target.checked)} />
 
