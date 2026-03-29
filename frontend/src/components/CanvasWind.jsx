@@ -943,6 +943,21 @@ export default function CanvasWind({
       ))
     }
 
+    function buildStaticTrailSeedsFromPointIndices(pointIndices) {
+      if (!Array.isArray(pointIndices) || pointIndices.length === 0 || !Array.isArray(positions)) return []
+      const seeds = []
+      const seen = new Set()
+      for (const rawIndex of pointIndices) {
+        const pointIndex = Number(rawIndex)
+        if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= positions.length || seen.has(pointIndex)) continue
+        const pos = positions[pointIndex]
+        if (!Array.isArray(pos) || pos.length < 2) continue
+        seen.add(pointIndex)
+        seeds.push({ x: pos[0], y: pos[1], pointIndex })
+      }
+      return seeds
+    }
+
     function setStaticTrailSeeds(seeds, options = {}) {
       const normalized = Array.isArray(seeds)
         ? seeds.map((seed) => resolveStaticTrailSeed(seed)).filter(Boolean)
@@ -1055,7 +1070,9 @@ export default function CanvasWind({
     // Frame counter for periodic behaviors
     let frameCounter = 0
 
-    staticTrailsRef.current = buildStaticTrailsFromSeeds(staticTrailSeedsRef.current)
+    const selectedPointSeeds = buildStaticTrailSeedsFromPointIndices(selectedPointIndices)
+    staticTrailSeedsRef.current = selectedPointSeeds
+    staticTrailsRef.current = buildStaticTrailsFromSeeds(selectedPointSeeds)
 
     function stepFixed() {
       for (const p of particles) {
@@ -2116,13 +2133,35 @@ export default function CanvasWind({
           clickedPointIdx = pIdx
         }
       }
+      const additive = !!(e.shiftKey || e.metaKey || e.ctrlKey)
+      const currentSelection = Array.isArray(selectedPointIndicesRef.current)
+        ? selectedPointIndicesRef.current.filter((value) => Number.isInteger(value) && value >= 0 && value < positions.length)
+        : []
+      let nextSelection = currentSelection
+      let shouldLogDiagnostics = false
+
       if (clickedPointIdx >= 0) {
-        const [px, py] = positions[clickedPointIdx]
-        const builtTrails = setStaticTrailSeeds(
-          [{ x: px, y: py, pointIndex: clickedPointIdx }],
-          { collectDiagnostics: true }
-        )
-        const clickedTrail = builtTrails[0] || null
+        if (additive) {
+          if (currentSelection.includes(clickedPointIdx)) {
+            nextSelection = currentSelection.filter((value) => value !== clickedPointIdx)
+          } else {
+            nextSelection = [...currentSelection, clickedPointIdx]
+            shouldLogDiagnostics = true
+          }
+        } else {
+          nextSelection = [clickedPointIdx]
+          shouldLogDiagnostics = true
+        }
+      } else if (!additive) {
+        nextSelection = []
+      }
+
+      const builtTrails = setStaticTrailSeeds(
+        buildStaticTrailSeedsFromPointIndices(nextSelection),
+        { collectDiagnostics: shouldLogDiagnostics }
+      )
+      if (shouldLogDiagnostics && clickedPointIdx >= 0) {
+        const clickedTrail = builtTrails.find((trail) => trail?.pointIndex === clickedPointIdx) || null
         const stopReason = clickedTrail?.stopReason || 'unknown'
         const stopStep = clickedTrail?.stopStep ?? 0
         const segmentCount = Array.isArray(clickedTrail?.segments) ? clickedTrail.segments.length : 0
@@ -2133,11 +2172,9 @@ export default function CanvasWind({
           segmentCount,
         })
         logStaticTrailDiagnostics(clickedTrail)
-      } else {
-        setStaticTrailSeeds([])
       }
       if (typeof onSelectPoint === 'function') {
-        try { onSelectPoint({ idx: clickedPointIdx }) } catch {}
+        try { onSelectPoint({ idx: clickedPointIdx, indices: nextSelection, additive }) } catch {}
         return
       }
     }
@@ -2265,6 +2302,7 @@ export default function CanvasWind({
     speedScale,
     trailLineWidth,
     pointSize,
+    selectedPointIndices,
     showCellAggregatedGradients,
     showCellGradients,
     showPointGradients,

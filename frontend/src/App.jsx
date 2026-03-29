@@ -305,7 +305,10 @@ export default function App() {
     setSelectedCells([{ i, j }])
   }
 
-  function clearSelection() { setSelectedCells([]) }
+  function clearSelection() {
+    setSelectedCells([])
+    setSelectedPointIndices([])
+  }
 
   function handleWindMapToolChange(nextTool) {
     if (nextTool === windMapTool) return
@@ -482,6 +485,9 @@ export default function App() {
                   )}
                 </div>
               </div>
+              {payload && windMapTool === WIND_MAP_TOOL_PAN && (
+                <div className="panel-note">Pan mode: click a point to show a static trail. Hold Shift to add or remove points.</div>
+              )}
               {payload && windMapTool === WIND_MAP_TOOL_BRUSH && (
                 <div className="panel-note">Brush mode: click or drag to paint grid cells. Hold Shift to add to the current selection.</div>
               )}
@@ -535,12 +541,16 @@ export default function App() {
                     }}
                     showGrid={showGrid}
                     showMaskOverlay={showMaskOverlay}
-                    onSelectPoint={({ idx }) => {
+                    onSelectPoint={({ idx, indices }) => {
+                      if (Array.isArray(indices)) {
+                        setSelectedPointIndices(sanitizePointIndices(indices, pointCount))
+                        return
+                      }
                       if (typeof idx === 'number' && idx >= 0) {
                         setSelectedPointIndices([idx])
-                      } else {
-                        setSelectedPointIndices([])
+                        return
                       }
+                      setSelectedPointIndices([])
                     }}
                     selectedPointIndices={selectedPointIndices}
                     particleCount={particleCount}
@@ -651,11 +661,12 @@ export default function App() {
                     <label>Selection</label>
                     <div className="selection-row">
                       <span className="selection-count">{selectedCells.length} cells</span>
+                      <span className="selection-count">{selectedPointIndices.length} points</span>
                       <button
                         className="btn btn-small"
                         type="button"
                         onClick={clearSelection}
-                        disabled={selectedCells.length === 0}
+                        disabled={selectedCells.length === 0 && selectedPointIndices.length === 0}
                       >
                         Clear
                       </button>
