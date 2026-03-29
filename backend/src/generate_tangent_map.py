@@ -7,80 +7,50 @@ This script processes CSV files by:
 2. Running tangent map generation on features only
 3. Adding labels back to the final tangent map
 4. Creating a complete .tmap file for FeatureWind visualization
-
-Usage:
-    python generate_tangent_map.py dataset.csv tsne [output_name]
-
-Example:
-    python generate_tangent_map.py examples/helix/double_helix_200.csv tsne helix
 """
 
 import argparse
+import hashlib
 import json
-import os
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
-from typing import Optional
 
+import numpy as np
 import pandas as pd
 
-# Ensure local package resolution when running from backend/cli
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = BACKEND_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from featurewind.core.tangent_map import assemble_tangent_entries, check_and_normalize_features, compute_tangent_map_data
+
+
+TMAP_CACHE_CODE_VERSION = "tmap_accel_v1"
+DEFAULT_TMAP_CACHE_DIR = BACKEND_ROOT / "var" / "cache" / "tmap"
+
 
 def identify_label_column(df):
-    """
-    Identify the label column in the dataset.
-    
-    Args:
-        df (pd.DataFrame): Input dataset
-        
-    Returns:
-        str or None: Name of the label column
-    """
-    # Common label column names
-    label_candidates = ['label', 'class', 'target', 'y']
-    
+    label_candidates = ["label", "class", "target", "y"]
     for col in label_candidates:
         if col.lower() in [c.lower() for c in df.columns]:
-            # Find the actual column name with correct case
             for actual_col in df.columns:
                 if actual_col.lower() == col.lower():
                     return actual_col
-    
-    # If no standard label column found, check the last column
-    # If it's not numeric, it might be a label
+
     last_col = df.columns[-1]
     try:
         pd.to_numeric(df[last_col])
     except (ValueError, TypeError):
-        # Last column is not numeric, likely a label
         return last_col
-    
     return None
 
 
 def extract_features_and_labels(csv_file):
-    """
-    Extract features and labels from the CSV file.
-    
-    Args:
-        csv_file (str): Path to the CSV file
-        
-    Returns:
-        tuple: (feature_df, labels, label_column, feature_columns)
-    """
     print(f"Loading dataset: {csv_file}")
     df = pd.read_csv(csv_file)
-    
-    # Identify label column
     label_column = identify_label_column(df)
-    
+
     if label_column:
         print(f"Found label column: '{label_column}'")
         labels = df[label_column].tolist()
@@ -88,167 +58,288 @@ def extract_features_and_labels(csv_file):
         feature_df = df[feature_columns]
     else:
         print("No label column found, treating all columns as features")
-        labels = [0] * len(df)  # Dummy labels
+        labels = [0] * len(df)
         feature_columns = df.columns.tolist()
         feature_df = df
         label_column = None
-    
+
     print(f"Features: {feature_columns}")
     print(f"Dataset shape: {df.shape}, Features: {feature_df.shape}")
-    
     return feature_df, labels, label_column, feature_columns
 
 
-def run_tangent_map_generation(feature_df, projection, perplexity: Optional[float] = None):
-    """
-    Run tangent map generation on the feature DataFrame.
-    
-    Args:
-        feature_df (pd.DataFrame): DataFrame with only feature columns
-        projection (str): Projection method (e.g., 'tsne')
-        
-    Returns:
-        str: Path to the generated .tmap file
-    """
-    # Create temporary file for features-only data
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as temp_file:
-        temp_csv_path = temp_file.name
-        feature_df.to_csv(temp_csv_path, index=False)
-    
-    try:
-        # Run tangent map generation using module approach to handle imports
-        print(f"Running tangent map generation with {projection}...")
-        
-        # Use python -m approach from the backend root to handle relative imports
-        cmd = [sys.executable, "-m", "featurewind.core.tangent_map", temp_csv_path, projection]
-        if perplexity is not None:
-            cmd.append(str(perplexity))
-        env = os.environ.copy()
-        env["PYTHONPATH"] = f"{SRC_ROOT}{os.pathsep}" + env.get("PYTHONPATH", "")
-        result = subprocess.run(
-            cmd,
-            cwd=BACKEND_ROOT,
-            capture_output=False,
-            text=True,
-            env=env,
-        )
-        
-        if result.returncode != 0:
-            print("Error running tangent map generation:")
-            print(result.stderr)
-            raise RuntimeError(f"Tangent map generation failed: {result.stderr}")
-        
-        print("Tangent map generation completed successfully")
-        
-        # Find the generated .tmap file (should be in the same directory as temp file)
-        temp_name = Path(temp_csv_path).stem
-        tmap_file = Path(temp_csv_path).parent / f"{temp_name}_TangentMap_{projection}.tmap"
-        
-        if not tmap_file.exists():
-            raise FileNotFoundError(f"Expected tangent map file not found: {tmap_file}")
-        
-        return str(tmap_file)
-        
-    finally:
-        # Clean up temporary CSV file
-        os.unlink(temp_csv_path)
+def _normalize_projection_name(projection):
+    name = str(projection).strip().lower()
+    if name not in {"tsne", "mds"}:
+        raise ValueError("Projection must be 'tsne' or 'mds'")
+    return name
 
 
-def add_labels_to_tangent_map(tmap_file, labels, feature_columns, output_name=None, input_csv_path=None):
-    """
-    Add labels and column information to the tangent map.
-    
-    Args:
-        tmap_file (str): Path to the tangent map file
-        labels (list): List of labels for each data point
-        feature_columns (list): List of feature column names
-        output_name (str, optional): Custom output filename
-        input_csv_path (str, optional): Path to the original CSV file for directory reference
-        
-    Returns:
-        str: Path to the enhanced tangent map file
-    """
-    print(f"Adding labels to tangent map: {tmap_file}")
-    
-    # Read the raw tangent map
-    with open(tmap_file, 'r') as f:
-        tmap = json.load(f)
-    
-    print(f"Loaded tangent map with {len(tmap)} entries")
-    
-    # Add labels to each tangent map entry
-    for i, tangent_entry in enumerate(tmap):
-        if i < len(labels):
-            tangent_entry['class'] = labels[i]
-        else:
-            tangent_entry['class'] = 0  # Default label
-        tangent_entry['label'] = False  # Standard field
-    
-    # Create the final data structure
-    final_data = {
-        'tmap': tmap,
-        'Col_labels': feature_columns
+def _normalize_quality_name(quality):
+    name = str(quality or "balanced").strip().lower()
+    if name not in {"draft", "balanced", "final"}:
+        raise ValueError("quality must be one of: draft, balanced, final")
+    return name
+
+
+def _normalize_cache_policy(cache):
+    name = str(cache or "auto").strip().lower()
+    if name not in {"auto", "off", "refresh"}:
+        raise ValueError("cache must be one of: auto, off, refresh")
+    return name
+
+
+def _coerce_feature_frame(points, feature_columns=None):
+    if isinstance(points, pd.DataFrame):
+        frame = points.copy()
+    else:
+        array = np.asarray(points, dtype=float)
+        if array.ndim != 2:
+            raise ValueError("points must be a 2D array or DataFrame")
+        columns = list(feature_columns) if feature_columns is not None else [f"Feature {i}" for i in range(array.shape[1])]
+        frame = pd.DataFrame(array, columns=columns)
+
+    frame = frame.apply(pd.to_numeric, errors="raise")
+    if feature_columns is not None:
+        if len(feature_columns) != frame.shape[1]:
+            raise ValueError("feature_columns length must match the number of columns")
+        frame.columns = list(feature_columns)
+    return frame
+
+
+def _default_cache_dir(cache_dir=None):
+    if cache_dir is not None:
+        return Path(cache_dir)
+    return DEFAULT_TMAP_CACHE_DIR
+
+
+def _build_cache_key(normalized_points, projection, perplexity, quality, seed):
+    points_array = np.asarray(normalized_points, dtype=np.float32, order="C")
+    hasher = hashlib.sha256()
+    hasher.update(np.asarray(points_array.shape, dtype=np.int64).tobytes())
+    hasher.update(points_array.tobytes(order="C"))
+    hasher.update(str(projection).strip().lower().encode("utf-8"))
+    perplexity_value = "none" if perplexity is None else f"{float(perplexity):.12g}"
+    hasher.update(perplexity_value.encode("utf-8"))
+    hasher.update(str(quality).strip().lower().encode("utf-8"))
+    hasher.update(str(int(seed)).encode("utf-8"))
+    hasher.update(TMAP_CACHE_CODE_VERSION.encode("utf-8"))
+    return hasher.hexdigest()
+
+
+def _cache_paths(cache_dir, cache_key):
+    cache_root = Path(cache_dir)
+    return {
+        "root": cache_root,
+        "base": cache_root / f"{cache_key}.base.npz",
+        "full": cache_root / f"{cache_key}.full.npz",
     }
-    
-    # Determine output directory and filename
+
+
+def _build_final_payload(points, positions, grads, feature_columns, labels):
+    entries = assemble_tangent_entries(points, positions, grads)
+    normalized_labels = list(labels) if labels is not None else [0] * len(entries)
+    if len(normalized_labels) < len(entries):
+        normalized_labels.extend([0] * (len(entries) - len(normalized_labels)))
+
+    for idx, tangent_entry in enumerate(entries):
+        tangent_entry["class"] = normalized_labels[idx]
+        tangent_entry["label"] = False
+
+    return {"tmap": entries, "Col_labels": list(feature_columns)}
+
+
+def _save_full_cache(cache_file, points, positions, grads, feature_columns, labels, projection, quality, perplexity, seed):
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        meta = {
+            "feature_columns": list(feature_columns),
+            "labels": list(labels) if labels is not None else None,
+            "projection": str(projection),
+            "quality": str(quality),
+            "perplexity": None if perplexity is None else float(perplexity),
+            "seed": int(seed),
+        }
+        np.savez_compressed(
+            cache_file,
+            points=np.asarray(points, dtype=np.float32),
+            positions=np.asarray(positions, dtype=np.float32),
+            grads=np.asarray(grads, dtype=np.float32),
+            meta_json=np.asarray(json.dumps(meta)),
+        )
+    except Exception as exc:
+        print(f"Failed to save full cache ({exc}).")
+
+
+def _load_full_cache(cache_file):
+    try:
+        with np.load(cache_file, allow_pickle=False) as cached:
+            points = np.asarray(cached["points"], dtype=float)
+            positions = np.asarray(cached["positions"], dtype=float)
+            grads = np.asarray(cached["grads"], dtype=float)
+            meta = json.loads(str(cached["meta_json"].tolist()))
+        return {
+            "points": points,
+            "positions": positions,
+            "grads": grads,
+            "meta": meta,
+        }
+    except Exception as exc:
+        print(f"Failed to load full cache ({exc}); recomputing.")
+        return None
+
+
+def generate_tmap(
+    points,
+    projection,
+    *,
+    perplexity=None,
+    quality="balanced",
+    cache="auto",
+    seed=0,
+    labels=None,
+    feature_columns=None,
+    cache_dir=None,
+):
+    projection_name = _normalize_projection_name(projection)
+    quality_name = _normalize_quality_name(quality)
+    cache_policy = _normalize_cache_policy(cache)
+    seed_value = int(seed)
+
+    feature_df = _coerce_feature_frame(points, feature_columns=feature_columns)
+    inferred_feature_columns = list(feature_df.columns)
+    normalized_points = np.asarray(
+        check_and_normalize_features(feature_df.to_numpy(dtype=float).tolist()),
+        dtype=np.float32,
+    )
+
+    cache_key = _build_cache_key(normalized_points, projection_name, perplexity, quality_name, seed_value)
+    cache_paths = _cache_paths(_default_cache_dir(cache_dir), cache_key)
+
+    if cache_policy == "auto" and cache_paths["full"].exists():
+        cached = _load_full_cache(cache_paths["full"])
+        if cached is not None:
+            print(f"Loaded tangent-map payload from cache: {cache_paths['full']}")
+            cached_meta = cached["meta"]
+            cached_columns = inferred_feature_columns or cached_meta.get("feature_columns") or []
+            cached_labels = labels if labels is not None else cached_meta.get("labels")
+            return _build_final_payload(
+                cached["points"],
+                cached["positions"],
+                cached["grads"],
+                cached_columns,
+                cached_labels,
+            )
+
+    params = {
+        "quality": quality_name,
+        "cache": cache_policy,
+        "seed": seed_value,
+    }
+    if perplexity is not None:
+        params["perplexity"] = float(perplexity)
+    if cache_policy != "off":
+        params["base_state_cache_path"] = str(cache_paths["base"])
+
+    tangent_data = compute_tangent_map_data(
+        normalized_points.tolist(),
+        projection_name,
+        params=params,
+        normalize=False,
+    )
+    final_payload = _build_final_payload(
+        tangent_data["points"],
+        tangent_data["positions"],
+        tangent_data["grads"],
+        inferred_feature_columns,
+        labels,
+    )
+
+    if cache_policy != "off":
+        _save_full_cache(
+            cache_paths["full"],
+            tangent_data["points"],
+            tangent_data["positions"],
+            tangent_data["grads"],
+            inferred_feature_columns,
+            labels,
+            projection_name,
+            quality_name,
+            perplexity,
+            seed_value,
+        )
+
+    return final_payload
+
+
+def save_tmap_payload(final_data, output_name=None, input_csv_path=None):
     if input_csv_path:
-        # Save to the same directory as the input CSV
         input_dir = Path(input_csv_path).parent
         if output_name:
             output_file = input_dir / f"{output_name}.tmap"
         else:
-            # Use the CSV filename but with .tmap extension
-            csv_stem = Path(input_csv_path).stem
-            output_file = input_dir / f"{csv_stem}.tmap"
+            output_file = input_dir / f"{Path(input_csv_path).stem}.tmap"
     else:
-        # Fallback to current directory
-        if output_name:
-            output_file = f"{output_name}.tmap"
-        else:
-            tmap_filename = Path(tmap_file).name
-            output_file = tmap_filename
-    
-    # Save the enhanced tangent map
-    with open(output_file, 'w') as f:
+        output_file = Path(f"{output_name}.tmap" if output_name else "output.tmap")
+
+    with open(output_file, "w") as f:
         json.dump(final_data, f)
-    
+
     print(f"Enhanced tangent map saved to: {output_file}")
-    print(f"Total entries: {len(tmap)}")
-    print(f"Feature columns: {feature_columns}")
-    if tmap:
-        unique_labels = list(set(entry['class'] for entry in tmap))
-        print(f"Unique labels: {unique_labels}")
-    
-    # Clean up the temporary tangent map file
-    os.unlink(tmap_file)
-    
+    print(f"Total entries: {len(final_data.get('tmap', []))}")
+    print(f"Feature columns: {final_data.get('Col_labels', [])}")
     return str(output_file)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate tangent maps from CSV datasets with automatic label handling'
+        description="Generate tangent maps from CSV datasets with automatic label handling"
     )
-    parser.add_argument('csv_file', help='Input CSV file')
-    parser.add_argument('projection', choices=['tsne', 'mds'], help='Projection method')
-    parser.add_argument('output_name', nargs='?', help='Output filename (without extension)')
-    parser.add_argument('--perplexity', type=float, default=None,
-                        help='t-SNE perplexity (passes through to tangent_map). Applies when projection=tsne.')
-    
+    parser.add_argument("csv_file", help="Input CSV file")
+    parser.add_argument("projection", choices=["tsne", "mds"], help="Projection method")
+    parser.add_argument("output_name", nargs="?", help="Output filename (without extension)")
+    parser.add_argument(
+        "--perplexity",
+        type=float,
+        default=None,
+        help="t-SNE perplexity. Applies when projection=tsne.",
+    )
+    parser.add_argument(
+        "--quality",
+        choices=["draft", "balanced", "final"],
+        default="balanced",
+        help="Generation quality preset.",
+    )
+    parser.add_argument(
+        "--cache",
+        choices=["auto", "off", "refresh"],
+        default="auto",
+        help="Cache mode for base t-SNE state and full tangent-map payload.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed for deterministic t-SNE generation.",
+    )
+
     args = parser.parse_args()
-    
+
     try:
-        # Extract features and labels
         feature_df, labels, label_column, feature_columns = extract_features_and_labels(args.csv_file)
-        
-        # Generate tangent map on features only
-        tmap_file = run_tangent_map_generation(feature_df, args.projection, perplexity=args.perplexity)
-        
-        # Add labels back and save final result
-        output_file = add_labels_to_tangent_map(tmap_file, labels, feature_columns, args.output_name, args.csv_file)
-        
+        del label_column
+        final_data = generate_tmap(
+            feature_df,
+            args.projection,
+            perplexity=args.perplexity,
+            quality=args.quality,
+            cache=args.cache,
+            seed=args.seed,
+            labels=labels,
+            feature_columns=feature_columns,
+        )
+        output_file = save_tmap_payload(final_data, args.output_name, args.csv_file)
         print(f"\n✓ Successfully generated tangent map: {output_file}")
-        
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)

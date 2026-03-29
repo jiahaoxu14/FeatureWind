@@ -200,7 +200,21 @@ def pca_torch(X, no_dims=50):
     return Y
 
 
-def tsne(X, no_dims=2, maxIter = 999, initial_dims=50, perplexity=30.0, save_params = False, initY = None, initBeta = None, betaTries = 50, initIY =None):
+def tsne(
+    X,
+    no_dims=2,
+    maxIter=999,
+    initial_dims=50,
+    perplexity=30.0,
+    save_params=False,
+    initY=None,
+    initBeta=None,
+    betaTries=50,
+    initIY=None,
+    seed=None,
+    early_stop_config=None,
+    return_stats=False,
+):
     """
         Runs t-SNE on the dataset in the NxD array X to reduce its
         dimensionality to no_dims dimensions. The syntaxis of the function is
@@ -224,6 +238,30 @@ def tsne(X, no_dims=2, maxIter = 999, initial_dims=50, perplexity=30.0, save_par
     final_momentum = 0.8
     eta = 500
     min_gain = 0.01
+    stopped_early = False
+    final_error = None
+    iterations_run = 0
+
+    check_interval = 10
+    early_stop_enabled = False
+    min_iter = max_iter
+    lookback_iters = 0
+    rel_tol = 0.0
+    patience = 0
+    check_history = {}
+    stale_checks = 0
+    if early_stop_config:
+        early_stop_enabled = bool(early_stop_config.get("enabled", False))
+        check_interval = max(1, int(early_stop_config.get("check_interval", 10)))
+        min_iter = max(1, int(early_stop_config.get("min_iter", max_iter)))
+        lookback_iters = max(0, int(early_stop_config.get("lookback_iters", 0)))
+        rel_tol = float(early_stop_config.get("rel_tol", 0.0))
+        patience = max(1, int(early_stop_config.get("patience", 1)))
+
+    if seed is not None:
+        torch.manual_seed(int(seed))
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(int(seed))
 
     Y = torch.randn(n, no_dims, device=device, dtype=dtype)  # randomly initialize embedding
     dY = torch.zeros(n, no_dims, device=device, dtype=dtype) # gradient of the cost function with respect to Y
@@ -278,15 +316,42 @@ def tsne(X, no_dims=2, maxIter = 999, initial_dims=50, perplexity=30.0, save_par
         Y = Y - torch.mean(Y, 0)
 
         # Compute current value of cost function
-        if (iter + 1) % 10 == 0:
+        if (iter + 1) % check_interval == 0:
             C = torch.sum(P * torch.log(P / Q))
+            final_error = float(C.detach().cpu().item())
+            check_history[iter + 1] = final_error
             print("Iteration %d: error is %f" % (iter + 1, C))
+            if early_stop_enabled and (iter + 1) >= min_iter:
+                compare_iter = iter + 1 - lookback_iters
+                if compare_iter in check_history:
+                    prev_error = float(check_history[compare_iter])
+                    rel_improvement = (prev_error - final_error) / max(abs(prev_error), 1e-12)
+                    if rel_improvement < rel_tol:
+                        stale_checks += 1
+                    else:
+                        stale_checks = 0
+                    if stale_checks >= patience:
+                        stopped_early = True
+                        iterations_run = iter + 1
+                        print(
+                            "Early stop at iteration %d: relative improvement %.6f below %.6f for %d checks"
+                            % (iter + 1, rel_improvement, rel_tol, patience)
+                        )
+                        break
 
         # Stop lying about P-values
         if iter == 100:
             P = P / 4.
+        iterations_run = iter + 1
     params = []
     if save_params:
         params = [Y.clone().detach(), iY.clone().detach(), beta.clone().detach()]
+    run_stats = {
+        "iterations_run": int(iterations_run),
+        "stopped_early": bool(stopped_early),
+        "final_error": None if final_error is None else float(final_error),
+    }
     # Return solution
+    if return_stats:
+        return Y, params, run_stats
     return Y, params
