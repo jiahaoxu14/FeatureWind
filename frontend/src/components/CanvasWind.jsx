@@ -32,13 +32,20 @@ function bilinearSample(grid, gx, gy) {
   return top * (1 - b) + bot * b
 }
 
+function computeP99(values) {
+  if (!values || values.length === 0) return 1.0
+  const arr = Array.from(values)
+  arr.sort((a, b) => a - b)
+  return arr.length ? (arr[Math.floor(arr.length * 0.99)] || 1.0) : 1.0
+}
+
 export default function CanvasWind({
   payload,
   mode = 'default',
   interactionMode = 'pan',
   featureColorMap = null,
   neutralColor = '#4b5563',
-  particleCount = 1000,
+  particleCount = 100,
   onHover,
   onSelectCell,
   onBrushCell,
@@ -226,7 +233,7 @@ export default function CanvasWind({
     return { idx, min, max }
   }, [feature_values, pointColorFeatureIndex])
 
-  // Precompute magnitude grid and a robust scale (p95) for alpha mapping
+  // Precompute magnitude grid and a robust scale (p99) for aggregated-field alpha mapping.
   const magInfo = useMemo(() => {
     if (!uSum || !vSum) return null
     const H = uSum.length, W = uSum[0].length
@@ -240,27 +247,26 @@ export default function CanvasWind({
         mags[k] = Math.hypot(u, v)
       }
     }
-    // Compute p99 (closer to Python’s 99th percentile usage)
-    const arr = Array.from(mags)
-    arr.sort((a, b) => a - b)
-    const p99 = arr.length ? arr[Math.floor(arr.length * 0.99)] : 1.0
+    const p99 = computeP99(mags)
     return { H, W, mags, p99: p99 || 1.0 }
   }, [uSum, vSum])
 
-  // Per-feature robust scale (p99) across the entire grid, independent of selection
-  const p99ByFeature = useMemo(() => {
-    if (!Array.isArray(uAll) || !Array.isArray(vAll) || uAll.length === 0) return null
+  // One robust scale across all feature grids so magnitudes remain comparable between features.
+  const globalFeatureP99 = useMemo(() => {
+    if (!Array.isArray(uAll) || !Array.isArray(vAll) || uAll.length === 0) return 1.0
     const n = Math.min(uAll.length, vAll.length)
     const H = uAll[0]?.length || 0
     const W = (H && uAll[0][0]) ? uAll[0][0].length : 0
-    if (!H || !W) return null
-    const out = new Float32Array(n)
+    if (!H || !W) return 1.0
+    const mags = new Float32Array(n * H * W)
+    let k = 0
     for (let fi = 0; fi < n; fi++) {
       const ui = uAll[fi]
       const vi = vAll[fi]
-      if (!ui || !vi) { out[fi] = 1.0; continue }
-      const mags = new Float32Array(H * W)
-      let k = 0
+      if (!ui || !vi) {
+        for (let i = 0; i < H * W; i++, k++) mags[k] = 0
+        continue
+      }
       for (let i = 0; i < H; i++) {
         const urow = ui[i]
         const vrow = vi[i]
@@ -270,12 +276,8 @@ export default function CanvasWind({
           mags[k] = Math.hypot(u, v)
         }
       }
-      const arr = Array.from(mags)
-      arr.sort((a, b) => a - b)
-      const p99 = arr.length ? arr[Math.floor(arr.length * 0.99)] : 1.0
-      out[fi] = p99 || 1.0
     }
-    return out
+    return computeP99(mags)
   }, [uAll, vAll])
 
   useEffect(() => {
@@ -398,9 +400,7 @@ export default function CanvasWind({
       const useFeatureField = Number.isInteger(featureIndex) && featureIndex >= 0 && featureIndex < uAll.length && featureIndex < vAll.length
       const uGrid = useFeatureField ? uAll[featureIndex] : uSum
       const vGrid = useFeatureField ? vAll[featureIndex] : vSum
-      const fieldP99 = (useFeatureField && p99ByFeature && featureIndex < p99ByFeature.length && p99ByFeature[featureIndex] > 0)
-        ? p99ByFeature[featureIndex]
-        : activeFieldP99
+      const fieldP99 = useFeatureField ? globalFeatureP99 : activeFieldP99
       const fieldWeakThreshold = Math.max(1e-6, 0.015 * fieldP99)
       return { useFeatureField, uGrid, vGrid, fieldP99, fieldWeakThreshold }
     }
@@ -1519,7 +1519,6 @@ export default function CanvasWind({
         const provided = gradientFeatureIndicesRef.current
         const featList = Array.isArray(provided) ? provided : indices
         if (Array.isArray(featList) && featList.length > 0) {
-          const p99Sum = magInfo?.p99 || 1.0
           const sxScale = Wpx / (xmax - xmin)
           const syScale = Hpx / (ymax - ymin)
           const headLen = Math.max(6, Math.min(12, Math.floor(Math.min(Wpx, Hpx) * 0.015)))
@@ -1534,9 +1533,7 @@ export default function CanvasWind({
               const v = bilinearSample(vAll[fi], gx, gy)
               const m = Math.hypot(u, v)
               if (m <= 1e-12) continue
-              const denom = (p99ByFeature && fi >= 0 && fi < p99ByFeature.length && p99ByFeature[fi] > 0)
-                ? p99ByFeature[fi]
-                : p99Sum
+              const denom = globalFeatureP99
               const aField = Math.max(0, Math.min(1, m / denom))
               // Map world vector to screen direction (account for y flip and axis scales)
               const ddx = u * sxScale
@@ -1581,7 +1578,6 @@ export default function CanvasWind({
         const provided = gradientFeatureIndicesRef.current
         const featList = Array.isArray(provided) ? provided : indices
         if (Array.isArray(featList) && featList.length > 0) {
-          const p99Sum = magInfo?.p99 || 1.0
           const sxScale = Wpx / (xmax - xmin)
           const syScale = Hpx / (ymax - ymin)
           const headLen = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
@@ -1601,9 +1597,7 @@ export default function CanvasWind({
                 const v = (vAll[fi]?.[i]?.[j] ?? 0)
                 const m = Math.hypot(u, v)
                 if (m <= 1e-12) continue
-                const denom = (p99ByFeature && fi >= 0 && fi < p99ByFeature.length && p99ByFeature[fi] > 0)
-                  ? p99ByFeature[fi]
-                  : p99Sum
+                const denom = globalFeatureP99
                 const aField = Math.max(0, Math.min(1, m / denom))
                 const ddx = u * sxScale
                 const ddy = -v * syScale
@@ -1675,11 +1669,8 @@ export default function CanvasWind({
         }
       }
 
-      // Draw trails as fading line segments (colored by the active feature mode)
+      // Draw trails with constant width; opacity encodes local field magnitude.
       const baseParticleWidth = Math.max(0.5, Number(trailLineWidth) || 1.2)
-      const minParticleWidth = Math.max(0.5, baseParticleWidth * 0.75)
-      const maxParticleWidth = Math.max(minParticleWidth + 0.8, baseParticleWidth * 1.9)
-      const particleWidthExp = 0.7
       ctx.lineWidth = baseParticleWidth
       ctx.lineCap = 'round'
       // If exactly one feature is manually selected, force its color globally
@@ -1750,18 +1741,17 @@ export default function CanvasWind({
             if (!unmasked[mi][mj]) continue
           }
 
-          const alpha = 1.0 * aTail * aField
-          const segWidth = minParticleWidth + (maxParticleWidth - minParticleWidth) * Math.pow(aField, particleWidthExp)
+          const alpha = aTail * aField
           // Cache head segment opacity and color for arrowhead rendering
           if (t === 0) {
             p._headAlpha = alpha
             p._headRgb = rgb
-            p._headWidth = segWidth
+            p._headWidth = baseParticleWidth
           }
           if (alpha <= 0.01) continue
           const [sx0, sy0] = worldToScreen(x0, y0)
           const [sx1, sy1] = worldToScreen(x1, y1)
-          ctx.lineWidth = segWidth
+          ctx.lineWidth = baseParticleWidth
           ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha.toFixed(3)})`
           ctx.beginPath()
           ctx.moveTo(sx1, sy1)
@@ -1821,36 +1811,62 @@ export default function CanvasWind({
           }
           ctx.stroke()
 
-          const minStaticWidth = Math.max(1.8, Number(trailLineWidth) * 0.95)
-          const maxStaticWidth = Math.max(minStaticWidth + 1.2, Number(trailLineWidth) + 2.0)
-          const staticWidthExp = 0.7
+          const staticStrokeWidth = Math.max(2.2, (Number(trailLineWidth) || 2.0) + 0.4)
+          const staticOutlineWidth = staticStrokeWidth + 1.0
           let lastVisibleSeg = null
-          let lastSegWidth = minStaticWidth
           for (const seg of segments) {
             const rgb = Array.isArray(seg.rgb) ? seg.rgb : [20, 20, 20]
-            const aField = sampleFieldMagnitudeAt(seg.x1, seg.y1, trailFeatureIndex)
-            const segWidth = minStaticWidth + (maxStaticWidth - minStaticWidth) * Math.pow(aField, staticWidthExp)
+            const outlineRgb = [
+              Math.max(0, Math.min(255, Math.round(rgb[0] * 0.58))),
+              Math.max(0, Math.min(255, Math.round(rgb[1] * 0.58))),
+              Math.max(0, Math.min(255, Math.round(rgb[2] * 0.58))),
+            ]
             const [sx0, sy0] = worldToScreen(seg.x0, seg.y0)
             const [sx1, sy1] = worldToScreen(seg.x1, seg.y1)
-            ctx.lineWidth = segWidth
+            const dx = sx1 - sx0
+            const dy = sy1 - sy0
+            const segLen = Math.hypot(dx, dy)
+            if (!(segLen > 1e-6)) continue
+
+            ctx.lineWidth = staticOutlineWidth
+            ctx.strokeStyle = `rgba(${outlineRgb[0]},${outlineRgb[1]},${outlineRgb[2]},0.9)`
+            ctx.beginPath()
+            ctx.moveTo(sx0, sy0)
+            ctx.lineTo(sx1, sy1)
+            ctx.stroke()
+
+            ctx.lineWidth = staticStrokeWidth
             ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.98)`
             ctx.beginPath()
             ctx.moveTo(sx0, sy0)
             ctx.lineTo(sx1, sy1)
             ctx.stroke()
             lastVisibleSeg = seg
-            lastSegWidth = segWidth
           }
 
           const lastSeg = lastVisibleSeg
           if (lastSeg) {
             const rgb = Array.isArray(lastSeg.rgb) ? lastSeg.rgb : [20, 20, 20]
+            const outlineRgb = [
+              Math.max(0, Math.min(255, Math.round(rgb[0] * 0.58))),
+              Math.max(0, Math.min(255, Math.round(rgb[1] * 0.58))),
+              Math.max(0, Math.min(255, Math.round(rgb[2] * 0.58))),
+            ]
             const [sx0, sy0] = worldToScreen(lastSeg.x0, lastSeg.y0)
             const [sx1, sy1] = worldToScreen(lastSeg.x1, lastSeg.y1)
             const ang = Math.atan2(sy1 - sy0, sx1 - sx0)
-            const headLen = Math.max(8, Math.min(18, 6 + lastSegWidth * 2.4))
+            const headLen = Math.max(8, Math.min(18, 6 + staticStrokeWidth * 2.4))
             const phi = Math.PI / 7
-            ctx.lineWidth = Math.max(1.6, lastSegWidth * 0.95)
+            ctx.lineWidth = Math.max(1.8, staticOutlineWidth * 0.95)
+            ctx.strokeStyle = `rgba(${outlineRgb[0]},${outlineRgb[1]},${outlineRgb[2]},0.9)`
+            ctx.beginPath()
+            ctx.moveTo(sx1, sy1)
+            ctx.lineTo(sx1 - headLen * Math.cos(ang - phi), sy1 - headLen * Math.sin(ang - phi))
+            ctx.moveTo(sx1, sy1)
+            ctx.lineTo(sx1 - headLen * Math.cos(ang + phi), sy1 - headLen * Math.sin(ang + phi))
+            ctx.stroke()
+
+            ctx.lineWidth = Math.max(1.6, staticStrokeWidth * 0.95)
             ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.98)`
             ctx.beginPath()
             ctx.moveTo(sx1, sy1)
@@ -2231,7 +2247,7 @@ export default function CanvasWind({
     grid_res,
     uSum,
     vSum,
-    p99ByFeature,
+    globalFeatureP99,
     positions,
     point_labels,
     colors,

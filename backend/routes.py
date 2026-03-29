@@ -219,6 +219,7 @@ def compute():
       topK?: number,
       featureIndex?: number,
       gridRes?: number,
+      interpolationMethod?: string,
       includeRawGradients?: boolean
     }
     """
@@ -228,8 +229,14 @@ def compute():
     top_k = body.get("topK")
     feature_index = body.get("featureIndex")
     grid_res = int(body.get("gridRes") or getattr(fw_config, "DEFAULT_GRID_RES", 25))
+    interpolation_method_raw = body.get("interpolationMethod")
     include_raw = bool(body.get("includeRawGradients", False))
     cfg_overrides = body.get("config") or {}
+
+    try:
+        interpolation_method = fw_grid.normalize_interpolation_method(interpolation_method_raw)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     if not dataset_id or dataset_id not in DATASETS:
         return jsonify({"error": "Unknown dataset_id"}), 404
@@ -357,6 +364,7 @@ def compute():
 
     # Apply per-request config overrides safely
     orig_MASK_DILATE_RADIUS_CELLS = getattr(fw_config, "MASK_DILATE_RADIUS_CELLS", 1)
+    orig_MASK_INCLUDE_INTERPOLATION_HULL = getattr(fw_config, "MASK_INCLUDE_INTERPOLATION_HULL", True)
     try:
         if isinstance(cfg_overrides, dict):
             if "maskDilateRadiusCells" in cfg_overrides:
@@ -367,6 +375,11 @@ def compute():
             elif "maskBufferFactor" in cfg_overrides:
                 try:
                     fw_config.MASK_DILATE_RADIUS_CELLS = max(0, int(round(float(cfg_overrides["maskBufferFactor"]))))  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            if "maskIncludeInterpolationHull" in cfg_overrides:
+                try:
+                    fw_config.MASK_INCLUDE_INTERPOLATION_HULL = bool(cfg_overrides["maskIncludeInterpolationHull"])  # type: ignore[attr-defined]
                 except Exception:
                     pass
 
@@ -385,11 +398,23 @@ def compute():
             cell_centers_x,
             cell_centers_y,
             final_mask,
-        ) = fw_grid.build_grids(all_positions, grid_res, top_k_indices, all_grad_vectors, col_labels, output_dir=os.path.dirname(path))
+        ) = fw_grid.build_grids(
+            all_positions,
+            grid_res,
+            top_k_indices,
+            all_grad_vectors,
+            col_labels,
+            output_dir=os.path.dirname(path),
+            interpolation_method=interpolation_method,
+        )
     finally:
         # Restore global to avoid cross-request bleed
         try:
             fw_config.MASK_DILATE_RADIUS_CELLS = orig_MASK_DILATE_RADIUS_CELLS  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            fw_config.MASK_INCLUDE_INTERPOLATION_HULL = orig_MASK_INCLUDE_INTERPOLATION_HULL  # type: ignore[attr-defined]
         except Exception:
             pass
 
@@ -454,6 +479,7 @@ def compute():
         # Per-point labels (for marker shapes). Strings or numbers as provided.
         **({"point_labels": tolist(point_labels)} if point_labels is not None else {}),
         "global_sum_magnitude_max": global_sum_magnitude_max,
+        "interpolationMethod": interpolation_method,
         "selection": selection_obj,
         "meta": {"dtypeHint": "float32", "order": "row-major"},
     }

@@ -40,6 +40,7 @@ GLASBEY_COLORS = [
 
 # Grid computation parameters
 MASK_DILATE_RADIUS_CELLS = 1    # Integer dilation radius around occupied grid cells
+MASK_INCLUDE_INTERPOLATION_HULL = True  # Preserve cells inside the global interpolation hull
 # Deprecated API compatibility alias. Internal code now uses MASK_DILATE_RADIUS_CELLS.
 MASK_BUFFER_FACTOR = 0.2
 # Unified masking threshold for summed magnitude checks

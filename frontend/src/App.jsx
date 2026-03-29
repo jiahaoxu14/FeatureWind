@@ -16,6 +16,12 @@ const OVERVIEW_NEUTRAL = '#4b5563'
 const WIND_MAP_TOOL_PAN = 'pan'
 const WIND_MAP_TOOL_BRUSH = 'brush'
 const MAX_MASK_DILATE_RADIUS_CELLS = 10
+const INTERPOLATION_OPTIONS = [
+  { value: 'linear-nearest', label: 'Linear + Nearest Fallback' },
+  { value: 'linear', label: 'Linear' },
+  { value: 'nearest', label: 'Nearest' },
+  { value: 'cubic-nearest', label: 'Cubic + Nearest Fallback' },
+]
 
 function sanitizeFeatureIndices(indices, count, cap = Infinity) {
   if (!Array.isArray(indices)) return []
@@ -72,6 +78,7 @@ export default function App() {
   const [file, setFile] = useState(null)
   const [dataset, setDataset] = useState(null)
   const [gridRes, setGridRes] = useState(25)
+  const [interpolationMethod, setInterpolationMethod] = useState('linear-nearest')
   const [payload, setPayload] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -88,7 +95,7 @@ export default function App() {
   // Interactive config (frontend + backend overrides)
   const [showGrid, setShowGrid] = useState(true)
   const [showMaskOverlay, setShowMaskOverlay] = useState(false)
-  const [particleCount, setParticleCount] = useState(1000)
+  const [particleCount, setParticleCount] = useState(100)
   const [speedScale, setSpeedScale] = useState(1.0)
   const [tailDurationSec, setTailDurationSec] = useState(1.2)
   const [trailTailMin, setTrailTailMin] = useState(0.10)
@@ -217,6 +224,7 @@ export default function App() {
       const res = await compute({
         dataset_id: dsId,
         gridRes: Number(gridRes),
+        interpolationMethod,
         config: { maskDilateRadiusCells: Number(maskDilateRadiusCells) }
       })
 
@@ -259,7 +267,7 @@ export default function App() {
       handleCompute(dsId)
     }, 200)
     return () => clearTimeout(t)
-  }, [dataset?.datasetId, gridRes, maskDilateRadiusCells])
+  }, [dataset?.datasetId, gridRes, maskDilateRadiusCells, interpolationMethod])
 
   useEffect(() => {
     const n = Array.isArray(payload?.col_labels) ? payload.col_labels.length : 0
@@ -614,6 +622,13 @@ export default function App() {
                       <input type="range" min={8} max={200} step={1} value={gridRes} onChange={(e) => setGridRes(Number(e.target.value))} />
                       <span className="control-val">{gridRes}</span>
                     </div>
+
+                    <label>Interpolation</label>
+                    <select value={interpolationMethod} onChange={(e) => setInterpolationMethod(e.target.value)}>
+                      {INTERPOLATION_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
 
                     <label>Mask Radius</label>
                     <div className="slider-row">
