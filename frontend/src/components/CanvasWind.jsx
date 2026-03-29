@@ -75,6 +75,7 @@ export default function CanvasWind({
   selectedCells = [],
   featureIndices = null,
   pointColorFeatureIndex = null,
+  labelColorMap = null,
 }) {
   const containerRef = useRef(null)
   const canvasRef = useRef(null)
@@ -1343,17 +1344,20 @@ export default function CanvasWind({
         }
       }
 
-      if (!showParticleInitsRef.current && Array.isArray(point_labels) && point_labels.length === positions.length) {
-        // Build stable mapping value→index using sorted unique labels
-        const unique = Array.from(new Set(point_labels.map((l) => String(l))))
-        unique.sort()
-        const map = new Map(unique.map((val, idx) => [val, idx]))
+      if (!showParticleInitsRef.current) {
+        // Resolve point fill color in priority order:
+        //   1. pointColorStats (grayscale-by-feature, explicit user selection) → overrides label
+        //   2. labelColorMap   (category color from label palette)
+        //   3. default gray
+        const hasLabels = Array.isArray(point_labels) && point_labels.length === positions.length
+        const activeLabelMap = labelColorMap && typeof labelColorMap === 'object' ? labelColorMap : null
+
         for (let idx = 0; idx < positions.length; idx++) {
           const [x, y] = positions[idx]
           const [sx, sy] = worldToScreen(x, y)
-          const li = map.get(String(point_labels[idx])) || 0
-          const shape = uniformPointShapeRef.current ? 'o' : SHAPES[li % SHAPES.length]
+
           if (pointColorStats && Array.isArray(feature_values)) {
+            // Grayscale-by-feature mode
             const col = pointColorStats.idx
             const row = feature_values[idx]
             const v = (row && col >= 0 && col < row.length) ? Number(row[col]) : NaN
@@ -1363,30 +1367,15 @@ export default function CanvasWind({
             }
             const g = Math.round(255 * (1 - t))
             ctx.fillStyle = `rgb(${g},${g},${g})`
+          } else if (hasLabels && activeLabelMap) {
+            // Label color mode — one consistent circle per label category
+            const labelKey = String(point_labels[idx])
+            ctx.fillStyle = activeLabelMap[labelKey] || '#d9d9d9'
           } else {
             ctx.fillStyle = '#d9d9d9'
           }
-          drawMarker(sx, sy, shape, shapeSize)
-        }
-      } else if (!showParticleInitsRef.current) {
-        // Fallback: simple circles (larger, gray) with border
-        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
-          const [x, y] = positions[pIdx]
-          const [sx, sy] = worldToScreen(x, y)
-          if (pointColorStats && Array.isArray(feature_values)) {
-            const col = pointColorStats.idx
-            const row = feature_values[pIdx]
-            const v = (row && col >= 0 && col < row.length) ? Number(row[col]) : NaN
-            let t = 0.5
-            if (Number.isFinite(v) && pointColorStats.max > pointColorStats.min) {
-              t = Math.max(0, Math.min(1, (v - pointColorStats.min) / (pointColorStats.max - pointColorStats.min)))
-            }
-            const g = Math.round(255 * (1 - t))
-            ctx.fillStyle = `rgb(${g},${g},${g})`
-          } else {
-            ctx.fillStyle = '#d9d9d9'
-          }
-          ctx.beginPath(); ctx.arc(sx, sy, shapeSize, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+
+          drawMarker(sx, sy, 'o', shapeSize)
         }
       }
 
@@ -2130,6 +2119,7 @@ export default function CanvasWind({
     colors,
     dominant,
     featureColorMap,
+    labelColorMap,
     neutralColor,
     featureIndices,
     pointColorStats,

@@ -4,14 +4,14 @@ import { uploadFile, compute } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
 import WindVane from './components/WindVane.jsx'
 import ColorLegend from './components/ColorLegend.jsx'
+import { DEFAULT_FEATURE_HUE, FEATURE_PALETTE, buildLabelColorMap } from './utils/colors.js'
 
 const MODE_DEFAULT = 'default'
 const MODE_AGGREGATE = 'aggregate'
 const MODE_COMPARE = 'compare'
 const MODE_OVERVIEW = 'overview'
 const COMPARE_MAX = 4
-const DEFAULT_FEATURE_HUE = '#0f766e'
-const COMPARE_PALETTE = ['#0f766e', '#c2410c', '#7c3aed', '#dc2626']
+const COMPARE_PALETTE = FEATURE_PALETTE
 const OVERVIEW_NEUTRAL = '#4b5563'
 const WIND_MAP_TOOL_PAN = 'pan'
 const WIND_MAP_TOOL_BRUSH = 'brush'
@@ -175,6 +175,9 @@ export default function App() {
     }
     return out
   }, [payload?.colors, featureCount, mode, effectiveDefaultFeatureIndex])
+
+  // Label color map — stable per dataset, never derived from payload.colors
+  const labelColorMap = useMemo(() => buildLabelColorMap(payload?.point_labels), [payload?.point_labels])
 
   const vaneFeatureIndices = useMemo(() => {
     if (mode === MODE_OVERVIEW) return allFeatureIndices
@@ -552,6 +555,7 @@ export default function App() {
                     restrictSpawnToSelection={restrictSpawnToSelection}
                     autoRespawnRate={autoRespawnEnabled ? 0.3 : 0.0}
                     trailLineWidth={trailLineWidth}
+                    labelColorMap={labelColorMap}
                     onCanvasElement={(el) => { windMapCanvasRef.current = el }}
                   />
                 </div>
@@ -776,6 +780,7 @@ export default function App() {
                   compareCap={COMPARE_MAX}
                   message={featureMessage}
                   activeFeatureColorMap={activeFeatureColorMap}
+                  labelColorMap={labelColorMap}
                 />
               ) : (
                 <div className="hint">Upload a dataset to browse features</div>

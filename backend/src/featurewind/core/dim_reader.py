@@ -1,10 +1,11 @@
 import sys
-# import DualNum
 import csv
+import time
 import numpy as np
-from .tsne import tsne
+from .tsne import tsne, tsne_1step
 from .mds_torch import mds, distance_matrix_HD_tensor
 import torch
+from torch.autograd.functional import jacobian as autograd_jacobian
 
 class ProjectionRunner:
     def __init__(self, projection, params=None):
@@ -55,52 +56,108 @@ class ProjectionRunner:
             perp_grad = perp_override if (isinstance(perp_override, (int, float)) and perp_override > 0) else 40.0
 
             print("Step 1/3: Computing base t-SNE projection (1000 iterations)...")
+            t0 = time.time()
             with torch.no_grad():
-                Y_base, params = tsne(data, 2, 1000, 10, perp_base, save_params = True)
-            print("Step 2/3: Computing projection with gradients (1 iteration)...")
-            Y, params = tsne(data, no_dims=2, maxIter = 1, initial_dims=10, perplexity=perp_grad, save_params = False,
-                                initY = params[0], initBeta = params[2], betaTries = 50, initIY =params[1])
+                Y_base, params = tsne(data, 2, 1000, 10, perp_base, save_params=True)
+            print(f"  Step 1 done in {time.time()-t0:.1f}s")
+
+            # Save init state for tsne_1step (all detached from step-1 graph)
+            init_Y    = params[0]  # (n, 2)
+            init_iY   = params[1]  # (n, 2)
+            init_beta = params[2]  # (n, 1)
+
+            print("Step 2/3: Computing 1-step projection...")
+            t1 = time.time()
+            with torch.no_grad():
+                Y = tsne_1step(data.detach(), init_Y, init_iY,
+                               perplexity=perp_grad, init_beta=init_beta)
+            print(f"  Step 2 done in {time.time()-t1:.1f}s")
+            n_points, n_features = data.shape
+            print(f"Step 3/3: Computing Jacobian for {n_points} points (vectorized)...")
+            t2 = time.time()
+            grads_x, grads_y = self._compute_jacobian_tsne(
+                data, init_Y, init_iY, init_beta, perp_grad, device, n_points, n_features
+            )
+            print(f"  Step 3 done in {time.time()-t2:.1f}s  (total: {time.time()-t0:.1f}s)")
+
         elif self.projection == mds or (isinstance(self.projection, str) and self.projection.lower() == 'mds'):
+            t0 = time.time()
             print("Step 1/3: Computing base MDS projection (999 iterations)...")
             with torch.no_grad():
                 dist_hd = distance_matrix_HD_tensor(data)
                 Y_base = mds(dist_hd, n_components=2, max_iter=999)
             print("Step 2/3: Computing projection with gradients (1 iteration)...")
-            # Recompute with graph enabled so autograd can backprop to input coordinates
             dist_hd = distance_matrix_HD_tensor(data)
             Y = mds(dist_hd, n_components=2, max_iter=1)
+
+            n_points, n_features = data.shape
+            print(f"Step 3/3: Computing Jacobian for {n_points} points (serial)...")
+            t2 = time.time()
+            def mds_fn(x):
+                return mds(distance_matrix_HD_tensor(x), n_components=2, max_iter=1)
+            grads_x, grads_y = self._compute_jacobian_serial(
+                data, mds_fn, n_points, n_features, device
+            )
+            print(f"  Step 3 done in {time.time()-t2:.1f}s  (total: {time.time()-t0:.1f}s)")
         else:
             raise ValueError("Unsupported projection method. Use 'tsne' or 'mds'.")
-        
-        # Compute gradients and full Jacobian matrix
+
+        # Store results (shared by both branches)
         self.outPoints = Y
-        grads = []
-        n_points, n_features = data.shape
 
-        print(f"Step 3/3: Computing gradients for {n_points} points...")
-        # Initialize Jacobian matrix: J[2*i:2*i+2, :] = gradients for point i
+        # Build grads array (N, 2, d) — same shape expected downstream
+        self.grads = torch.stack([grads_x, grads_y], dim=1).detach().cpu().numpy()
+
+        # Build flat Jacobian matrix (2*N, d)
         self.jacobian = torch.zeros(2 * n_points, n_features, dtype=torch.float32, device=device)
-
-        for i in range(len(Y)):
-            # Show progress every 10% or every 50 points, whichever is more frequent
-            progress_interval = min(50, max(1, n_points // 10))
-            if i % progress_interval == 0 or i == n_points - 1:
-                progress_pct = (i + 1) / n_points * 100
-                print(f"  Computing gradients: {i+1}/{n_points} points ({progress_pct:.1f}%)")
-            grad_x = torch.autograd.grad(Y[i, 0], data, retain_graph=True)[0][i]
-            grad_y = torch.autograd.grad(Y[i, 1], data, retain_graph=True)[0][i]
-            grads.append(torch.stack([grad_x, grad_y], dim=0))
-            
-            # Store in Jacobian matrix
-            self.jacobian[2*i, :] = grad_x
-            self.jacobian[2*i+1, :] = grad_y
-
-        # Convert gradients to NumPy array (backward compatibility)
-        self.grads = torch.stack(grads).detach().cpu().numpy()
-        
-        # Store Jacobian as NumPy array for easier integration
+        self.jacobian[0::2] = grads_x
+        self.jacobian[1::2] = grads_y
         self.jacobian_numpy = self.jacobian.detach().cpu().numpy()
+
         print("✓ Tangent map generation completed successfully!")
+
+    def _compute_jacobian_tsne(self, data, init_Y, init_iY, init_beta, perplexity,
+                               device, n_points, n_features):
+        """
+        Compute diagonal Jacobian blocks ∂Y[i]/∂data[i] for all i.
+
+        Tries vectorized batch via autograd.functional.jacobian(vectorize=True).
+        Falls back to the original serial loop if that fails.
+
+        Returns:
+            grads_x (n_points, n_features): ∂Y[:,0]/∂data (diagonal blocks)
+            grads_y (n_points, n_features): ∂Y[:,1]/∂data (diagonal blocks)
+        """
+        def tsne_1step_fn(x):
+            return tsne_1step(x, init_Y, init_iY,
+                              perplexity=perplexity, init_beta=init_beta)
+
+        try:
+            # Vectorized: all 2*N backward passes run in parallel via vmap
+            J = autograd_jacobian(tsne_1step_fn, data, create_graph=False, vectorize=True)
+            # J shape: (n_points, 2, n_points, n_features)
+            idx = torch.arange(n_points, device=device)
+            grads_x = J[idx, 0, idx, :]   # (n_points, n_features)
+            grads_y = J[idx, 1, idx, :]   # (n_points, n_features)
+            print("  (used vectorized Jacobian)")
+            return grads_x, grads_y
+
+        except Exception as e:
+            print(f"  Vectorized Jacobian failed ({e}), falling back to serial loop...")
+            return self._compute_jacobian_serial(data, tsne_1step_fn, n_points, n_features, device)
+
+    def _compute_jacobian_serial(self, data, fn, n_points, n_features, device):
+        """Original per-point backward loop — fallback only."""
+        Y = fn(data)
+        grads_x = torch.zeros(n_points, n_features, device=device)
+        grads_y = torch.zeros(n_points, n_features, device=device)
+        progress_interval = max(1, n_points // 10)
+        for i in range(n_points):
+            if i % progress_interval == 0 or i == n_points - 1:
+                print(f"  Computing gradients: {i+1}/{n_points} ({(i+1)/n_points*100:.0f}%)")
+            grads_x[i] = torch.autograd.grad(Y[i, 0], data, retain_graph=True)[0][i]
+            grads_y[i] = torch.autograd.grad(Y[i, 1], data, retain_graph=True)[0][i]
+        return grads_x, grads_y
 
     def get_jacobian_for_point(self, point_idx):
         """Get the 2x d Jacobian matrix for a specific point."""

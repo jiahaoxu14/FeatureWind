@@ -109,6 +109,13 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
 .legend-item.visible { font-weight: 600; }
 .legend-swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); }
 
+/* Data Labels legend — visually separated from the feature list */
+.label-legend { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 2px; display: flex; flex-direction: column; gap: 4px; }
+.label-legend-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin-bottom: 4px; }
+.label-legend-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
+.label-swatch { border-radius: 50%; }
+.label-legend-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .feature-panel { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1 1 auto; }
 .mode-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .mode-tab {

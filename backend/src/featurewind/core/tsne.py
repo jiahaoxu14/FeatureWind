@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 '''
-Computes the entropy H and the probability vector P for a given distance vector D and precision beta. 
+Computes the entropy H and the probability vector P for a given distance vector D and precision beta.
 This function is used in the process of computing the conditional probabilities in t-SNE.
 '''
 def Hbeta_torch(D, beta=1.0):
@@ -86,6 +86,99 @@ def x2p_torch(X, tol=1e-5, perplexity=10.0, max_tries = 400, init_beta = None):
     return P, beta
 
 
+def x2p_torch_vectorized(X, tol=1e-5, perplexity=10.0, max_tries=50, init_beta=None):
+    """
+    Vectorized binary search for P-values.
+    Runs all N perplexity searches in parallel using tensor ops instead of a Python for-loop.
+    Same signature and output as x2p_torch.
+    """
+    print("Computing pairwise distances (vectorized)...")
+    (n, d) = X.shape
+    device, dtype = X.device, X.dtype
+
+    sum_X = torch.sum(X * X, 1)
+    D = torch.add(torch.add(-2 * torch.mm(X, X.t()), sum_X).t(), sum_X).clamp(min=0)
+
+    logU = torch.log(torch.tensor(perplexity, device=device, dtype=dtype))
+    beta = init_beta.clone() if init_beta is not None else torch.ones(n, 1, device=device, dtype=dtype)
+    betamin = torch.full((n,), float('-inf'), device=device, dtype=dtype)
+    betamax = torch.full((n,), float('inf'), device=device, dtype=dtype)
+    diag_mask = torch.eye(n, dtype=torch.bool, device=device)
+
+    def compute_H(b):
+        # b: (n, 1)
+        neg_D_b = (-D * b).masked_fill(diag_mask, float('-inf'))
+        P_unnorm = torch.exp(neg_D_b)
+        sumP = P_unnorm.sum(dim=1, keepdim=True).clamp(min=1e-10)
+        P = P_unnorm / sumP
+        H = torch.log(sumP.squeeze()) + b.squeeze() * (D * P).sum(dim=1)
+        return H, P
+
+    for _ in range(max_tries):
+        H, _ = compute_H(beta)
+        Hdiff = H - logU
+        not_conv = torch.abs(Hdiff) > tol
+        if not not_conv.any():
+            break
+        b = beta.squeeze()
+        # Update bounds
+        betamin = torch.where(not_conv & (Hdiff > 0), b, betamin)
+        betamax = torch.where(not_conv & (Hdiff < 0), b, betamax)
+        has_max = betamax < float('inf')
+        has_min = betamin > float('-inf')
+        new_b = b.clone()
+        # Increase beta (entropy too high)
+        new_b = torch.where(not_conv & (Hdiff > 0) & has_max,  (b + betamax) / 2, new_b)
+        new_b = torch.where(not_conv & (Hdiff > 0) & ~has_max, b * 2,             new_b)
+        # Decrease beta (entropy too low)
+        new_b = torch.where(not_conv & (Hdiff < 0) & has_min,  (b + betamin) / 2, new_b)
+        new_b = torch.where(not_conv & (Hdiff < 0) & ~has_min, b / 2,             new_b)
+        beta = new_b.unsqueeze(1)
+
+    _, P_final = compute_H(beta)
+    return P_final, beta
+
+
+def tsne_1step(X, init_Y, init_iY, perplexity=40.0, init_beta=None):
+    """
+    Single t-SNE update step with no in-place operations.
+    Used for vectorized Jacobian computation via torch.autograd.functional.jacobian.
+
+    X      : (n, d) input features — the differentiable input
+    init_Y : (n, 2) embedding from the converged base run (detached constant)
+    init_iY: (n, 2) momentum from the converged base run (detached constant)
+    Returns Y_new (n, 2) which is differentiable w.r.t. X through P.
+    """
+    n = X.shape[0]
+    device, dtype = X.device, X.dtype
+
+    # Compute P using vectorized binary search (differentiable w.r.t. X)
+    P_raw, _ = x2p_torch_vectorized(X, perplexity=perplexity, max_tries=50, init_beta=init_beta)
+    P = P_raw + P_raw.t()
+    P = P / torch.sum(P)
+    P = P * 4.          # early exaggeration (step 2 always applies this, iter 0 < 100)
+    P = P.clamp(min=1e-21)
+
+    # Q depends only on init_Y (constant w.r.t. X)
+    Y = init_Y
+    sum_Y = torch.sum(Y * Y, 1)
+    num = 1. / (1. + torch.add(torch.add(-2. * torch.mm(Y, Y.t()), sum_Y).t(), sum_Y))
+    diag_mask = torch.eye(n, device=device, dtype=torch.bool)
+    num = num * (~diag_mask).to(dtype)       # zero diagonal, no in-place
+    Q = (num / torch.sum(num)).clamp(min=1e-12)
+
+    # t-SNE gradient w.r.t. Y (but Y is constant; gradient flows to X through P)
+    PQ = P - Q
+    B  = PQ * num
+    dY = torch.sum(B, dim=1, keepdim=True) * Y - torch.matmul(B, Y)
+
+    # Momentum update (gains=1, not saved from base run)
+    iY_new = 0.8 * init_iY - 500. * dY
+    Y_new  = Y + iY_new
+    Y_new  = Y_new - torch.mean(Y_new, 0)
+    return Y_new
+
+
 def pca_torch(X, no_dims=50):
     print("Preprocessing the data using PCA...")
     (n, d) = X.shape
@@ -143,8 +236,8 @@ def tsne(X, no_dims=2, maxIter = 999, initial_dims=50, perplexity=30.0, save_par
     if initIY is not None:
         iY = initIY
 
-    # Compute P-values
-    P, beta = x2p_torch(X, 1e-5, perplexity, betaTries, initBeta)
+    # Compute P-values (vectorized)
+    P, beta = x2p_torch_vectorized(X, 1e-5, perplexity, betaTries, initBeta)
     P = P + P.t()
     P = P / torch.sum(P)
     P = P * 4.    # early exaggeration

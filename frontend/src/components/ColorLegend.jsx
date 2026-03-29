@@ -19,6 +19,7 @@ export default function ColorLegend({
   compareCap = 4,
   message = '',
   activeFeatureColorMap = {},
+  labelColorMap = {},
 }) {
   const { col_labels = [], featureRanking = null } = payload || {}
   const [query, setQuery] = useState('')
@@ -241,6 +242,18 @@ export default function ColorLegend({
           <div className="hint">No features match “{query}”.</div>
         )}
       </div>
+
+      {labelColorMap && Object.keys(labelColorMap).length > 0 && (
+        <div className="label-legend">
+          <div className="label-legend-title">Data Labels</div>
+          {Object.entries(labelColorMap).map(([label, color]) => (
+            <div key={label} className="label-legend-row">
+              <span className="legend-swatch label-swatch" style={{ background: color }} />
+              <span className="label-legend-text">{label}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
