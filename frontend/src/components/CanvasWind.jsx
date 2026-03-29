@@ -1381,6 +1381,21 @@ export default function CanvasWind({
       }
 
       function drawPointGlyph(cx, cy, fillColor) {
+        const rgb = fillColor.startsWith('#') ? hexToRgb(fillColor) : [180, 180, 180]
+
+        // Outer soft bloom
+        ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.15)`
+        ctx.beginPath()
+        ctx.arc(cx, cy, shapeSize * 3.5, 0, Math.PI * 2)
+        ctx.fill()
+
+        // Inner tighter bloom
+        ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.30)`
+        ctx.beginPath()
+        ctx.arc(cx, cy, shapeSize * 2.0, 0, Math.PI * 2)
+        ctx.fill()
+
+        // White crisp halo
         ctx.fillStyle = 'rgba(255,255,255,0.92)'
         ctx.beginPath()
         ctx.arc(cx, cy, pointHaloRadius, 0, Math.PI * 2)

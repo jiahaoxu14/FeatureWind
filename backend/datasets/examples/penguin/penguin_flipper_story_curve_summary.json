@@ -1,0 +1,33 @@
+{
+  "source_csv": "backend/datasets/examples/penguin/penguin.csv",
+  "output_tmap": "backend/datasets/examples/penguin/penguin_flipper_story_curve.tmap",
+  "construction": {
+    "type": "curated_case_study_curve",
+    "description": "Connected penguin ribbon embedding for a paper figure; flipper_length_mm follows the main curve.",
+    "beta_bill_length_in_progression": 0.1,
+    "x_scale": 3.5,
+    "y_amp": 1.2,
+    "ribbon": 0.12,
+    "progression_formula": "s = 0.9 * flipper_norm + 0.1 * bill_length_norm",
+    "curve_formula": "x = 3.5*(s-0.5), y = 1.2*sin(pi*(s-0.5)) with orthogonal ribbon offset",
+    "change_note": "Ribbon widened from 0.08 to 0.12 to make the DR point cloud less thin while keeping the flipper trail story."
+  },
+  "recommended_case_study": {
+    "feature": "flipper_length_mm",
+    "seed_point_index": 80,
+    "species_order": [
+      "Adelie",
+      "Chinstrap",
+      "Gentoo"
+    ],
+    "closest_chinstrap_point_index": 299,
+    "closest_gentoo_point_index": 188,
+    "verified_grid_res": 25,
+    "verified_trail_length_steps": 313,
+    "verified_nearest_label_sequence": [
+      "Adelie",
+      "Chinstrap",
+      "Gentoo"
+    ]
+  }
+}
