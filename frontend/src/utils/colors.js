@@ -4,19 +4,19 @@ export const FEATURE_PALETTE = ['#0f766e', '#c2410c', '#7c3aed', '#dc2626']
 export const DEFAULT_FEATURE_HUE = '#0f766e'
 
 // Label palette — used exclusively for data-point markers.
-// Colors are chosen from hue families intentionally disjoint from the feature palette
-// (amber, sky-blue, green, pink, yellow, lime, light-orange, fuchsia, cyan, rose).
+// Keep these noticeably lighter than the trail palette so points read as a separate layer
+// even when a hue family is nearby.
 export const LABEL_PALETTE = [
-  '#f59e0b',  // amber        (~38°)
-  '#38bdf8',  // sky blue     (~199°)
-  '#4ade80',  // green        (~142°)
-  '#f472b6',  // pink         (~328°)
-  '#facc15',  // yellow       (~48°)
-  '#a3e635',  // lime         (~82°)
-  '#fb923c',  // light orange (~27°, visually distinct from dark #c2410c)
-  '#e879f9',  // fuchsia      (~293°)
-  '#67e8f9',  // cyan         (~186°)
-  '#fda4af',  // rose         (~351°, much lighter than dark #dc2626)
+  '#93c5fd',  // light blue
+  '#fde68a',  // pale amber
+  '#a7f3d0',  // mint
+  '#fbcfe8',  // soft pink
+  '#bfdbfe',  // powder blue
+  '#fef08a',  // light yellow
+  '#ddd6fe',  // lavender
+  '#bae6fd',  // ice blue
+  '#d9f99d',  // soft lime
+  '#fecdd3',  // pale rose
 ]
 
 /**

@@ -1,0 +1,58 @@
+{
+  "results": [
+    {
+      "bbox_area": 1377.7374933147803,
+      "knn5": 0.5287466769695096,
+      "centroid_sep": 37.53780439482546,
+      "within_mean": 3.9706012082418787,
+      "sep_ratio": 9.453934662818133,
+      "perplexity": 40,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_tsne_p40_dense.tmap"
+    },
+    {
+      "bbox_area": 784.518447933804,
+      "knn5": 0.28236882032836813,
+      "centroid_sep": 30.21270371133072,
+      "within_mean": 2.385210716113519,
+      "sep_ratio": 12.666681189727145,
+      "perplexity": 60,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_tsne_p60_dense.tmap"
+    },
+    {
+      "bbox_area": 589.1985150485998,
+      "knn5": 0.19834353860433843,
+      "centroid_sep": 22.795535307563664,
+      "within_mean": 1.5142224515107972,
+      "sep_ratio": 15.0542843192027,
+      "perplexity": 80,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_tsne_p80_dense.tmap"
+    },
+    {
+      "bbox_area": 209.04181108304783,
+      "knn5": 0.14604534497482777,
+      "centroid_sep": 14.236794899686885,
+      "within_mean": 1.032291526195751,
+      "sep_ratio": 13.79144799546402,
+      "perplexity": 100,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_tsne_p100_dense.tmap"
+    },
+    {
+      "bbox_area": 80.82130113638891,
+      "knn5": 0.1036077381620285,
+      "centroid_sep": 8.774839257999796,
+      "within_mean": 0.7401247782579491,
+      "sep_ratio": 11.855891757405235,
+      "perplexity": 120,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_tsne_p120_dense.tmap"
+    }
+  ],
+  "best": {
+    "bbox_area": 80.82130113638891,
+    "knn5": 0.1036077381620285,
+    "centroid_sep": 8.774839257999796,
+    "within_mean": 0.7401247782579491,
+    "sep_ratio": 11.855891757405235,
+    "perplexity": 120,
+    "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_tsne_p120_dense.tmap"
+  }
+}

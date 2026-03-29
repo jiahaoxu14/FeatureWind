@@ -1,0 +1,109 @@
+{
+  "results": [
+    {
+      "bbox_area": 37.141730275711666,
+      "knn5": 0.07947160686060832,
+      "gentoo_to_others_mean": 8.265760291195146,
+      "adelie_chinstrap_dist": 1.789833294055682,
+      "within_mean": 0.5389057774129921,
+      "pairwise": {
+        "Adelie-Chinstrap": 1.789833294055682,
+        "Adelie-Gentoo": 9.152784567462248,
+        "Chinstrap-Gentoo": 7.378736014928046
+      },
+      "kind": "tsne",
+      "setting": 140,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_tsne_p140_ultradense.tmap"
+    },
+    {
+      "bbox_area": 27.766636116724754,
+      "knn5": 0.058189089646668704,
+      "gentoo_to_others_mean": 6.219261465590682,
+      "adelie_chinstrap_dist": 1.3174589097693068,
+      "within_mean": 0.4115966501350304,
+      "pairwise": {
+        "Adelie-Chinstrap": 1.3174589097693068,
+        "Adelie-Gentoo": 6.875625624191922,
+        "Chinstrap-Gentoo": 5.562897306989442
+      },
+      "kind": "tsne",
+      "setting": 160,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_tsne_p160_ultradense.tmap"
+    },
+    {
+      "bbox_area": 7.7738098279435235,
+      "knn5": 0.04887453456788097,
+      "gentoo_to_others_mean": 4.877846000572205,
+      "adelie_chinstrap_dist": 0.9225176796117556,
+      "within_mean": 0.33205471818714144,
+      "pairwise": {
+        "Adelie-Chinstrap": 0.9225176796117556,
+        "Adelie-Gentoo": 5.339104705033194,
+        "Chinstrap-Gentoo": 4.416587296111215
+      },
+      "kind": "tsne",
+      "setting": 180,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_tsne_p180_ultradense.tmap"
+    },
+    {
+      "bbox_area": 5.052698807295961,
+      "knn5": 0.04453624723156457,
+      "gentoo_to_others_mean": 3.77634950215689,
+      "adelie_chinstrap_dist": 0.6088023537739709,
+      "within_mean": 0.2860411066948973,
+      "pairwise": {
+        "Adelie-Chinstrap": 0.6088023537739709,
+        "Adelie-Gentoo": 4.02258849860141,
+        "Chinstrap-Gentoo": 3.5301105057123703
+      },
+      "kind": "tsne",
+      "setting": 200,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_tsne_p200_ultradense.tmap"
+    },
+    {
+      "bbox_area": 4.318872397136921,
+      "knn5": 0.04659502774866142,
+      "gentoo_to_others_mean": 3.0402389092891546,
+      "adelie_chinstrap_dist": 0.3367785917268268,
+      "within_mean": 0.2822525860540605,
+      "pairwise": {
+        "Adelie-Chinstrap": 0.3367785917268268,
+        "Adelie-Gentoo": 3.140048044521893,
+        "Chinstrap-Gentoo": 2.9404297740564163
+      },
+      "kind": "tsne",
+      "setting": 220,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_tsne_p220_ultradense.tmap"
+    },
+    {
+      "bbox_area": 1.5927272957925993,
+      "knn5": 0.054871595202116846,
+      "gentoo_to_others_mean": 0.04582982308230196,
+      "adelie_chinstrap_dist": 0.049301082453410236,
+      "within_mean": 0.3422152078005951,
+      "pairwise": {
+        "Adelie-Chinstrap": 0.049301082453410236,
+        "Adelie-Gentoo": 0.02533849941467762,
+        "Chinstrap-Gentoo": 0.0663211467499263
+      },
+      "kind": "mds",
+      "setting": null,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_mds_compact.tmap"
+    }
+  ],
+  "best": {
+    "bbox_area": 1.5927272957925993,
+    "knn5": 0.054871595202116846,
+    "gentoo_to_others_mean": 0.04582982308230196,
+    "adelie_chinstrap_dist": 0.049301082453410236,
+    "within_mean": 0.3422152078005951,
+    "pairwise": {
+      "Adelie-Chinstrap": 0.049301082453410236,
+      "Adelie-Gentoo": 0.02533849941467762,
+      "Chinstrap-Gentoo": 0.0663211467499263
+    },
+    "kind": "mds",
+    "setting": null,
+    "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/penguin/penguin_mds_compact.tmap"
+  }
+}

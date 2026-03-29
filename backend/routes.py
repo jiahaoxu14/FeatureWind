@@ -90,6 +90,37 @@ def _read_csv_points_with_headers(path: str) -> Tuple[List[List[float]], List[st
     return points, headers
 
 
+def _maybe_humanize_point_labels(col_labels, point_labels):
+    if not isinstance(col_labels, list) or not isinstance(point_labels, list) or not point_labels:
+        return point_labels
+
+    wine_recognition_features = [
+        "alcohol",
+        "malic_acid",
+        "ash",
+        "alcalinity_of_ash",
+        "magnesium",
+        "total_phenols",
+        "flavanoids",
+        "nonflavanoid_phenols",
+        "proanthocyanins",
+        "color_intensity",
+        "hue",
+        "od280_od315",
+        "proline",
+    ]
+
+    if col_labels == wine_recognition_features:
+        label_map = {
+            "1": "Barolo",
+            "2": "Grignolino",
+            "3": "Barbera",
+        }
+        return [label_map.get(str(label), str(label)) for label in point_labels]
+
+    return point_labels
+
+
 @api_bp.post("/upload")
 def upload():
     """Upload a dataset (.tmap JSON or .csv). Returns dataset_id and basic metadata.
@@ -135,9 +166,27 @@ def upload():
         try:
             with open(save_path, "r") as f:
                 data = json.load(f)
-            col_labels = data.get("Col_labels", [])
+            if isinstance(data, list):
+                col_labels = []
+            elif isinstance(data, dict) and "tmap" in data:
+                col_labels = data.get("Col_labels", [])
+            else:
+                try:
+                    save_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return jsonify({
+                    "error": "Invalid tangent map file. Upload a .tmap/.json containing a 'tmap' array, "
+                             "not a summary JSON such as '*_summary.json'."
+                }), 400
         except Exception:
-            col_labels = []
+            try:
+                save_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return jsonify({
+                "error": "Invalid tangent map file. The uploaded .tmap/.json could not be parsed as tangent-map JSON."
+            }), 400
         DATASETS[dataset_id] = {"type": "tmap", "path": save_path, "labels": col_labels}
         return jsonify({"datasetId": dataset_id, "type": "tmap", "col_labels": col_labels})
     else:
@@ -257,15 +306,24 @@ def compute():
     else:
         return jsonify({"error": f"Unsupported dataset type: {dtype}"}), 400
 
+    point_labels = _maybe_humanize_point_labels(col_labels, point_labels)
+
     # Optional: validation (skip strict check to support CSV path)
     # fw_data.validate_data(valid_points, all_grad_vectors, all_positions, col_labels)
+
+    import numpy as _np
+    all_positions = _np.asarray(all_positions, dtype=float)
+    if all_positions.ndim != 2 or all_positions.shape[1] != 2 or all_positions.shape[0] == 0:
+        return jsonify({
+            "error": "Dataset did not produce a valid 2D position array. "
+                     "This usually means the uploaded tangent map is empty or malformed."
+        }), 400
 
     # Config state
     fw_config.initialize_global_state()
     fw_config.set_bounding_box(all_positions)
 
     # Selection (topK or single feature)
-    import numpy as _np
     n_features = len(col_labels)
     try:
         feature_ranking_arr, avg_magnitudes = fw_data.pick_top_k_features(all_grad_vectors, k=n_features)

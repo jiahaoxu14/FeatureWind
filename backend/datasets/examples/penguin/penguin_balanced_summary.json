@@ -1,0 +1,45 @@
+{
+  "source": "backend/datasets/examples/penguin/penguin_tsne_p120_dense.tmap",
+  "output": "backend/datasets/examples/penguin/penguin_tsne_p120_close_separated.tmap",
+  "transform": {
+    "type": "label_translation",
+    "label": "Gentoo",
+    "alpha_toward_adelie_chinstrap_midpoint": 0.68,
+    "shift_vector": [
+      -2.10988551041572,
+      7.883595397684543
+    ]
+  },
+  "before": {
+    "bbox_area": 80.82130113638891,
+    "pairwise_centroid_distances": {
+      "Adelie-Chinstrap": 2.3211587109959537,
+      "Adelie-Gentoo": 13.160816822516553,
+      "Chinstrap-Gentoo": 10.842542240486882
+    },
+    "gentoo_other_min_interpoint": 9.151336888071864,
+    "gentoo_other_q01": 9.568912281015479,
+    "gentoo_other_q05": 9.913223084273847,
+    "cluster_radius_mean": {
+      "Adelie": 0.9052675755076375,
+      "Chinstrap": 0.8159037963804224,
+      "Gentoo": 0.49920296288578764
+    }
+  },
+  "after": {
+    "bbox_area": 22.76894172796543,
+    "pairwise_centroid_distances": {
+      "Adelie-Chinstrap": 2.3211587109959537,
+      "Adelie-Gentoo": 4.999975015057679,
+      "Chinstrap-Gentoo": 2.6819600010983473
+    },
+    "gentoo_other_min_interpoint": 1.0271071495244157,
+    "gentoo_other_q01": 1.4343031884591286,
+    "gentoo_other_q05": 1.7961366064876285,
+    "cluster_radius_mean": {
+      "Adelie": 0.9052675755076375,
+      "Chinstrap": 0.8159037963804224,
+      "Gentoo": 0.4992029628857876
+    }
+  }
+}

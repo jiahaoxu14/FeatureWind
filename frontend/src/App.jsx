@@ -15,6 +15,7 @@ const COMPARE_PALETTE = FEATURE_PALETTE
 const OVERVIEW_NEUTRAL = '#4b5563'
 const WIND_MAP_TOOL_PAN = 'pan'
 const WIND_MAP_TOOL_BRUSH = 'brush'
+const MAX_MASK_DILATE_RADIUS_CELLS = 10
 
 function sanitizeFeatureIndices(indices, count, cap = Infinity) {
   if (!Array.isArray(indices)) return []
@@ -107,6 +108,7 @@ export default function App() {
   const [showParticleInits, setShowParticleInits] = useState(false)
   const [uniformPointShape, setUniformPointShape] = useState(false)
   const [showParticleArrowheads, setShowParticleArrowheads] = useState(false)
+  const [pointSize, setPointSize] = useState(4.4)
   const [restrictSpawnToSelection, setRestrictSpawnToSelection] = useState(false)
   const [autoRespawnEnabled, setAutoRespawnEnabled] = useState(false)
   const [assessAllCells, setAssessAllCells] = useState(false)
@@ -555,6 +557,7 @@ export default function App() {
                     restrictSpawnToSelection={restrictSpawnToSelection}
                     autoRespawnRate={autoRespawnEnabled ? 0.3 : 0.0}
                     trailLineWidth={trailLineWidth}
+                    pointSize={pointSize}
                     labelColorMap={labelColorMap}
                     onCanvasElement={(el) => { windMapCanvasRef.current = el }}
                   />
@@ -614,7 +617,7 @@ export default function App() {
 
                     <label>Mask Radius</label>
                     <div className="slider-row">
-                      <input type="range" min={0} max={2} step={1} value={maskDilateRadiusCells} onChange={(e) => setMaskDilateRadiusCells(Number(e.target.value))} />
+                      <input type="range" min={0} max={MAX_MASK_DILATE_RADIUS_CELLS} step={1} value={maskDilateRadiusCells} onChange={(e) => setMaskDilateRadiusCells(Number(e.target.value))} />
                       <span className="control-val">{maskDilateRadiusCells} cell{maskDilateRadiusCells === 1 ? '' : 's'}</span>
                     </div>
 
@@ -733,6 +736,12 @@ export default function App() {
                       <div className="slider-row">
                         <input type="range" min={0.5} max={4} step={0.1} value={trailLineWidth} onChange={(e) => setTrailLineWidth(Number(e.target.value))} />
                         <span className="control-val">{trailLineWidth.toFixed(1)} px</span>
+                      </div>
+
+                      <label>Point Size</label>
+                      <div className="slider-row">
+                        <input type="range" min={2.5} max={7} step={0.1} value={pointSize} onChange={(e) => setPointSize(Number(e.target.value))} />
+                        <span className="control-val">{pointSize.toFixed(1)} px</span>
                       </div>
 
                       <label>Tail Min Alpha</label>

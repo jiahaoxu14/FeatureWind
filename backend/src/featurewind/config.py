@@ -251,6 +251,9 @@ def set_bounding_box(positions):
         positions (np.ndarray): Array of 2D positions, shape (N, 2)
     """
     global bounding_box
+    positions = np.asarray(positions, dtype=float)
+    if positions.ndim != 2 or positions.shape[1] != 2 or positions.shape[0] == 0:
+        raise ValueError("positions must have shape (n, 2) with at least one row")
     
     xmin, xmax = positions[:,0].min(), positions[:,0].max()
     ymin, ymax = positions[:,1].min(), positions[:,1].max()

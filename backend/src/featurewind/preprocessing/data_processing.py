@@ -27,18 +27,49 @@ def preprocess_tangent_map(tangent_map_path):
     with open(tangent_map_path, "r") as f:
         data_import = json.loads(f.read())
 
-    tmap = data_import['tmap']
-    col_labels = data_import['Col_labels']
+    if isinstance(data_import, dict):
+        tmap = data_import.get('tmap', [])
+        col_labels = data_import.get('Col_labels')
+    elif isinstance(data_import, list):
+        # Support raw tangent-map files emitted directly by the core generator.
+        tmap = data_import
+        col_labels = None
+    else:
+        raise ValueError(f"Unsupported tangent-map JSON shape in {tangent_map_path}")
+
+    if not isinstance(tmap, list):
+        raise ValueError(f"Invalid tangent-map payload in {tangent_map_path}: expected list of points")
+
+    if not col_labels:
+        n_features = 0
+        if tmap:
+            first = tmap[0]
+            tangent = first.get('tangent') if isinstance(first, dict) else None
+            domain = first.get('domain') if isinstance(first, dict) else None
+            if isinstance(tangent, list) and tangent and isinstance(tangent[0], list):
+                n_features = len(tangent[0])
+            elif isinstance(domain, list):
+                n_features = len(domain)
+        col_labels = [f"Feature {i}" for i in range(n_features)]
     
     points = []
     for tmap_entry in tmap:
+        if 'class' not in tmap_entry:
+            tmap_entry = dict(tmap_entry)
+            tmap_entry['class'] = 0
         point = TangentPoint(tmap_entry, 1.0, col_labels)
         points.append(point)
     
     valid_points = [p for p in points if p.valid]
-    all_positions = np.array([p.position for p in valid_points])  # shape: (#points, 2)
+    if valid_points:
+        all_positions = np.array([p.position for p in valid_points], dtype=float)  # shape: (#points, 2)
+    else:
+        all_positions = np.empty((0, 2), dtype=float)
     all_grad_vectors = [p.gradient_vectors for p in valid_points]  # list of (#features, 2)
-    all_grad_vectors = np.array(all_grad_vectors)  # shape = (#points, M, 2)
+    if all_grad_vectors:
+        all_grad_vectors = np.array(all_grad_vectors, dtype=float)  # shape = (#points, M, 2)
+    else:
+        all_grad_vectors = np.empty((0, len(col_labels), 2), dtype=float)
 
     return valid_points, all_grad_vectors, all_positions, col_labels
 

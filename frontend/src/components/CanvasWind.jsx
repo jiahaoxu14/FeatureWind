@@ -60,6 +60,7 @@ export default function CanvasWind({
   uniformPointShape = false,
   showParticleArrowheads = false,
   trailLineWidth = 2.0,
+  pointSize = 4.4,
   autoRespawnRate = 0.0,
   restrictSpawnToSelection = false,
   brushRadius = 1,
@@ -114,6 +115,7 @@ export default function CanvasWind({
   const areaBrushMovedRef = useRef(false)
   const areaBrushRectRef = useRef(null)
   const hoverCellRef = useRef(null)
+  const hoverPointRef = useRef(null)
   const gradientFeatureIndicesRef = useRef(Array.isArray(gradientFeatureIndices) ? gradientFeatureIndices : [])
   const brushCbRef = useRef(onBrushCell)
   // Keep dynamic props in refs to avoid reinitializing particles on toggle
@@ -148,6 +150,7 @@ export default function CanvasWind({
     staticTrailsRef.current = []
     areaBrushRectRef.current = null
     hoverCellRef.current = null
+    hoverPointRef.current = null
     brushingRef.current = false
     lastBrushRef.current = { i: -1, j: -1 }
   }, [interactionMode])
@@ -1235,13 +1238,46 @@ export default function CanvasWind({
         ctx.strokeRect(sx0, sy1, sx1 - sx0, sy0 - sy1)
       }
 
+      if (hoverPointRef.current && !showParticleInitsRef.current) {
+        const { sx, sy, label } = hoverPointRef.current
+        const text = String(label)
+        ctx.fillStyle = 'rgba(255,255,255,0.98)'
+        ctx.strokeStyle = '#111827'
+        ctx.lineWidth = 1.2
+        ctx.beginPath()
+        ctx.arc(sx, sy, Math.max(6, Number(pointSize) + 2.8), 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+
+        ctx.font = '12px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif'
+        const paddingX = 8
+        const boxH = 24
+        const textW = Math.ceil(ctx.measureText(text).width)
+        const boxW = textW + paddingX * 2
+        let boxX = sx - boxW / 2
+        let boxY = sy - boxH - 14
+        if (boxX < 6) boxX = 6
+        if (boxX + boxW > Wpx - 6) boxX = Wpx - boxW - 6
+        if (boxY < 6) boxY = sy + 14
+        ctx.fillStyle = 'rgba(255,255,255,0.96)'
+        ctx.strokeStyle = 'rgba(17,24,39,0.92)'
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.roundRect(boxX, boxY, boxW, boxH, 8)
+        ctx.fill()
+        ctx.stroke()
+        ctx.fillStyle = '#111827'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(text, boxX + paddingX, boxY + boxH / 2)
+      }
+
       // Optional: draw base points with shapes per label (like Python)
       // Skip drawing data points when showing particle init overlays
       if (!showParticleInitsRef.current) {
         // Shape cycle mirrors matplotlib-style markers used in the original
         const SHAPES = ['o','s','^', 'x', 'D','v','<','>','p','*','h','H','+']
-        // Bigger, light-gray markers for better visibility
-        const shapeSize = 3.2
+        const shapeSize = Math.max(2, Number(pointSize) || 4.4)
+        const pointHaloRadius = shapeSize + 1.1
         ctx.fillStyle = '#d9d9d9'
         // Dark gray/near-black borders for all points
         ctx.strokeStyle = '#222222'
@@ -1344,6 +1380,24 @@ export default function CanvasWind({
         }
       }
 
+      function drawPointGlyph(cx, cy, fillColor) {
+        ctx.fillStyle = 'rgba(255,255,255,0.92)'
+        ctx.beginPath()
+        ctx.arc(cx, cy, pointHaloRadius, 0, Math.PI * 2)
+        ctx.fill()
+
+        ctx.fillStyle = fillColor
+        ctx.beginPath()
+        ctx.arc(cx, cy, shapeSize, 0, Math.PI * 2)
+        ctx.fill()
+
+        ctx.strokeStyle = '#111827'
+        ctx.lineWidth = 1.0
+        ctx.beginPath()
+        ctx.arc(cx, cy, shapeSize, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+
       if (!showParticleInitsRef.current) {
         // Resolve point fill color in priority order:
         //   1. pointColorStats (grayscale-by-feature, explicit user selection) → overrides label
@@ -1355,6 +1409,7 @@ export default function CanvasWind({
         for (let idx = 0; idx < positions.length; idx++) {
           const [x, y] = positions[idx]
           const [sx, sy] = worldToScreen(x, y)
+          let pointFill = '#d9d9d9'
 
           if (pointColorStats && Array.isArray(feature_values)) {
             // Grayscale-by-feature mode
@@ -1366,16 +1421,14 @@ export default function CanvasWind({
               t = Math.max(0, Math.min(1, (v - pointColorStats.min) / (pointColorStats.max - pointColorStats.min)))
             }
             const g = Math.round(255 * (1 - t))
-            ctx.fillStyle = `rgb(${g},${g},${g})`
+            pointFill = `rgb(${g},${g},${g})`
           } else if (hasLabels && activeLabelMap) {
             // Label color mode — one consistent circle per label category
             const labelKey = String(point_labels[idx])
-            ctx.fillStyle = activeLabelMap[labelKey] || '#d9d9d9'
-          } else {
-            ctx.fillStyle = '#d9d9d9'
+            pointFill = activeLabelMap[labelKey] || '#d9d9d9'
           }
 
-          drawMarker(sx, sy, 'o', shapeSize)
+          drawPointGlyph(sx, sy, pointFill)
         }
       }
 
@@ -1890,6 +1943,36 @@ export default function CanvasWind({
       } else {
         hoverCellRef.current = null
       }
+      if (!showParticleInitsRef.current && positions.length > 0) {
+        const hoverRadius = Math.max(8, (Number(pointSize) || 4.4) + 4)
+        const hoverRadius2 = hoverRadius * hoverRadius
+        let bestIdx = -1
+        let bestD2 = Infinity
+        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
+          const [px, py] = positions[pIdx]
+          const [sx, sy] = worldToScreen(px, py)
+          const dx = sx - cx
+          const dy = sy - cy
+          const d2 = dx * dx + dy * dy
+          if (d2 <= hoverRadius2 && d2 < bestD2) {
+            bestD2 = d2
+            bestIdx = pIdx
+          }
+        }
+        if (bestIdx >= 0) {
+          const [px, py] = positions[bestIdx]
+          const [sx, sy] = worldToScreen(px, py)
+          const label = Array.isArray(point_labels) && bestIdx < point_labels.length
+            ? String(point_labels[bestIdx])
+            : String(bestIdx)
+          hoverPointRef.current = { idx: bestIdx, sx, sy, label }
+          if (onHover) onHover({ x, y, pointIndex: bestIdx, pointLabel: label })
+        } else {
+          hoverPointRef.current = null
+        }
+      } else {
+        hoverPointRef.current = null
+      }
       // Brush selection while dragging
       if (selectPointsModeRef.current && typeof onBrushPoints === 'function') {
         // Activate point brushing after small movement threshold from mousedown
@@ -1923,6 +2006,13 @@ export default function CanvasWind({
       }
     }
     canvas.addEventListener('mousemove', handleMove)
+
+    function handleLeave() {
+      hoverCellRef.current = null
+      hoverPointRef.current = null
+      if (onHover) onHover(null)
+    }
+    canvas.addEventListener('mouseleave', handleLeave)
 
     // Wheel zoom: zoom around mouse position
     function handleWheel(e) {
@@ -2101,6 +2191,7 @@ export default function CanvasWind({
       runningRef.current = false
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       canvas.removeEventListener('mousemove', handleMoveWithPan)
+      canvas.removeEventListener('mouseleave', handleLeave)
       canvas.removeEventListener('wheel', handleWheel)
       canvas.removeEventListener('click', handleClick)
       canvas.removeEventListener('mousedown', handleDown)
@@ -2130,6 +2221,7 @@ export default function CanvasWind({
     lifetimeTailMultiplier,
     speedScale,
     trailLineWidth,
+    pointSize,
     showCellAggregatedGradients,
     showCellGradients,
     showPointGradients,

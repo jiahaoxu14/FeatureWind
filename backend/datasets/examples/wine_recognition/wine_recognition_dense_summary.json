@@ -1,0 +1,49 @@
+{
+  "results": [
+    {
+      "bbox_area": 111.03419476973522,
+      "knn5": 0.29747439569973366,
+      "centroid_sep": 8.66321675803904,
+      "within_mean": 0.8646879042276293,
+      "sep_ratio": 10.018894349837517,
+      "perplexity": 50,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/wine_recognition/wine_recognition_tsne_p50_dense.tmap"
+    },
+    {
+      "bbox_area": 61.6602277178805,
+      "knn5": 0.25405492560330556,
+      "centroid_sep": 6.64235809084053,
+      "within_mean": 0.8000343994547751,
+      "sep_ratio": 8.302590607813002,
+      "perplexity": 60,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/wine_recognition/wine_recognition_tsne_p60_dense.tmap"
+    },
+    {
+      "bbox_area": 41.35032410177064,
+      "knn5": 0.24983586466246516,
+      "centroid_sep": 5.384685658443963,
+      "within_mean": 0.7966563875476266,
+      "sep_ratio": 6.759106865407578,
+      "perplexity": 70,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/wine_recognition/wine_recognition_tsne_p70_dense.tmap"
+    },
+    {
+      "bbox_area": 27.32031582835816,
+      "knn5": 0.2320643486275204,
+      "centroid_sep": 4.283600607506838,
+      "within_mean": 0.7935405413682292,
+      "sep_ratio": 5.398086656191526,
+      "perplexity": 80,
+      "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/wine_recognition/wine_recognition_tsne_p80_dense.tmap"
+    }
+  ],
+  "best": {
+    "bbox_area": 27.32031582835816,
+    "knn5": 0.2320643486275204,
+    "centroid_sep": 4.283600607506838,
+    "within_mean": 0.7935405413682292,
+    "sep_ratio": 5.398086656191526,
+    "perplexity": 80,
+    "path": "/Users/jiahaoxu/Github/FeatureWind/backend/datasets/examples/wine_recognition/wine_recognition_tsne_p80_dense.tmap"
+  }
+}
