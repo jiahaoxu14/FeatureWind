@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import colorsys
 import os
 from typing import Iterable
 
@@ -34,6 +35,46 @@ def _sort_labels(values: Iterable[object]) -> list[object]:
         return sorted(unique, key=float)
     except (TypeError, ValueError):
         return sorted(unique, key=str)
+
+
+def _legend_label(value: object) -> str:
+    text = str(value).strip()
+    try:
+        float(text)
+    except (TypeError, ValueError):
+        return text
+    return f"Class {text}"
+
+
+def _hex_to_rgb01(hex_color: str) -> tuple[float, float, float]:
+    hex_color = str(hex_color).strip().lstrip("#")
+    if len(hex_color) != 6:
+        raise ValueError(f"Expected 6-digit hex color, got {hex_color!r}")
+    return tuple(int(hex_color[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+
+def _rgb01_to_hex(rgb: tuple[float, float, float]) -> str:
+    r, g, b = (max(0, min(255, int(round(channel * 255.0)))) for channel in rgb)
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+
+def _feature_curve_colors(base_hex: str, count: int) -> list[str]:
+    if count <= 0:
+        return []
+    if count == 1:
+        return [base_hex]
+
+    r, g, b = _hex_to_rgb01(base_hex)
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    lightness_values = np.linspace(max(0.22, l - 0.18), min(0.78, l + 0.18), count)
+    colors = []
+    for idx, lightness in enumerate(lightness_values):
+        if count % 2 == 1 and idx == count // 2:
+            colors.append(base_hex)
+            continue
+        rgb = colorsys.hls_to_rgb(h, float(lightness), max(0.35, s))
+        colors.append(_rgb01_to_hex(rgb))
+    return colors
 
 
 def silverman_bandwidth(values: np.ndarray) -> float:
@@ -70,6 +111,8 @@ def plot_feature_kde(
     output_dir: str,
     output_stem: str | None = None,
     title: str | None = None,
+    feature_color: str | None = None,
+    label_colors: dict[str, str] | None = None,
 ) -> list[str]:
     df = pd.read_csv(csv_path)
     if feature not in df.columns:
@@ -88,17 +131,23 @@ def plot_feature_kde(
     grid = np.linspace(x_min - x_pad, x_max + x_pad, 512)
 
     labels = _sort_labels(plot_df[label_column].tolist())
+    curve_colors = _feature_curve_colors(feature_color, len(labels)) if feature_color else None
     curves = []
     for idx, label in enumerate(labels):
         values = plot_df.loc[plot_df[label_column] == label, feature].to_numpy(dtype=float)
         density, bandwidth = gaussian_kde_1d(values, grid)
+        label_key = str(label)
         curves.append(
             {
                 "label": label,
                 "values": values,
                 "density": density,
                 "bandwidth": bandwidth,
-                "color": PALETTE[idx % len(PALETTE)],
+                "color": (
+                    label_colors.get(label_key)
+                    if isinstance(label_colors, dict) and label_key in label_colors
+                    else (curve_colors[idx] if curve_colors else PALETTE[idx % len(PALETTE)])
+                ),
             }
         )
 
@@ -108,13 +157,20 @@ def plot_feature_kde(
 
     max_density = 0.0
     for curve in curves:
-        label_text = f"Class {curve['label']}"
+        label_text = _legend_label(curve["label"])
         color = curve["color"]
         density = curve["density"]
         max_density = max(max_density, float(np.max(density)))
 
         ax.fill_between(grid, density, color=color, alpha=0.18, zorder=2)
-        ax.plot(grid, density, color=color, linewidth=2.4, label=label_text, zorder=3)
+        ax.plot(
+            grid,
+            density,
+            color=color,
+            linewidth=2.4,
+            label=label_text,
+            zorder=3,
+        )
 
         rug_y0 = -0.018 - 0.01 * (labels.index(curve["label"]) % 2)
         rug_y1 = rug_y0 + 0.008
@@ -169,6 +225,8 @@ def main() -> None:
         output_dir=args.output_dir,
         output_stem=args.output_stem,
         title=args.title,
+        feature_color=None,
+        label_colors=None,
     )
     for path in outputs:
         print(path)

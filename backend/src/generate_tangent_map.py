@@ -24,26 +24,11 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from featurewind.core.tangent_map import assemble_tangent_entries, check_and_normalize_features, compute_tangent_map_data
+from featurewind.preprocessing.csv_label_utils import identify_label_column
 
 
 TMAP_CACHE_CODE_VERSION = "tmap_accel_v1"
 DEFAULT_TMAP_CACHE_DIR = BACKEND_ROOT / "var" / "cache" / "tmap"
-
-
-def identify_label_column(df):
-    label_candidates = ["label", "class", "target", "y"]
-    for col in label_candidates:
-        if col.lower() in [c.lower() for c in df.columns]:
-            for actual_col in df.columns:
-                if actual_col.lower() == col.lower():
-                    return actual_col
-
-    last_col = df.columns[-1]
-    try:
-        pd.to_numeric(df[last_col])
-    except (ValueError, TypeError):
-        return last_col
-    return None
 
 
 def extract_features_and_labels(csv_file):

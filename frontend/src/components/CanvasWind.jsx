@@ -59,6 +59,7 @@ export default function CanvasWind({
   showGrid = true,
   showMaskOverlay = false,
   showParticles = true,
+  onViewStateChange = null,
   showPointGradients = false,
   showPointAggregatedGradients = false,
   showCellGradients = false,
@@ -66,6 +67,7 @@ export default function CanvasWind({
   showParticleInits = false,
   uniformPointShape = false,
   showParticleArrowheads = false,
+  onStaticTrailsChange = null,
   trailLineWidth = 2.0,
   pointSize = 4.4,
   autoRespawnRate = 0.0,
@@ -109,6 +111,9 @@ export default function CanvasWind({
   const selectedPointIndicesRef = useRef(Array.isArray(selectedPointIndices) ? selectedPointIndices : [])
   const staticTrailSeedsRef = useRef([])
   const staticTrailsRef = useRef([])
+  const staticTrailsCbRef = useRef(onStaticTrailsChange)
+  const viewStateCbRef = useRef(onViewStateChange)
+  const staticTrailsSigRef = useRef('')
   // Point brushing state: only becomes true after movement threshold
   const pointPointerDownRef = useRef(false)
   const pointBrushingRef = useRef(false)
@@ -152,9 +157,12 @@ export default function CanvasWind({
   useEffect(() => { selectPointsModeRef.current = !!selectPointsMode }, [selectPointsMode])
   useEffect(() => { pointBrushRadiusPxRef.current = Math.max(4, Math.floor(pointBrushRadiusPx || 14)) }, [pointBrushRadiusPx])
   useEffect(() => { selectedPointIndicesRef.current = Array.isArray(selectedPointIndices) ? selectedPointIndices : [] }, [selectedPointIndices])
+  useEffect(() => { staticTrailsCbRef.current = onStaticTrailsChange }, [onStaticTrailsChange])
+  useEffect(() => { viewStateCbRef.current = onViewStateChange }, [onViewStateChange])
   useEffect(() => {
     staticTrailSeedsRef.current = []
     staticTrailsRef.current = []
+    staticTrailsSigRef.current = ''
     areaBrushRectRef.current = null
     hoverCellRef.current = null
     hoverPointRef.current = null
@@ -280,6 +288,36 @@ export default function CanvasWind({
     return computeP99(mags)
   }, [uAll, vAll])
 
+  function emitStaticTrails(trails) {
+    const normalized = Array.isArray(trails)
+      ? trails
+        .filter((trail) => trail && Array.isArray(trail.points) && trail.points.length > 0)
+        .map((trail) => ({
+          pointIndex: Number.isInteger(trail.pointIndex) ? trail.pointIndex : null,
+          featureIndex: Number.isInteger(trail.featureIndex) ? trail.featureIndex : null,
+          stopReason: typeof trail.stopReason === 'string' ? trail.stopReason : null,
+          stopStep: Number.isInteger(trail.stopStep) ? trail.stopStep : null,
+          points: trail.points.map((point) => ({ x: Number(point.x), y: Number(point.y) })),
+        }))
+      : []
+    const signature = JSON.stringify(
+      normalized.map((trail) => ({
+        pointIndex: trail.pointIndex,
+        featureIndex: trail.featureIndex,
+        stopReason: trail.stopReason,
+        stopStep: trail.stopStep,
+        pointCount: trail.points.length,
+        start: trail.points[0] || null,
+        end: trail.points[trail.points.length - 1] || null,
+      }))
+    )
+    if (signature === staticTrailsSigRef.current) return
+    staticTrailsSigRef.current = signature
+    if (typeof staticTrailsCbRef.current === 'function') {
+      try { staticTrailsCbRef.current(normalized) } catch {}
+    }
+  }
+
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || !uSum || !vSum) return
@@ -357,6 +395,20 @@ export default function CanvasWind({
         fullW,
         fullH,
       }
+    }
+
+    function emitViewState(nextView = viewRef.current) {
+      if (typeof viewStateCbRef.current !== 'function' || !nextView) return
+      try {
+        viewStateCbRef.current({
+          xmin: Number(nextView.xmin),
+          xmax: Number(nextView.xmax),
+          ymin: Number(nextView.ymin),
+          ymax: Number(nextView.ymax),
+          width: Number(Wpx),
+          height: Number(Hpx),
+        })
+      } catch {}
     }
 
     function dominantFeatureForCell(i, j) {
@@ -464,6 +516,8 @@ export default function CanvasWind({
       }
       validSpawnCellsByFeature.set(featureIndex, cells)
     }
+    emitViewState(viewRef.current)
+
     function sampleActiveField(x, y, view = viewRef.current, featureIndex = null) {
       const cell = worldToCell(x, y)
       if (!cell || isMaskedCell(cell.i, cell.j)) {
@@ -964,6 +1018,7 @@ export default function CanvasWind({
         : []
       staticTrailSeedsRef.current = normalized
       staticTrailsRef.current = buildStaticTrailsFromSeeds(normalized, options)
+      emitStaticTrails(staticTrailsRef.current)
       return staticTrailsRef.current
     }
 
@@ -1073,6 +1128,7 @@ export default function CanvasWind({
     const selectedPointSeeds = buildStaticTrailSeedsFromPointIndices(selectedPointIndices)
     staticTrailSeedsRef.current = selectedPointSeeds
     staticTrailsRef.current = buildStaticTrailsFromSeeds(selectedPointSeeds)
+    emitStaticTrails(staticTrailsRef.current)
 
     function stepFixed() {
       for (const p of particles) {
@@ -1687,7 +1743,7 @@ export default function CanvasWind({
       }
 
       // Draw trails with constant width; opacity encodes local field magnitude.
-      const baseParticleWidth = Math.max(0.5, Number(trailLineWidth) || 1.2)
+      const baseParticleWidth = Math.max(1.6, (Number(trailLineWidth) || 1.2) * 1.2)
       ctx.lineWidth = baseParticleWidth
       ctx.lineCap = 'round'
       // If exactly one feature is manually selected, force its color globally
@@ -1818,7 +1874,7 @@ export default function CanvasWind({
           ctx.lineJoin = 'round'
           ctx.lineCap = 'round'
           ctx.strokeStyle = 'rgba(255,255,255,0.96)'
-          ctx.lineWidth = Math.max(2.5, Number(trailLineWidth) + 2.0)
+          ctx.lineWidth = Math.max(3.8, Number(trailLineWidth) + 2.8)
           ctx.beginPath()
           const [sxStart, syStart] = worldToScreen(points[0].x, points[0].y)
           ctx.moveTo(sxStart, syStart)
@@ -1828,8 +1884,8 @@ export default function CanvasWind({
           }
           ctx.stroke()
 
-          const staticStrokeWidth = Math.max(2.2, (Number(trailLineWidth) || 2.0) + 0.4)
-          const staticOutlineWidth = staticStrokeWidth + 1.0
+          const staticStrokeWidth = Math.max(3.0, (Number(trailLineWidth) || 2.0) * 1.18)
+          const staticOutlineWidth = staticStrokeWidth + 1.3
           let lastVisibleSeg = null
           for (const seg of segments) {
             const rgb = Array.isArray(seg.rgb) ? seg.rgb : [20, 20, 20]
@@ -2105,6 +2161,7 @@ export default function CanvasWind({
         ymin: clamped.ymin,
         ymax: clamped.ymax,
       }
+      emitViewState(viewRef.current)
     }
     canvas.addEventListener('wheel', handleWheel, { passive: false })
 
@@ -2141,15 +2198,10 @@ export default function CanvasWind({
       let shouldLogDiagnostics = false
 
       if (clickedPointIdx >= 0) {
-        if (additive) {
-          if (currentSelection.includes(clickedPointIdx)) {
-            nextSelection = currentSelection.filter((value) => value !== clickedPointIdx)
-          } else {
-            nextSelection = [...currentSelection, clickedPointIdx]
-            shouldLogDiagnostics = true
-          }
+        if (currentSelection.includes(clickedPointIdx)) {
+          nextSelection = currentSelection.filter((value) => value !== clickedPointIdx)
         } else {
-          nextSelection = [clickedPointIdx]
+          nextSelection = [...currentSelection, clickedPointIdx]
           shouldLogDiagnostics = true
         }
       } else if (!additive) {
@@ -2258,6 +2310,7 @@ export default function CanvasWind({
             ymin: clamped.ymin,
             ymax: clamped.ymax,
           }
+          emitViewState(viewRef.current)
         }
       }
       originalHandleMove(e)

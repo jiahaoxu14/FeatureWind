@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import './styles.css'
-import { uploadFile, compute } from './services/api'
+import { uploadFile, compute, exportStaticTrailFigures } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
 import WindVane from './components/WindVane.jsx'
 import ColorLegend from './components/ColorLegend.jsx'
@@ -81,10 +81,14 @@ export default function App() {
   const [interpolationMethod, setInterpolationMethod] = useState('linear-nearest')
   const [payload, setPayload] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [exportBusy, setExportBusy] = useState(false)
   const [error, setError] = useState('')
+  const [exportMessage, setExportMessage] = useState('')
   const [hoverPos, setHoverPos] = useState(null)
   const [selectedCells, setSelectedCells] = useState([])
   const [selectedPointIndices, setSelectedPointIndices] = useState([])
+  const [staticTrailData, setStaticTrailData] = useState([])
+  const [windMapView, setWindMapView] = useState(null)
   const [windMapTool, setWindMapTool] = useState(WIND_MAP_TOOL_PAN)
   const [mode, setMode] = useState(MODE_DEFAULT)
   const [defaultFeatureIndex, setDefaultFeatureIndex] = useState(null)
@@ -100,7 +104,7 @@ export default function App() {
   const [tailDurationSec, setTailDurationSec] = useState(1.2)
   const [trailTailMin, setTrailTailMin] = useState(0.10)
   const [trailTailExp, setTrailTailExp] = useState(2.0)
-  const [trailLineWidth, setTrailLineWidth] = useState(2.0)
+  const [trailLineWidth, setTrailLineWidth] = useState(3.2)
   const [lifetimeTailMultiplier, setLifetimeTailMultiplier] = useState(3.0)
   const [maskDilateRadiusCells, setMaskDilateRadiusCells] = useState(1)
   const [showHull, setShowHull] = useState(false)
@@ -187,6 +191,10 @@ export default function App() {
 
   // Label color map — stable per dataset, never derived from payload.colors
   const labelColorMap = useMemo(() => buildLabelColorMap(payload?.point_labels), [payload?.point_labels])
+  const exportDatasetName = useMemo(() => {
+    const raw = file?.name || payload?.datasetId || dataset?.datasetId || 'dataset'
+    return String(raw).replace(/\.(tmap|json|csv)$/i, '')
+  }, [file?.name, payload?.datasetId, dataset?.datasetId])
 
   const vaneFeatureIndices = useMemo(() => {
     if (mode === MODE_OVERVIEW) return allFeatureIndices
@@ -236,6 +244,8 @@ export default function App() {
       setPayload(res)
       setFeatureMessage('')
       setSelectedPointIndices([])
+      setStaticTrailData([])
+      setExportMessage('')
 
       setDefaultFeatureIndex((prev) => {
         if (isNewDataset) return nextDefault
@@ -275,6 +285,7 @@ export default function App() {
       setDefaultFeatureIndex(null)
       setCompareFeatureIndices([])
       setSelectedPointIndices([])
+      setStaticTrailData([])
       return
     }
     setDefaultFeatureIndex((prev) => {
@@ -293,6 +304,11 @@ export default function App() {
     })
   }, [payload?.col_labels, payload?.defaultFeatureIndex, featureRanking])
 
+  useEffect(() => {
+    if (!Array.isArray(selectedPointIndices) || selectedPointIndices.length > 0) return
+    setStaticTrailData([])
+  }, [selectedPointIndices])
+
   function toggleCell(i, j) {
     setSelectedCells((prev) => {
       const exists = prev.some((c) => c.i === i && c.j === j)
@@ -308,14 +324,56 @@ export default function App() {
   function clearSelection() {
     setSelectedCells([])
     setSelectedPointIndices([])
+    setStaticTrailData([])
   }
 
   function handleWindMapToolChange(nextTool) {
     if (nextTool === windMapTool) return
     setSelectedCells([])
     setSelectedPointIndices([])
+    setStaticTrailData([])
     setHoverPos(null)
     setWindMapTool(nextTool)
+  }
+
+  async function handleExportStaticTrailFigureBundle() {
+    if (!payload || staticTrailData.length === 0) return
+    setExportBusy(true)
+    setError('')
+    setExportMessage('')
+    try {
+      let canvasSnapshotDataUrl = null
+      try {
+        if (windMapCanvasRef.current) {
+          canvasSnapshotDataUrl = windMapCanvasRef.current.toDataURL('image/png')
+        }
+      } catch {}
+      const result = await exportStaticTrailFigures({
+        dataset_id: dataset?.datasetId || payload?.datasetId || null,
+        datasetName: exportDatasetName,
+        activeFeatureIndices,
+        canvasSnapshotDataUrl,
+        canvasView: windMapView,
+        staticTrails: staticTrailData,
+        payload: {
+          positions: payload.positions,
+          feature_values: payload.feature_values,
+          col_labels: payload.col_labels,
+          colors: payload.colors,
+        },
+      })
+      const figureCount = Array.isArray(result?.figures) ? result.figures.length : 0
+      const suffix = figureCount === 1 ? '' : 's'
+      setExportMessage(
+        result?.output_dir
+          ? `Saved ${figureCount} trail figure${suffix} to ${result.output_dir}`
+          : `Saved ${figureCount} trail figure${suffix}.`
+      )
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setExportBusy(false)
+    }
   }
 
   useEffect(() => {
@@ -483,13 +541,25 @@ export default function App() {
                       onClick={() => saveCanvasAsPng(windMapCanvasRef.current, 'wind_map.png')}
                     >Save PNG</button>
                   )}
+                  {payload && (
+                    <button
+                      className="btn"
+                      type="button"
+                      title="Save one figure per current static trail to output/paper_figures"
+                      onClick={handleExportStaticTrailFigureBundle}
+                      disabled={exportBusy || staticTrailData.length === 0 || !Array.isArray(payload?.feature_values)}
+                    >{exportBusy ? 'Saving…' : 'Save Trail Figures'}</button>
+                  )}
                 </div>
               </div>
               {payload && windMapTool === WIND_MAP_TOOL_PAN && (
-                <div className="panel-note">Pan mode: click a point to show a static trail. Hold Shift to add or remove points.</div>
+                <div className="panel-note">Pan mode: click points to toggle static trails. Click empty space to clear the current point selection.</div>
               )}
               {payload && windMapTool === WIND_MAP_TOOL_BRUSH && (
                 <div className="panel-note">Brush mode: click or drag to paint grid cells. Hold Shift to add to the current selection.</div>
+              )}
+              {payload && exportMessage && (
+                <div className="panel-note">{exportMessage}</div>
               )}
               {payload ? (
                 <div className="wind-map-shell">
@@ -577,6 +647,8 @@ export default function App() {
                     trailLineWidth={trailLineWidth}
                     pointSize={pointSize}
                     labelColorMap={labelColorMap}
+                    onStaticTrailsChange={setStaticTrailData}
+                    onViewStateChange={setWindMapView}
                     onCanvasElement={(el) => { windMapCanvasRef.current = el }}
                   />
                 </div>
@@ -757,7 +829,7 @@ export default function App() {
 
                       <label>Trail Width</label>
                       <div className="slider-row">
-                        <input type="range" min={0.5} max={4} step={0.1} value={trailLineWidth} onChange={(e) => setTrailLineWidth(Number(e.target.value))} />
+                        <input type="range" min={1.0} max={6} step={0.1} value={trailLineWidth} onChange={(e) => setTrailLineWidth(Number(e.target.value))} />
                         <span className="control-val">{trailLineWidth.toFixed(1)} px</span>
                       </div>
 

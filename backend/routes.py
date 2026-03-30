@@ -17,9 +17,15 @@ if str(SRC_ROOT) not in sys.path:
 
 from featurewind import config as fw_config
 from featurewind.preprocessing import data_processing as fw_data
+from featurewind.preprocessing.csv_label_utils import (
+    humanize_point_labels,
+    load_csv_features_and_labels,
+)
+from featurewind.preprocessing.dataset_layout_utils import orient_dataset_for_display
 from featurewind.core import dim_reader as fw_dim
 from featurewind.core.tangent_map import check_and_normalize_features
 from featurewind.physics import grid_computation as fw_grid
+from featurewind.visualization.static_trail_figures import export_static_trail_figures as export_static_trail_figures_bundle
 
 
 api_bp = Blueprint("api", __name__)
@@ -55,70 +61,6 @@ def _detect_csv_headers(path: str) -> Tuple[List[str], int]:
             num_cols = len(first)
             headers = [f"Feature {i}" for i in range(num_cols)]
     return headers, num_cols
-
-
-def _read_csv_points_with_headers(path: str) -> Tuple[List[List[float]], List[str]]:
-    points: List[List[float]] = []
-    headers: List[str] = []
-    with open(path, "r", newline="") as f:
-        reader = csv.reader(f)
-        try:
-            first = next(reader)
-        except StopIteration:
-            return points, headers
-        # Detect header
-        is_header = False
-        row_vals: List[float] = []
-        for cell in first:
-            try:
-                row_vals.append(float(cell))
-            except Exception:
-                is_header = True
-                break
-        if is_header:
-            headers = first
-        else:
-            points.append(row_vals)
-        # Rest rows
-        for row in reader:
-            vals: List[float] = []
-            for cell in row:
-                vals.append(float(cell))
-            points.append(vals)
-    if not headers and points:
-        headers = [f"Feature {i}" for i in range(len(points[0]))]
-    return points, headers
-
-
-def _maybe_humanize_point_labels(col_labels, point_labels):
-    if not isinstance(col_labels, list) or not isinstance(point_labels, list) or not point_labels:
-        return point_labels
-
-    wine_recognition_features = [
-        "alcohol",
-        "malic_acid",
-        "ash",
-        "alcalinity_of_ash",
-        "magnesium",
-        "total_phenols",
-        "flavanoids",
-        "nonflavanoid_phenols",
-        "proanthocyanins",
-        "color_intensity",
-        "hue",
-        "od280_od315",
-        "proline",
-    ]
-
-    if col_labels == wine_recognition_features:
-        label_map = {
-            "1": "Barolo",
-            "2": "Grignolino",
-            "3": "Barbera",
-        }
-        return [label_map.get(str(label), str(label)) for label in point_labels]
-
-    return point_labels
 
 
 @api_bp.post("/upload")
@@ -267,7 +209,7 @@ def compute():
             feature_values = None
     elif dtype == "csv":
         # Read CSV with potential headers, normalize columns, then compute projection & grads
-        points, col_labels = _read_csv_points_with_headers(path)
+        points, col_labels, point_labels = load_csv_features_and_labels(path)
         points = check_and_normalize_features(points)
 
         # Run projection + gradient extraction
@@ -288,12 +230,12 @@ def compute():
                 Y = Y.numpy()
         all_positions = Y
 
-        # CSV path typically lacks per-point labels; default to a single label
-        try:
-            n_pts = int(getattr(all_positions, "shape", [0])[0])
-            point_labels = [0] * n_pts
-        except Exception:
-            point_labels = None
+        if point_labels is None:
+            try:
+                n_pts = int(getattr(all_positions, "shape", [0])[0])
+                point_labels = [0] * n_pts
+            except Exception:
+                point_labels = None
 
         # Grads: (N, 2, M) -> (N, M, 2)
         import numpy as _np
@@ -313,18 +255,25 @@ def compute():
     else:
         return jsonify({"error": f"Unsupported dataset type: {dtype}"}), 400
 
-    point_labels = _maybe_humanize_point_labels(col_labels, point_labels)
+    point_labels = humanize_point_labels(col_labels, point_labels)
 
     # Optional: validation (skip strict check to support CSV path)
     # fw_data.validate_data(valid_points, all_grad_vectors, all_positions, col_labels)
 
     import numpy as _np
     all_positions = _np.asarray(all_positions, dtype=float)
+    all_grad_vectors = _np.asarray(all_grad_vectors, dtype=float)
     if all_positions.ndim != 2 or all_positions.shape[1] != 2 or all_positions.shape[0] == 0:
         return jsonify({
             "error": "Dataset did not produce a valid 2D position array. "
                      "This usually means the uploaded tangent map is empty or malformed."
         }), 400
+
+    all_positions, all_grad_vectors, layout_transform = orient_dataset_for_display(
+        col_labels,
+        all_positions,
+        all_grad_vectors,
+    )
 
     # Config state
     fw_config.initialize_global_state()
@@ -484,6 +433,9 @@ def compute():
         "meta": {"dtypeHint": "float32", "order": "row-major"},
     }
 
+    if layout_transform is not None:
+        response["layoutTransform"] = layout_transform
+
     # Include per-point feature values when available for point coloring in frontend
     if feature_values is not None:
         response["feature_values"] = tolist(feature_values)
@@ -501,6 +453,56 @@ def compute():
         response["gradVectors"] = tolist(all_grad_vectors)
 
     return jsonify(response)
+
+
+@api_bp.post("/export-static-trail-figures")
+def export_static_trail_figures():
+    body = request.get_json(silent=True) or {}
+    payload = body.get("payload") or {}
+    trails = body.get("staticTrails") or []
+    dataset_name = body.get("datasetName") or body.get("dataset_id") or "dataset"
+    active_feature_indices = body.get("activeFeatureIndices") or []
+    canvas_snapshot_data_url = body.get("canvasSnapshotDataUrl")
+    canvas_view = body.get("canvasView")
+
+    positions = payload.get("positions")
+    feature_values = payload.get("feature_values")
+    feature_names = payload.get("col_labels") or []
+    feature_colors = payload.get("colors") or []
+
+    if not isinstance(trails, list) or len(trails) == 0:
+        return jsonify({"error": "No static trails are currently selected."}), 400
+    if not isinstance(positions, list) or len(positions) == 0:
+        return jsonify({"error": "Current payload is missing point positions."}), 400
+    if not isinstance(feature_values, list) or len(feature_values) == 0:
+        return jsonify({"error": "Current payload is missing per-point feature values."}), 400
+    if not isinstance(feature_names, list) or len(feature_names) == 0:
+        return jsonify({"error": "Current payload is missing feature labels."}), 400
+    if not isinstance(feature_colors, list) or len(feature_colors) != len(feature_names):
+        return jsonify({"error": "Current payload is missing feature colors."}), 400
+
+    output_root = BACKEND_ROOT.parent / "output" / "paper_figures"
+    try:
+        result = export_static_trail_figures_bundle(
+            dataset_name=dataset_name,
+            positions=positions,
+            feature_values=feature_values,
+            feature_names=[str(name) for name in feature_names],
+            feature_colors=[str(color) for color in feature_colors],
+            trails=trails,
+            active_feature_indices=[
+                int(idx)
+                for idx in active_feature_indices
+                if isinstance(idx, (int, float)) and 0 <= int(idx) < len(feature_names)
+            ],
+            canvas_snapshot_data_url=canvas_snapshot_data_url if isinstance(canvas_snapshot_data_url, str) else None,
+            canvas_view=canvas_view if isinstance(canvas_view, dict) else None,
+            output_root=output_root,
+        )
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(result)
 
 
 @api_bp.post("/colors")
