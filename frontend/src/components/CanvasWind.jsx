@@ -41,8 +41,10 @@ function computeP99(values) {
 
 export default function CanvasWind({
   payload,
+  datasetId = '',
   mode = 'default',
   interactionMode = 'pan',
+  brushSelectionMode = 'drag',
   featureColorMap = null,
   neutralColor = '#4b5563',
   particleCount = 100,
@@ -213,6 +215,9 @@ export default function CanvasWind({
     feature_values = null,
   } = payload || {}
 
+  const normalizedDatasetId = String(datasetId || payload?.datasetId || '').toLowerCase()
+  const shouldDrawSupport2BlueLast = normalizedDatasetId.includes('support2')
+
   const indices = useMemo(() => {
     if (Array.isArray(featureIndices)) return featureIndices // honor manual array even if empty
     if (!selection) return []
@@ -240,6 +245,32 @@ export default function CanvasWind({
     if (!Number.isFinite(min) || !Number.isFinite(max)) return null
     return { idx, min, max }
   }, [feature_values, pointColorFeatureIndex])
+
+  const pointDrawOrder = useMemo(() => {
+    const count = Array.isArray(positions) ? positions.length : 0
+    const defaultOrder = [...Array(count).keys()]
+    if (
+      !shouldDrawSupport2BlueLast ||
+      pointColorStats ||
+      !Array.isArray(point_labels) ||
+      point_labels.length !== count ||
+      !labelColorMap ||
+      typeof labelColorMap !== 'object'
+    ) {
+      return defaultOrder
+    }
+
+    const support2Blue = '#93c5fd'
+    const regular = []
+    const blue = []
+    for (let idx = 0; idx < count; idx++) {
+      const labelKey = String(point_labels[idx])
+      const labelHex = String(labelColorMap[labelKey] || '').toLowerCase()
+      if (labelHex === support2Blue) blue.push(idx)
+      else regular.push(idx)
+    }
+    return regular.concat(blue)
+  }, [positions, point_labels, labelColorMap, pointColorStats, shouldDrawSupport2BlueLast])
 
   // Precompute magnitude grid and a robust scale (p99) for aggregated-field alpha mapping.
   const magInfo = useMemo(() => {
@@ -1343,11 +1374,8 @@ export default function CanvasWind({
         }
       }
 
-      // Highlight selected grid cells (semi-transparent overlay)
+      // Highlight selected grid cells with a stronger two-pass overlay.
       if (selectedRef.current && selectedRef.current.length > 0) {
-        ctx.lineWidth = 1.2
-        ctx.strokeStyle = 'rgba(37,99,235,0.7)'
-        ctx.fillStyle = 'rgba(37,99,235,0.10)'
         for (const cell of selectedRef.current) {
           const i = Math.max(0, Math.min(H - 1, cell.i|0))
           const j = Math.max(0, Math.min(W - 1, cell.j|0))
@@ -1361,10 +1389,23 @@ export default function CanvasWind({
           const sy1 = Hpx - (y1 - ymin) / (ymax - ymin) * Hpx
           const w = sx1 - sx0
           const h = sy0 - sy1
-          ctx.beginPath()
-          ctx.rect(sx0, sy1, w, h)
-          ctx.fill()
-          ctx.stroke()
+          ctx.fillStyle = 'rgba(245,158,11,0.24)'
+          ctx.fillRect(sx0, sy1, w, h)
+
+          ctx.lineWidth = 3.4
+          ctx.strokeStyle = 'rgba(255,255,255,0.95)'
+          ctx.strokeRect(sx0 + 0.5, sy1 + 0.5, Math.max(0, w - 1), Math.max(0, h - 1))
+
+          ctx.lineWidth = 1.8
+          ctx.strokeStyle = 'rgba(217,119,6,0.98)'
+          ctx.strokeRect(sx0 + 1, sy1 + 1, Math.max(0, w - 2), Math.max(0, h - 2))
+
+          const insetW = Math.max(0, w - 8)
+          const insetH = Math.max(0, h - 8)
+          if (insetW > 0 && insetH > 0) {
+            ctx.fillStyle = 'rgba(255,255,255,0.10)'
+            ctx.fillRect(sx0 + 4, sy1 + 4, insetW, insetH)
+          }
         }
       }
 
@@ -1569,7 +1610,7 @@ export default function CanvasWind({
         const hasLabels = Array.isArray(point_labels) && point_labels.length === positions.length
         const activeLabelMap = labelColorMap && typeof labelColorMap === 'object' ? labelColorMap : null
 
-        for (let idx = 0; idx < positions.length; idx++) {
+        for (const idx of pointDrawOrder) {
           const [x, y] = positions[idx]
           const [sx, sy] = worldToScreen(x, y)
           let pointFill = '#d9d9d9'
@@ -2167,7 +2208,7 @@ export default function CanvasWind({
           if (dx*dx + dy*dy <= R2) indices.push(pIdx)
         }
         if (indices.length) { try { onBrushPoints({ indices }) } catch {} }
-      } else if (brushingRef.current && typeof brushCbRef.current === 'function') {
+      } else if (interactionMode === 'brush' && brushSelectionMode === 'drag' && brushingRef.current && typeof brushCbRef.current === 'function') {
         const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
         const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
         const last = lastBrushRef.current
@@ -2223,7 +2264,25 @@ export default function CanvasWind({
 
     // Click handler to select grid cell
     function handleClick(e) {
-      if (interactionMode === 'brush') return
+      if (interactionMode === 'brush') {
+        if (brushSelectionMode !== 'select') return
+        if (suppressClickRef.current) {
+          suppressClickRef.current = false
+          return
+        }
+        const rect = canvas.getBoundingClientRect()
+        const cx = e.clientX - rect.left
+        const cy = e.clientY - rect.top
+        const v = viewRef.current
+        const x = v.xmin + (cx / Wpx) * (v.xmax - v.xmin)
+        const y = v.ymin + ((Hpx - cy) / Hpx) * (v.ymax - v.ymin)
+        const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
+        const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
+        if (typeof onSelectCell === 'function') {
+          try { onSelectCell({ i, j, shift: !!(e.shiftKey || e.metaKey || e.ctrlKey) }) } catch {}
+        }
+        return
+      }
       if (suppressClickRef.current) {
         suppressClickRef.current = false
         return
@@ -2310,10 +2369,15 @@ export default function CanvasWind({
         const y = v2.ymin + ((Hpx - cy) / Hpx) * (v2.ymax - v2.ymin)
         const j = Math.max(0, Math.min(W - 1, Math.floor((x - xmin) / (xmax - xmin) * W)))
         const i = Math.max(0, Math.min(H - 1, Math.floor((y - ymin) / (ymax - ymin) * H)))
-        brushingRef.current = true
-        lastBrushRef.current = { i, j }
-        if (typeof brushCbRef.current === 'function') {
-          try { brushCbRef.current({ cells: [{ i, j }], replace: !e.shiftKey }) } catch {}
+        if (brushSelectionMode === 'drag') {
+          brushingRef.current = true
+          lastBrushRef.current = { i, j }
+          if (typeof brushCbRef.current === 'function') {
+            try { brushCbRef.current({ cells: [{ i, j }], replace: !e.shiftKey }) } catch {}
+          }
+        } else {
+          brushingRef.current = false
+          lastBrushRef.current = { i: -1, j: -1 }
         }
         canvas.style.cursor = 'crosshair'
         return
@@ -2389,6 +2453,7 @@ export default function CanvasWind({
   }, [
     bbox,
     interactionMode,
+    brushSelectionMode,
     mode,
     grid_res,
     uSum,
@@ -2396,6 +2461,7 @@ export default function CanvasWind({
     globalFeatureP99,
     positions,
     point_labels,
+    datasetId,
     colors,
     dominant,
     featureColorMap,
@@ -2403,6 +2469,7 @@ export default function CanvasWind({
     neutralColor,
     featureIndices,
     pointColorStats,
+    pointDrawOrder,
     particleCount,
     tailDurationSec,
     trailTailMin,

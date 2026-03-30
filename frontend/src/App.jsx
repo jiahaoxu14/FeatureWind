@@ -15,6 +15,8 @@ const COMPARE_PALETTE = FEATURE_PALETTE
 const OVERVIEW_NEUTRAL = '#4b5563'
 const WIND_MAP_TOOL_PAN = 'pan'
 const WIND_MAP_TOOL_BRUSH = 'brush'
+const BRUSH_SELECTION_MODE_DRAG = 'drag'
+const BRUSH_SELECTION_MODE_SELECT = 'select'
 const MAX_MASK_DILATE_RADIUS_CELLS = 10
 const INTERPOLATION_OPTIONS = [
   { value: 'linear-nearest', label: 'Linear + Nearest Fallback' },
@@ -90,6 +92,7 @@ export default function App() {
   const [staticTrailData, setStaticTrailData] = useState([])
   const [windMapView, setWindMapView] = useState(null)
   const [windMapTool, setWindMapTool] = useState(WIND_MAP_TOOL_PAN)
+  const [brushSelectionMode, setBrushSelectionMode] = useState(BRUSH_SELECTION_MODE_DRAG)
   const [mode, setMode] = useState(MODE_DEFAULT)
   const [defaultFeatureIndex, setDefaultFeatureIndex] = useState(null)
   const [compareFeatureIndices, setCompareFeatureIndices] = useState([])
@@ -171,18 +174,18 @@ export default function App() {
     return effectiveDefaultFeatureIndex !== null ? [effectiveDefaultFeatureIndex] : []
   }, [payload, mode, allFeatureIndices, selectedMultiFeatureIndices, effectiveCompareFeatureIndices, effectiveDefaultFeatureIndex])
 
+  const visualizedFeatureIndices = useMemo(() => {
+    if (!payload || mode === MODE_OVERVIEW) return []
+    return sanitizeFeatureIndices(activeFeatureIndices, featureCount)
+  }, [payload, mode, activeFeatureIndices, featureCount])
+
   const activeFeatureColorMap = useMemo(() => {
-    const out = buildFeatureColorMap(featureCount, payload?.familyAssignments)
-    for (let idx = 0; idx < featureCount; idx++) {
-      if (typeof out[idx] === 'string' && out[idx]) continue
-      if (mode === MODE_DEFAULT && idx === effectiveDefaultFeatureIndex) {
-        out[idx] = DEFAULT_FEATURE_HUE
-        continue
-      }
-      out[idx] = COMPARE_PALETTE[idx % COMPARE_PALETTE.length]
-    }
+    const out = buildFeatureColorMap(featureCount)
+    visualizedFeatureIndices.forEach((featureIdx, order) => {
+      out[featureIdx] = COMPARE_PALETTE[order % COMPARE_PALETTE.length] || DEFAULT_FEATURE_HUE
+    })
     return out
-  }, [payload?.familyAssignments, featureCount, mode, effectiveDefaultFeatureIndex])
+  }, [featureCount, visualizedFeatureIndices])
 
   // Label color map — stable per dataset, never derived from payload.colors
   const labelColorMap = useMemo(() => buildLabelColorMap(payload?.point_labels), [payload?.point_labels])
@@ -529,6 +532,26 @@ export default function App() {
                   >
                     Brush
                   </button>
+                  {payload && windMapTool === WIND_MAP_TOOL_BRUSH && (
+                    <>
+                      <button
+                        className={`toolbar-btn${brushSelectionMode === BRUSH_SELECTION_MODE_DRAG ? ' active' : ''}`}
+                        type="button"
+                        onClick={() => setBrushSelectionMode(BRUSH_SELECTION_MODE_DRAG)}
+                        title="Drag across the map to paint selected grid cells"
+                      >
+                        Drag
+                      </button>
+                      <button
+                        className={`toolbar-btn${brushSelectionMode === BRUSH_SELECTION_MODE_SELECT ? ' active' : ''}`}
+                        type="button"
+                        onClick={() => setBrushSelectionMode(BRUSH_SELECTION_MODE_SELECT)}
+                        title="Click individual grid cells to select them"
+                      >
+                        Select
+                      </button>
+                    </>
+                  )}
                   {payload && (
                     <button
                       className="btn"
@@ -551,7 +574,11 @@ export default function App() {
                 <div className="panel-note">Pan mode: click points to toggle static trails. Click empty space to clear the current point selection.</div>
               )}
               {payload && windMapTool === WIND_MAP_TOOL_BRUSH && (
-                <div className="panel-note">Brush mode: click or drag to paint grid cells. Hold Shift to add to the current selection.</div>
+                <div className="panel-note">
+                  {brushSelectionMode === BRUSH_SELECTION_MODE_DRAG
+                    ? 'Brush mode (Drag): drag to paint grid cells. Hold Shift to add to the current selection.'
+                    : 'Brush mode (Select): click a grid cell to select it. Hold Shift to add or remove cells from the current selection.'}
+                </div>
               )}
               {payload && exportMessage && (
                 <div className="panel-note">{exportMessage}</div>
@@ -562,6 +589,7 @@ export default function App() {
                     payload={payload}
                     mode={mode}
                     interactionMode={windMapTool}
+                    brushSelectionMode={brushSelectionMode}
                     featureColorMap={activeFeatureColorMap}
                     neutralColor={OVERVIEW_NEUTRAL}
                     onHover={setHoverPos}
@@ -642,6 +670,7 @@ export default function App() {
                     trailLineWidth={trailLineWidth}
                     pointSize={pointSize}
                     labelColorMap={labelColorMap}
+                    datasetId={payload?.datasetId || dataset?.datasetId || file?.name || ''}
                     onStaticTrailsChange={setStaticTrailData}
                     onViewStateChange={setWindMapView}
                     onCanvasElement={(el) => { windMapCanvasRef.current = el }}
