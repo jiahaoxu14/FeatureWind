@@ -1,6 +1,15 @@
 // Feature palette — used exclusively for trails, particles, vane vectors, and feature swatches.
-// These are dark, saturated hues suited for motion lines on the canvas.
-export const FEATURE_PALETTE = ['#0f766e', '#c2410c', '#7c3aed', '#dc2626']
+// Keep these dark and saturated so they stay far away from the light label palette used for points.
+export const FEATURE_PALETTE = [
+  '#0f766e', // deep teal
+  '#c2410c', // burnt orange
+  '#7c3aed', // violet
+  '#b91c1c', // deep red
+  '#0369a1', // deep cyan-blue
+  '#be185d', // magenta
+  '#854d0e', // dark brown
+  '#1f2937', // charcoal
+]
 export const DEFAULT_FEATURE_HUE = '#0f766e'
 
 // Label palette — used exclusively for data-point markers.
@@ -32,4 +41,37 @@ export function buildLabelColorMap(pointLabels) {
     map[label] = LABEL_PALETTE[i % LABEL_PALETTE.length]
   })
   return map
+}
+
+/**
+ * Build a stable { featureIndex -> hexColor } map for feature rendering in the UI.
+ * Prefer family assignments so same-family features share a dark UI hue, independent
+ * of any lighter backend palette that may be used elsewhere.
+ */
+export function buildFeatureColorMap(featureCount, familyAssignments) {
+  const out = {}
+  const count = Number.isInteger(featureCount) ? featureCount : 0
+  if (count <= 0) return out
+
+  const hasFamilies = Array.isArray(familyAssignments) && familyAssignments.length === count
+  if (hasFamilies) {
+    const normalizedFamilies = familyAssignments.map((raw, idx) => {
+      const familyId = Number(raw)
+      return Number.isInteger(familyId) ? familyId : idx
+    })
+    const uniqueFamilies = Array.from(new Set(normalizedFamilies)).sort((a, b) => a - b)
+    const familyColorMap = {}
+    uniqueFamilies.forEach((familyId, idx) => {
+      familyColorMap[familyId] = FEATURE_PALETTE[idx % FEATURE_PALETTE.length]
+    })
+    normalizedFamilies.forEach((familyId, idx) => {
+      out[idx] = familyColorMap[familyId]
+    })
+    return out
+  }
+
+  for (let idx = 0; idx < count; idx++) {
+    out[idx] = FEATURE_PALETTE[idx % FEATURE_PALETTE.length]
+  }
+  return out
 }

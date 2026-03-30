@@ -4,7 +4,7 @@ import { uploadFile, compute, exportStaticTrailFigures } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
 import WindVane from './components/WindVane.jsx'
 import ColorLegend from './components/ColorLegend.jsx'
-import { DEFAULT_FEATURE_HUE, FEATURE_PALETTE, buildLabelColorMap } from './utils/colors.js'
+import { DEFAULT_FEATURE_HUE, FEATURE_PALETTE, buildFeatureColorMap, buildLabelColorMap } from './utils/colors.js'
 
 const MODE_DEFAULT = 'default'
 const MODE_AGGREGATE = 'aggregate'
@@ -172,14 +172,9 @@ export default function App() {
   }, [payload, mode, allFeatureIndices, selectedMultiFeatureIndices, effectiveCompareFeatureIndices, effectiveDefaultFeatureIndex])
 
   const activeFeatureColorMap = useMemo(() => {
-    const out = {}
-    const backendColors = Array.isArray(payload?.colors) ? payload.colors : []
+    const out = buildFeatureColorMap(featureCount, payload?.familyAssignments)
     for (let idx = 0; idx < featureCount; idx++) {
-      const color = backendColors[idx]
-      if (typeof color === 'string' && color) {
-        out[idx] = color
-        continue
-      }
+      if (typeof out[idx] === 'string' && out[idx]) continue
       if (mode === MODE_DEFAULT && idx === effectiveDefaultFeatureIndex) {
         out[idx] = DEFAULT_FEATURE_HUE
         continue
@@ -187,7 +182,7 @@ export default function App() {
       out[idx] = COMPARE_PALETTE[idx % COMPARE_PALETTE.length]
     }
     return out
-  }, [payload?.colors, featureCount, mode, effectiveDefaultFeatureIndex])
+  }, [payload?.familyAssignments, featureCount, mode, effectiveDefaultFeatureIndex])
 
   // Label color map — stable per dataset, never derived from payload.colors
   const labelColorMap = useMemo(() => buildLabelColorMap(payload?.point_labels), [payload?.point_labels])
@@ -359,7 +354,7 @@ export default function App() {
           positions: payload.positions,
           feature_values: payload.feature_values,
           col_labels: payload.col_labels,
-          colors: payload.colors,
+          colors: [...Array(featureCount).keys()].map((idx) => activeFeatureColorMap[idx] || DEFAULT_FEATURE_HUE),
         },
       })
       const figureCount = Array.isArray(result?.figures) ? result.figures.length : 0
