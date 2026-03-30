@@ -1,7 +1,7 @@
 """
 Visualization components for FeatureWind.
 
-This module contains all rendering, plotting, and visual display functionality.
+This module contains backend-side color and export helpers used by the web app.
 """
 
-__all__ = ['visualization_core', 'color_system', 'legend_manager']
+__all__ = ['color_system', 'static_trail_figures']

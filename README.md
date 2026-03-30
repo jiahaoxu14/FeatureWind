@@ -1,12 +1,11 @@
 # FeatureWind
 
-FeatureWind generates and visualizes “feature wind” fields over 2D embeddings. It computes per‑feature tangent vectors (gradients) of a dimensionality reduction (DR) mapping (t‑SNE or MDS in PyTorch), then renders interactive/static views to help you understand which features drive local movement on the map.
+FeatureWind generates and visualizes “feature wind” fields over 2D embeddings. It computes per‑feature tangent vectors (gradients) of a dimensionality reduction (DR) mapping (t‑SNE or MDS in PyTorch), then serves those fields to the web UI for interactive inspection.
 
 ## Monorepo Layout
 
-- `backend/` — Python core, CLIs, datasets, docs, and Flask API.
+- `backend/` — Python core, tangent-map generation, datasets, docs, and Flask API.
   - `src/featurewind/` core library
-  - `cli/` CLIs (`createwind.py`, `generate_tangent_map.py`)
   - `api/` Flask service
   - `datasets/` sample CSVs and `.tmap` files
   - `var/` run artifacts (outputs/uploads; gitignored)
@@ -25,32 +24,30 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
   pip install ucimlrepo
   ```
 
-- Generate a tangent map from a CSV (auto‑detects label column; uses features only for DR). Run from `backend/`:
+- Generate a tangent map from a CSV (auto‑detects label column; uses features only for DR). Run from repo root:
 
   ```bash
-  # From repo root
-  cd backend
-  PYTHONPATH=src python cli/generate_tangent_map.py datasets/examples/iris/iris.csv tsne iris_tsne
-  PYTHONPATH=src python cli/generate_tangent_map.py datasets/examples/iris/iris.csv mds  iris_mds
+  ./.venv/bin/python backend/src/generate_tangent_map.py backend/datasets/examples/iris/iris.csv tsne iris_tsne
+  ./.venv/bin/python backend/src/generate_tangent_map.py backend/datasets/examples/iris/iris.csv mds iris_mds
   ```
 
   This writes a .tmap JSON alongside the input CSV (or to the provided output name).
 
-- Visualize in the Feature Wind Map UI (from `backend/`):
+- Run the backend API and frontend UI:
 
   ```bash
-  PYTHONPATH=src python cli/createwind.py --tangent-map datasets/examples/iris/iris_tsne.tmap --top-k 5
-  # or a single feature by name (substring match)
-  PYTHONPATH=src python cli/createwind.py --tangent-map datasets/examples/iris/iris_tsne.tmap --feature "sepal"
-  # list all feature names in the .tmap
-  PYTHONPATH=src python cli/createwind.py --tangent-map datasets/examples/iris/iris_tsne.tmap --list-features
+  cd backend
+  PYTHONPATH=src python app.py
+
+  cd ../frontend
+  npm run dev
   ```
 
 
 ## Data → Tangent Map
 
-- Script: `backend/cli/generate_tangent_map.py`
-  - Usage (from `backend/`): `PYTHONPATH=src python cli/generate_tangent_map.py <dataset.csv> <tsne|mds> [output_name]`
+- Script: `backend/src/generate_tangent_map.py`
+  - Usage: `python backend/src/generate_tangent_map.py <dataset.csv> <tsne|mds> [output_name]`
   - The CSV can include a label column (e.g., `label`, `class`, `target`, or any last non‑numeric column). The generator:
     1) extracts labels,
     2) runs DR only on feature columns to 2D with gradients via PyTorch autograd,
@@ -68,31 +65,25 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
   - `Col_labels`: feature names.
 
 
-## Visualization (Wind Map + Wind Vane)
+## Visualization
 
-- Entry: `cli/createwind.py` (run from `backend/` with `PYTHONPATH=src`)
-  - `--top-k N | all` to show the N strongest features (by mean gradient magnitude) or all.
-  - `--feature NAME` to show a single feature (substring match).
-  - `--name-filter REGEX` to filter the feature set before selection (e.g., `'3$'` to keep columns ending with 3).
-  - `--list-features` to print all feature names from the `.tmap`.
+- Backend API entry: `backend/app.py`
+- Frontend UI entry: `frontend/src/App.jsx`
+- Main compute route: `POST /api/compute` in `backend/routes.py`
 
 
 ## Examples
 - Breast Cancer (WDBC)
   - Dataset: `backend/datasets/examples/breast_cancer/breast_cancer_wdbc.csv` (provided). Label codes: 0 = benign, 1 = malignant.
-  - Generate + visualize:
+  - Generate a tangent map:
     ```bash
-    cd backend
-    PYTHONPATH=src python cli/generate_tangent_map.py datasets/examples/breast_cancer/breast_cancer_wdbc.csv tsne breast_tsne
-    PYTHONPATH=src python cli/createwind.py --tangent-map datasets/examples/breast_cancer/breast_tsne.tmap --top-k all
-    # or select features ending with "3"
-    PYTHONPATH=src python cli/createwind.py --tangent-map datasets/examples/breast_cancer/breast_tsne.tmap --name-filter '3$' --top-k all
+    ./.venv/bin/python backend/src/generate_tangent_map.py backend/datasets/examples/breast_cancer/breast_cancer_wdbc.csv tsne breast_tsne
     ```
 
 
 ## Tips and Troubleshooting
 
-- “Color by feature value” not showing? Ensure the name matches `Col_labels` in the `.tmap`. Use `--list-features` or set by integer index. Substring matching is case‑insensitive.
+- “Color by feature value” not showing? Ensure the name matches `Col_labels` in the `.tmap`.
 - Marker shapes by label are based on sorted unique labels and `MARKER_STYLES`. With labels `[0,1]`, 0→circle `'o'`, 1→square `'s'` by default.
 - t‑SNE vs. MDS:
   - Both are implemented in PyTorch to allow autograd through the 2D coordinates so gradients (tangents) propagate back to original features.
@@ -102,14 +93,12 @@ FeatureWind generates and visualizes “feature wind” fields over 2D embedding
 
 ## Project Structure (selected)
 
-- `backend/cli/generate_tangent_map.py` — CLI to create `.tmap` files from CSVs.
-- `backend/cli/createwind.py` — Main visualization entry point (Wind Map + Wind Vane).
+- `backend/src/generate_tangent_map.py` — Tangent-map generator for CSVs.
 - `backend/src/featurewind/core/`
   - `tangent_map.py` — Computes tangent maps from points using DimReader.
   - `dim_reader.py` — Runs differentiable DR (t‑SNE/MDS), collects Jacobians.
   - `tsne.py`, `mds_torch.py` — PyTorch DR implementations.
 - `backend/src/featurewind/preprocessing/` — Data loading and `.tmap` post‑processing utilities.
-- `backend/src/featurewind/visualization/visualization_core.py` — Plotting and UI logic.
 - `backend/src/featurewind/visualization/color_system.py` — Palettes and styling helpers.
 - `backend/src/featurewind/analysis/feature_clustering.py` — Clusters features into families by directional similarity.
 - `backend/datasets/` — Example datasets and analysis scripts.

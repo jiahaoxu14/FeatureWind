@@ -11,6 +11,7 @@ from featurewind.preprocessing.dataset_layout_utils import (
     compute_horizontal_alignment_rotation,
     orient_dataset_for_display,
 )
+from featurewind.visualization.color_system import apply_dataset_feature_color_overrides
 
 
 class RoutesCsvLabelsTest(unittest.TestCase):
@@ -87,6 +88,58 @@ class RoutesCsvLabelsTest(unittest.TestCase):
         self.assertEqual(rotated_grads.shape, (6, 1, 2))
         self.assertEqual(meta["dataset"], "seeds")
         self.assertEqual(meta["target_axis"], "horizontal")
+
+    def test_apply_dataset_feature_color_overrides_uses_non_blue_simple2d_palette(self) -> None:
+        colors = apply_dataset_feature_color_overrides(
+            ["horizontal_signal", "vertical_signal"],
+            ["#4477AA", "#EE6677"],
+        )
+
+        self.assertEqual(colors, ["#0f766e", "#c2410c"])
+
+    def test_apply_dataset_feature_color_overrides_uses_dark_breast_cancer_family_palette(self) -> None:
+        col_labels = [
+            "radius1",
+            "texture1",
+            "perimeter1",
+            "area1",
+            "smoothness1",
+            "compactness1",
+            "concavity1",
+            "concave_points1",
+            "symmetry1",
+            "fractal_dimension1",
+            "radius2",
+            "texture2",
+            "perimeter2",
+            "area2",
+            "smoothness2",
+            "compactness2",
+            "concavity2",
+            "concave_points2",
+            "symmetry2",
+            "fractal_dimension2",
+            "radius3",
+            "texture3",
+            "perimeter3",
+            "area3",
+            "smoothness3",
+            "compactness3",
+            "concavity3",
+            "concave_points3",
+            "symmetry3",
+            "fractal_dimension3",
+        ]
+        family_assignments = [idx % 4 for idx in range(len(col_labels))]
+        colors = apply_dataset_feature_color_overrides(
+            col_labels,
+            ["#4477AA"] * len(col_labels),
+            family_assignments=family_assignments,
+        )
+
+        self.assertEqual(colors[:4], ["#0f766e", "#7c3aed", "#b91c1c", "#166534"])
+        self.assertEqual(colors[0], colors[4])
+        self.assertEqual(colors[1], colors[5])
 
 
 if __name__ == "__main__":

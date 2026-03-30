@@ -328,19 +328,16 @@ class EventManager:
 **Core Modules**:
 - `data_processing.py`: Input parsing, validation, feature selection
 - `grid_computation.py`: Spatial discretization, velocity field construction  
-- `particle_system.py`: Physics simulation, numerical integration
-- `visualization_core.py`: Rendering, figure layout, professional styling
-- `event_manager.py`: Interaction handling, mouse/keyboard events
 - `color_system.py`: Paul Tol palettes, family-based coloring
 - `feature_clustering.py`: Hierarchical clustering, similarity computation
+- `routes.py`: Backend API for upload, compute, and export
+- `frontend/src/components/CanvasWind.jsx`: Web rendering and interaction
 
 **Data Flow Architecture**:
 ```
-.tmap files → data_processing → grid_computation → particle_system
-                    ↓               ↓               ↓
-            feature_clustering → color_system → visualization_core
-                                      ↓               ↓
-                              legend_manager ← event_manager
+.tmap files / CSV upload → data_processing → grid_computation → routes.py
+                               ↓               ↓                ↓
+                       feature_clustering → color_system → frontend Canvas UI
 ```
 
 ### 8.2 Performance Optimization

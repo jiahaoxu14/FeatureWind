@@ -1,7 +1,7 @@
 """
 Physics simulation components for FeatureWind.
 
-This module contains particle system simulation and velocity field computation.
+This module contains velocity-field computation utilities used by the backend API.
 """
 
-__all__ = ['particle_system', 'grid_computation']
+__all__ = ['grid_computation']

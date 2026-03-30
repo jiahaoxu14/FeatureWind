@@ -1190,6 +1190,57 @@ export default function CanvasWind({
       }
       ctx.clearRect(0, 0, Wpx, Hpx)
 
+      function drawVisibleArrow(sx, sy, ex, ey, {
+        color = '#111111',
+        alpha = 1.0,
+        lineWidth = 1.8,
+        outlineWidth = lineWidth + 2.0,
+        outlineColor = 'rgba(255,255,255,0.94)',
+        headLen = 10,
+        phi = Math.PI / 7,
+      } = {}) {
+        if (!Number.isFinite(sx) || !Number.isFinite(sy) || !Number.isFinite(ex) || !Number.isFinite(ey)) return
+        const segLen = Math.hypot(ex - sx, ey - sy)
+        if (!(segLen > 1e-6)) return
+        const ang = Math.atan2(ey - sy, ex - sx)
+        const hx1 = ex - headLen * Math.cos(ang - phi)
+        const hy1 = ey - headLen * Math.sin(ang - phi)
+        const hx2 = ex - headLen * Math.cos(ang + phi)
+        const hy2 = ey - headLen * Math.sin(ang + phi)
+
+        ctx.save()
+        ctx.lineJoin = 'round'
+        ctx.lineCap = 'round'
+        ctx.globalAlpha = 1.0
+        ctx.strokeStyle = outlineColor
+        ctx.lineWidth = outlineWidth
+        ctx.beginPath()
+        ctx.moveTo(sx, sy)
+        ctx.lineTo(ex, ey)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(ex, ey)
+        ctx.lineTo(hx1, hy1)
+        ctx.moveTo(ex, ey)
+        ctx.lineTo(hx2, hy2)
+        ctx.stroke()
+
+        ctx.globalAlpha = Math.max(0, Math.min(1, alpha))
+        ctx.strokeStyle = color
+        ctx.lineWidth = lineWidth
+        ctx.beginPath()
+        ctx.moveTo(sx, sy)
+        ctx.lineTo(ex, ey)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(ex, ey)
+        ctx.lineTo(hx1, hy1)
+        ctx.moveTo(ex, ey)
+        ctx.lineTo(hx2, hy2)
+        ctx.stroke()
+        ctx.restore()
+      }
+
       // If aggregated cell gradients are shown, also color each cell by its dominant feature
       // Also apply when showing particle init overlays
       if (!isOverviewMode && (showCellAggregatedGradientsRef.current || showParticleInitsRef.current)) {
@@ -1244,27 +1295,51 @@ export default function CanvasWind({
 
       // Draw grid lines (cell boundaries)
       if (showGridRef.current) {
-        ctx.strokeStyle = 'rgba(180,180,180,0.35)'
-        ctx.lineWidth = 0.5
-        // vertical lines at x boundaries
-        for (let k = 0; k <= W; k++) {
-          const xk = xmin + (k / W) * (xmax - xmin)
-          const v = viewRef.current
-          const sx = (xk - v.xmin) / (v.xmax - v.xmin) * Wpx
+        const snapX = (value) => {
+          const snapped = Math.round(value) + 0.5
+          return Math.max(0.5, Math.min(Wpx - 0.5, snapped))
+        }
+        const snapY = (value) => {
+          const snapped = Math.round(value) + 0.5
+          return Math.max(0.5, Math.min(Hpx - 0.5, snapped))
+        }
+        const drawVerticalLine = (sx) => {
           ctx.beginPath()
           ctx.moveTo(sx, 0)
           ctx.lineTo(sx, Hpx)
           ctx.stroke()
         }
-        // horizontal lines at y boundaries
-        for (let k = 0; k <= H; k++) {
-          const yk = ymin + (k / H) * (ymax - ymin)
-          const v = viewRef.current
-          const sy = Hpx - (yk - v.ymin) / (v.ymax - v.ymin) * Hpx
+        const drawHorizontalLine = (sy) => {
           ctx.beginPath()
           ctx.moveTo(0, sy)
           ctx.lineTo(Wpx, sy)
           ctx.stroke()
+        }
+
+        const v = viewRef.current
+
+        // Bright underlay keeps the grid readable over dark overlays and trails.
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)'
+        ctx.lineWidth = 1.6
+        for (let k = 0; k <= W; k++) {
+          const xk = xmin + (k / W) * (xmax - xmin)
+          drawVerticalLine(snapX((xk - v.xmin) / (v.xmax - v.xmin) * Wpx))
+        }
+        for (let k = 0; k <= H; k++) {
+          const yk = ymin + (k / H) * (ymax - ymin)
+          drawHorizontalLine(snapY(Hpx - (yk - v.ymin) / (v.ymax - v.ymin) * Hpx))
+        }
+
+        // Dark overlay provides the actual visible grid structure.
+        ctx.strokeStyle = 'rgba(51,65,85,0.58)'
+        ctx.lineWidth = 0.9
+        for (let k = 0; k <= W; k++) {
+          const xk = xmin + (k / W) * (xmax - xmin)
+          drawVerticalLine(snapX((xk - v.xmin) / (v.xmax - v.xmin) * Wpx))
+        }
+        for (let k = 0; k <= H; k++) {
+          const yk = ymin + (k / H) * (ymax - ymin)
+          drawHorizontalLine(snapY(Hpx - (yk - v.ymin) / (v.ymax - v.ymin) * Hpx))
         }
       }
 
@@ -1543,11 +1618,9 @@ export default function CanvasWind({
         const p99 = magInfo?.p99 || 1.0
         const sxScale = Wpx / (xmax - xmin)
         const syScale = Hpx / (ymax - ymin)
-        const headLen = Math.max(6, Math.min(12, Math.floor(Math.min(Wpx, Hpx) * 0.015)))
-        const baseLen = Math.max(10, Math.min(40, Math.min(Wpx, Hpx) * 0.05))
+        const headLen = Math.max(10, Math.min(20, Math.floor(Math.min(Wpx, Hpx) * 0.024)))
+        const baseLen = Math.max(20, Math.min(64, Math.min(Wpx, Hpx) * 0.085))
         const phi = Math.PI / 7
-        ctx.lineWidth = 1.0
-        ctx.strokeStyle = '#111111'
         for (let pIdx = 0; pIdx < positions.length; pIdx++) {
           const [wx, wy] = positions[pIdx]
           const [sx, sy] = worldToScreen(wx, wy)
@@ -1563,26 +1636,18 @@ export default function CanvasWind({
           if (!Number.isFinite(dnorm) || dnorm <= 0) continue
           const dirx = ddx / dnorm
           const diry = ddy / dnorm
-          const len = Math.max(0, Math.min(1, aField)) * baseLen
+          const len = baseLen * (0.35 + 0.65 * Math.max(0, Math.min(1, aField)))
           const ex = sx + dirx * len
           const ey = sy + diry * len
-          ctx.globalAlpha = 0.9
-          ctx.beginPath()
-          ctx.moveTo(sx, sy)
-          ctx.lineTo(ex, ey)
-          ctx.stroke()
-          const ang = Math.atan2(ey - sy, ex - sx)
-          const hx1 = ex - headLen * Math.cos(ang - phi)
-          const hy1 = ey - headLen * Math.sin(ang - phi)
-          const hx2 = ex - headLen * Math.cos(ang + phi)
-          const hy2 = ey - headLen * Math.sin(ang + phi)
-          ctx.beginPath()
-          ctx.moveTo(ex, ey)
-          ctx.lineTo(hx1, hy1)
-          ctx.moveTo(ex, ey)
-          ctx.lineTo(hx2, hy2)
-          ctx.stroke()
-          ctx.globalAlpha = 1.0
+          drawVisibleArrow(sx, sy, ex, ey, {
+            color: '#111111',
+            alpha: 0.88 + 0.12 * aField,
+            lineWidth: 2.9,
+            outlineWidth: 6.6,
+            outlineColor: 'rgba(255,255,255,0.98)',
+            headLen,
+            phi,
+          })
         }
       }
 
@@ -1594,9 +1659,9 @@ export default function CanvasWind({
         if (Array.isArray(featList) && featList.length > 0) {
           const sxScale = Wpx / (xmax - xmin)
           const syScale = Hpx / (ymax - ymin)
-          const headLen = Math.max(6, Math.min(12, Math.floor(Math.min(Wpx, Hpx) * 0.015)))
+          const headLen = Math.max(10, Math.min(18, Math.floor(Math.min(Wpx, Hpx) * 0.022)))
           const phi = Math.PI / 7 // ~25.7 degrees
-          ctx.lineWidth = 1.0
+          const baseLen = Math.max(18, Math.min(60, Math.min(Wpx, Hpx) * 0.078))
           for (let pIdx = 0; pIdx < positions.length; pIdx++) {
             const [wx, wy] = positions[pIdx]
             const [sx, sy] = worldToScreen(wx, wy)
@@ -1615,32 +1680,19 @@ export default function CanvasWind({
               if (!Number.isFinite(dnorm) || dnorm <= 0) continue
               const dirx = ddx / dnorm
               const diry = ddy / dnorm
-              const baseLen = Math.max(10, Math.min(40, Math.min(Wpx, Hpx) * 0.05))
-              const len = Math.max(0, Math.min(1, aField)) * baseLen
+              const len = baseLen * (0.32 + 0.68 * Math.max(0, Math.min(1, aField)))
               const ex = sx + dirx * len
               const ey = sy + diry * len
-              // Stroke color with field-strength alpha
               const col = featureHex(fi)
-              ctx.strokeStyle = col
-              ctx.globalAlpha = 0.9
-              // Main shaft
-              ctx.beginPath()
-              ctx.moveTo(sx, sy)
-              ctx.lineTo(ex, ey)
-              ctx.stroke()
-              // Arrow head
-              const ang = Math.atan2(ey - sy, ex - sx)
-              const hx1 = ex - headLen * Math.cos(ang - phi)
-              const hy1 = ey - headLen * Math.sin(ang - phi)
-              const hx2 = ex - headLen * Math.cos(ang + phi)
-              const hy2 = ey - headLen * Math.sin(ang + phi)
-              ctx.beginPath()
-              ctx.moveTo(ex, ey)
-              ctx.lineTo(hx1, hy1)
-              ctx.moveTo(ex, ey)
-              ctx.lineTo(hx2, hy2)
-              ctx.stroke()
-              ctx.globalAlpha = 1.0
+              drawVisibleArrow(sx, sy, ex, ey, {
+                color: col,
+                alpha: 0.82 + 0.16 * aField,
+                lineWidth: 2.5,
+                outlineWidth: 5.8,
+                outlineColor: 'rgba(255,255,255,0.98)',
+                headLen,
+                phi,
+              })
             }
           }
         }
@@ -1653,12 +1705,11 @@ export default function CanvasWind({
         if (Array.isArray(featList) && featList.length > 0) {
           const sxScale = Wpx / (xmax - xmin)
           const syScale = Hpx / (ymax - ymin)
-          const headLen = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
+          const headLen = Math.max(8, Math.min(14, Math.floor(Math.min(Wpx, Hpx) * 0.019)))
           const phi = Math.PI / 7
           const dx = (xmax - xmin) / W
           const dy = (ymax - ymin) / H
-          const baseLen = Math.max(6, Math.min(24, Math.min(Wpx, Hpx) * 0.035))
-          ctx.lineWidth = 0.9
+          const baseLen = Math.max(13, Math.min(36, Math.min(Wpx, Hpx) * 0.058))
           for (let i = 0; i < H; i++) {
             for (let j = 0; j < W; j++) {
               if (hasMask && !unmasked[i][j]) continue
@@ -1678,20 +1729,19 @@ export default function CanvasWind({
                 if (!Number.isFinite(dnorm) || dnorm <= 0) continue
                 const dirx = ddx / dnorm
                 const diry = ddy / dnorm
-                const len = aField * baseLen
+                const len = baseLen * (0.28 + 0.72 * aField)
                 const ex = sx + dirx * len
                 const ey = sy + diry * len
                 const col = featureHex(fi)
-                ctx.strokeStyle = col
-                ctx.globalAlpha = 0.9
-                ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke()
-                const ang = Math.atan2(ey - sy, ex - sx)
-                const hx1 = ex - headLen * Math.cos(ang - phi)
-                const hy1 = ey - headLen * Math.sin(ang - phi)
-                const hx2 = ex - headLen * Math.cos(ang + phi)
-                const hy2 = ey - headLen * Math.sin(ang + phi)
-                ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(hx1, hy1); ctx.moveTo(ex, ey); ctx.lineTo(hx2, hy2); ctx.stroke()
-                ctx.globalAlpha = 1.0
+                drawVisibleArrow(sx, sy, ex, ey, {
+                  color: col,
+                  alpha: 0.78 + 0.18 * aField,
+                  lineWidth: 2.1,
+                  outlineWidth: 4.9,
+                  outlineColor: 'rgba(255,255,255,0.98)',
+                  headLen,
+                  phi,
+                })
               }
             }
           }
@@ -1703,13 +1753,11 @@ export default function CanvasWind({
         const p99 = magInfo?.p99 || 1.0
         const sxScale = Wpx / (xmax - xmin)
         const syScale = Hpx / (ymax - ymin)
-        const headLen = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
+        const headLen = Math.max(10, Math.min(16, Math.floor(Math.min(Wpx, Hpx) * 0.02)))
         const phi = Math.PI / 7
         const dx = (xmax - xmin) / W
         const dy = (ymax - ymin) / H
-        const baseLen = Math.max(8, Math.min(28, Math.min(Wpx, Hpx) * 0.045))
-        ctx.lineWidth = 1.2
-        ctx.strokeStyle = '#000000'
+        const baseLen = Math.max(16, Math.min(42, Math.min(Wpx, Hpx) * 0.065))
         for (let i = 0; i < H; i++) {
           for (let j = 0; j < W; j++) {
             if (hasMask && !unmasked[i][j]) continue
@@ -1727,17 +1775,18 @@ export default function CanvasWind({
             if (!Number.isFinite(dnorm) || dnorm <= 0) continue
             const dirx = ddx / dnorm
             const diry = ddy / dnorm
-            const len = aField * baseLen
+            const len = baseLen * (0.30 + 0.70 * aField)
             const ex = sx + dirx * len
             const ey = sy + diry * len
-            ctx.globalAlpha = 1.0
-            ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke()
-            const ang = Math.atan2(ey - sy, ex - sx)
-            const hx1 = ex - headLen * Math.cos(ang - phi)
-            const hy1 = ey - headLen * Math.sin(ang - phi)
-            const hx2 = ex - headLen * Math.cos(ang + phi)
-            const hy2 = ey - headLen * Math.sin(ang + phi)
-            ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(hx1, hy1); ctx.moveTo(ex, ey); ctx.lineTo(hx2, hy2); ctx.stroke()
+            drawVisibleArrow(sx, sy, ex, ey, {
+              color: '#000000',
+              alpha: 0.94 + 0.06 * aField,
+              lineWidth: 2.85,
+              outlineWidth: 6.3,
+              outlineColor: 'rgba(255,255,255,0.98)',
+              headLen,
+              phi,
+            })
           }
         }
       }
@@ -1973,10 +2022,9 @@ export default function CanvasWind({
       if (showParticleInitsRef.current) {
         const sxScale = Wpx / (xmax - xmin)
         const syScale = Hpx / (ymax - ymin)
-        const headLen = Math.max(5, Math.min(10, Math.floor(Math.min(Wpx, Hpx) * 0.012)))
+        const headLen = Math.max(7, Math.min(12, Math.floor(Math.min(Wpx, Hpx) * 0.015)))
         const phi = Math.PI / 7
-        const baseLen = Math.max(8, Math.min(28, Math.min(Wpx, Hpx) * 0.045))
-        ctx.lineWidth = 1.0
+        const baseLen = Math.max(12, Math.min(34, Math.min(Wpx, Hpx) * 0.055))
         for (const p of particles) {
           const x0 = p.initX
           const y0 = p.initY
@@ -2015,10 +2063,16 @@ export default function CanvasWind({
             const fid = dominant[mi]?.[mj]
             if (typeof fid === 'number' && fid >= 0) colorHex = featureHex(fid)
           }
+          const [cr, cg, cb] = hexToRgb(colorHex)
+          ctx.fillStyle = `rgba(${cr},${cg},${cb},0.24)`
+          ctx.beginPath(); ctx.arc(sx0, sy0, 6.0, 0, Math.PI * 2); ctx.fill()
+          ctx.fillStyle = 'rgba(255,255,255,0.96)'
+          ctx.beginPath(); ctx.arc(sx0, sy0, 3.7, 0, Math.PI * 2); ctx.fill()
           ctx.fillStyle = colorHex
-          ctx.strokeStyle = colorHex
-          // Dot at init
-          ctx.beginPath(); ctx.arc(sx0, sy0, 2.2, 0, Math.PI * 2); ctx.fill()
+          ctx.beginPath(); ctx.arc(sx0, sy0, 2.8, 0, Math.PI * 2); ctx.fill()
+          ctx.strokeStyle = 'rgba(15,23,42,0.92)'
+          ctx.lineWidth = 1.1
+          ctx.beginPath(); ctx.arc(sx0, sy0, 2.8, 0, Math.PI * 2); ctx.stroke()
           // Arrow from init along driving vector (account for aspect and y-flip)
           const ddx = u0 * sxScale
           const ddy = -v0 * syScale
@@ -2026,16 +2080,18 @@ export default function CanvasWind({
           if (!Number.isFinite(dnorm) || dnorm <= 0) continue
           const dirx = ddx / dnorm
           const diry = ddy / dnorm
-          const len = aField * baseLen
+          const len = baseLen * (0.42 + 0.58 * aField)
           const ex = sx0 + dirx * len
           const ey = sy0 + diry * len
-          ctx.beginPath(); ctx.moveTo(sx0, sy0); ctx.lineTo(ex, ey); ctx.stroke()
-          const ang = Math.atan2(ey - sy0, ex - sx0)
-          const hx1 = ex - headLen * Math.cos(ang - Math.PI / 7)
-          const hy1 = ey - headLen * Math.sin(ang - Math.PI / 7)
-          const hx2 = ex - headLen * Math.cos(ang + Math.PI / 7)
-          const hy2 = ey - headLen * Math.sin(ang + Math.PI / 7)
-          ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(hx1, hy1); ctx.moveTo(ex, ey); ctx.lineTo(hx2, hy2); ctx.stroke()
+          drawVisibleArrow(sx0, sy0, ex, ey, {
+            color: colorHex,
+            alpha: 0.86 + 0.12 * aField,
+            lineWidth: 2.35,
+            outlineWidth: 5.4,
+            outlineColor: 'rgba(255,255,255,0.98)',
+            headLen,
+            phi,
+          })
         }
       }
       rafRef.current = requestAnimationFrame(draw)

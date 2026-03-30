@@ -28,6 +28,53 @@ PAUL_TOL_EXTENDED = PAUL_TOL_FAMILIES + [
     "#99DDFF",  # Pale Blue - Family 9
 ]
 
+DATASET_FEATURE_COLOR_OVERRIDES = {
+    (
+        "horizontal_signal",
+        "vertical_signal",
+    ): [
+        "#0f766e",  # Teal
+        "#c2410c",  # Orange
+    ],
+    (
+        "radius1",
+        "texture1",
+        "perimeter1",
+        "area1",
+        "smoothness1",
+        "compactness1",
+        "concavity1",
+        "concave_points1",
+        "symmetry1",
+        "fractal_dimension1",
+        "radius2",
+        "texture2",
+        "perimeter2",
+        "area2",
+        "smoothness2",
+        "compactness2",
+        "concavity2",
+        "concave_points2",
+        "symmetry2",
+        "fractal_dimension2",
+        "radius3",
+        "texture3",
+        "perimeter3",
+        "area3",
+        "smoothness3",
+        "compactness3",
+        "concavity3",
+        "concave_points3",
+        "symmetry3",
+        "fractal_dimension3",
+    ): [
+        "#0f766e",  # Deep teal
+        "#7c3aed",  # Saturated violet
+        "#b91c1c",  # Deep red
+        "#166534",  # Dark green
+    ],
+}
+
 # Professional styling colors
 BACKGROUND_COLOR = "#F7F7F7"  # Off-white background
 GRID_COLOR = "#E0E0E0"        # Light gray for grid lines
@@ -131,6 +178,37 @@ def assign_family_colors(family_assignments, use_extended_palette=False):
         feature_colors.append(palette[color_idx])
     
     return feature_colors
+
+
+def apply_dataset_feature_color_overrides(col_labels, feature_colors, family_assignments=None):
+    """
+    Override feature colors for datasets that need a fixed presentation palette.
+
+    This is currently used for:
+    - `simple2d`, so its feature hues do not collide with the blue point markers
+    - `breast_cancer_wdbc`, so feature hues stay far from the light label palette
+    """
+    labels = tuple(str(label) for label in (col_labels or []))
+    colors = list(feature_colors or [])
+
+    override_palette = DATASET_FEATURE_COLOR_OVERRIDES.get(labels)
+    if override_palette is None:
+        return colors
+
+    assignments = list(family_assignments or [])
+    if len(assignments) == len(labels):
+        family_to_color = {}
+        next_color_idx = 0
+        overridden = []
+        for family_id in assignments:
+            family_key = int(family_id)
+            if family_key not in family_to_color:
+                family_to_color[family_key] = override_palette[next_color_idx % len(override_palette)]
+                next_color_idx += 1
+            overridden.append(family_to_color[family_key])
+        return overridden
+
+    return [override_palette[idx % len(override_palette)] for idx in range(len(labels))]
 
 
 def get_family_color_palette(n_families):

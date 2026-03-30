@@ -389,6 +389,17 @@ def compute():
         palette = list(getattr(fw_config, "GLASBEY_COLORS", [])) or ["#1f77b4"]
         colors = [palette[i % len(palette)] for i in range(n_features)]
 
+    try:
+        from featurewind.visualization import color_system
+
+        colors = color_system.apply_dataset_feature_color_overrides(
+            col_labels,
+            colors,
+            family_assignments=family_assignments,
+        )
+    except Exception:
+        pass
+
     bbox = list(getattr(fw_config, "bounding_box", [0, 1, 0, 1]))
 
     # Convert to serializable lists
