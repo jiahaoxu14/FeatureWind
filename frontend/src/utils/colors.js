@@ -2,6 +2,7 @@
 // A separate dark palette is reserved for currently visualized features only,
 // so feature hues stay clearly distinct from the light label colors used for points.
 export const DEFAULT_FEATURE_HUE = '#000000'
+export const FEATURE_COLOR_AUTO = '__auto__'
 export const FEATURE_PALETTE = [
   '#0f766e', // deep teal
   '#c2410c', // burnt orange
@@ -12,6 +13,18 @@ export const FEATURE_PALETTE = [
   '#854d0e', // bronze
   '#1f2937', // charcoal
   '#9f1239', // wine
+]
+export const FEATURE_COLOR_OPTIONS = [
+  { value: FEATURE_COLOR_AUTO, label: 'Default' },
+  { value: '#0f766e', label: 'Deep Teal' },
+  { value: '#c2410c', label: 'Burnt Orange' },
+  { value: '#6d28d9', label: 'Deep Violet' },
+  { value: '#b91c1c', label: 'Crimson' },
+  { value: '#166534', label: 'Forest Green' },
+  { value: '#be185d', label: 'Magenta' },
+  { value: '#854d0e', label: 'Bronze' },
+  { value: '#1f2937', label: 'Charcoal' },
+  { value: '#9f1239', label: 'Wine' },
 ]
 
 // Label palette — used exclusively for data-point markers.

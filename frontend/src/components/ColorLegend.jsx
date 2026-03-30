@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 const MODE_META = {
   default: { label: 'Single', hint: 'Single feature, single hue.' },
   aggregate: { label: 'Aggregate', hint: 'Select any number of features. Trails and particles follow the summed field.' },
-  compare: { label: 'Compare', hint: 'Select up to 4 features. Each trail and particle stays on one feature.' },
+  compare: { label: 'Compare', hint: 'Select up to 9 features. Each trail and particle stays on one feature.' },
 }
 
 export default function ColorLegend({
@@ -16,12 +16,15 @@ export default function ColorLegend({
   onSelectAll,
   onToggleCompareFeature,
   onClearCompare,
-  compareCap = 4,
+  compareCap = 9,
   message = '',
   activeFeatureColorMap = {},
+  featureColorOverrides = {},
+  featureColorOptions = [],
+  onSetFeatureColor,
   labelColorMap = {},
 }) {
-  const { col_labels = [], featureRanking = null } = payload || {}
+  const { col_labels = [] } = payload || {}
   const [query, setQuery] = useState('')
   const isOverviewMode = mode === 'overview'
   const isAggregateMode = mode === 'aggregate'
@@ -36,34 +39,26 @@ export default function ColorLegend({
 
   const compareSet = useMemo(() => new Set(Array.isArray(compareFeatureIndices) ? compareFeatureIndices : []), [compareFeatureIndices])
 
-  const ranking = useMemo(() => {
+  const alphabeticalIndices = useMemo(() => {
     const n = Array.isArray(col_labels) ? col_labels.length : 0
-    const fallback = [...Array(n).keys()]
-    if (!Array.isArray(featureRanking)) return fallback
-    const seen = new Set()
-    const ordered = []
-    for (const raw of featureRanking) {
-      const idx = Number(raw)
-      if (!Number.isInteger(idx) || idx < 0 || idx >= n || seen.has(idx)) continue
-      seen.add(idx)
-      ordered.push(idx)
-    }
-    for (let idx = 0; idx < n; idx++) {
-      if (!seen.has(idx)) ordered.push(idx)
-    }
+    const ordered = [...Array(n).keys()]
+    ordered.sort((a, b) => String(col_labels[a] || '').localeCompare(String(col_labels[b] || '')))
     return ordered
-  }, [col_labels, featureRanking])
+  }, [col_labels])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return ranking
-    return ranking.filter((idx) => String(col_labels[idx] || '').toLowerCase().includes(q))
-  }, [ranking, query, col_labels])
+    if (!q) return alphabeticalIndices
+    return alphabeticalIndices.filter((idx) => String(col_labels[idx] || '').toLowerCase().includes(q))
+  }, [alphabeticalIndices, query, col_labels])
 
   const compareSelected = useMemo(() => {
     return (Array.isArray(compareFeatureIndices) ? compareFeatureIndices : [])
       .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < col_labels.length)
   }, [compareFeatureIndices, col_labels.length])
+  const compareSelectedAlphabetical = useMemo(() => {
+    return [...compareSelected].sort((a, b) => String(col_labels[a] || '').localeCompare(String(col_labels[b] || '')))
+  }, [compareSelected, col_labels])
   const compareLimitReached = isCompareMode && compareSelected.length >= compareCap
 
   function handleMode(nextMode) {
@@ -88,6 +83,13 @@ export default function ColorLegend({
     if (isMultiFeatureMode) return compareSet.has(idx) ? 'Selected' : 'Add'
     if (isOverviewMode) return 'Open'
     return 'Select'
+  }
+
+  function handleFeatureColorChange(idx, event) {
+    event.stopPropagation()
+    if (typeof onSetFeatureColor === 'function') {
+      onSetFeatureColor(idx, event.target.value)
+    }
   }
 
   return (
@@ -173,7 +175,7 @@ export default function ColorLegend({
 
       {isMultiFeatureMode && compareSelected.length > 0 && (
         <div className="feature-chip-list">
-          {compareSelected.map((idx) => (
+          {compareSelectedAlphabetical.map((idx) => (
             <button
               key={`chip-${idx}`}
               type="button"
@@ -206,36 +208,56 @@ export default function ColorLegend({
           const selected = isSelected(idx)
           const disabled = isCompareMode && !selected && compareLimitReached
           const controlType = isMultiFeatureMode ? 'checkbox' : 'radio'
+          const featureColorValue = typeof featureColorOverrides[idx] === 'string'
+            ? featureColorOverrides[idx]
+            : (featureColorOptions[0]?.value || '')
           return (
-            <button
-              key={idx}
-              type="button"
-              className={`feature-row${selected ? ' active' : ''}`}
-              onClick={() => handleFeatureAction(idx)}
-              disabled={disabled}
-            >
-              <span className="feature-row-main">
-                {isOverviewMode ? (
-                  <span className="feature-open-indicator">Open</span>
-                ) : (
-                  <input
-                    type={controlType}
-                    readOnly
-                    checked={selected}
-                    disabled={disabled}
-                    tabIndex={-1}
+            <div key={idx} className="feature-row-shell">
+              <button
+                type="button"
+                className={`feature-row${selected ? ' active' : ''}`}
+                onClick={() => handleFeatureAction(idx)}
+                disabled={disabled}
+              >
+                <span className="feature-row-main">
+                  {isOverviewMode ? (
+                    <span className="feature-open-indicator">Open</span>
+                  ) : (
+                    <input
+                      type={controlType}
+                      readOnly
+                      checked={selected}
+                      disabled={disabled}
+                      tabIndex={-1}
+                    />
+                  )}
+                  <span
+                    className="legend-swatch"
+                    style={{ background: activeFeatureColorMap[idx] || '#f3f4f6' }}
                   />
-                )}
-                <span
-                  className="legend-swatch"
-                  style={{ background: activeFeatureColorMap[idx] || '#f3f4f6' }}
-                />
-                <span className="feature-label" title={col_labels[idx]}>
-                  {col_labels[idx]}
+                  <span className="feature-label" title={col_labels[idx]}>
+                    {col_labels[idx]}
+                  </span>
                 </span>
-              </span>
-              <span className="feature-row-action">{rowActionLabel(idx)}</span>
-            </button>
+                <span className="feature-row-action">{rowActionLabel(idx)}</span>
+              </button>
+              <label className="feature-color-control" title={`Color for ${col_labels[idx]}`}>
+                <span className="feature-color-control-label">Color</span>
+                <select
+                  className="feature-color-select"
+                  value={featureColorValue}
+                  onChange={(event) => handleFeatureColorChange(idx, event)}
+                  onClick={(event) => event.stopPropagation()}
+                  disabled={!featureColorOptions.length}
+                >
+                  {featureColorOptions.map((option) => (
+                    <option key={`${idx}-${option.value}`} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
           )
         })}
         {filtered.length === 0 && (

@@ -77,10 +77,7 @@ export default function CanvasWind({
   brushRadius = 1,
   gradientFeatureIndices = null,
   speedScale = 1.0,
-  tailDurationSec = 1.2,
-  trailTailMin = 0.10,
-  trailTailExp = 2.0,
-  lifetimeTailMultiplier = 3.0,
+  animatedTrailLengthPx = 140,
   size = null,
   width = null,
   height = null,
@@ -110,6 +107,7 @@ export default function CanvasWind({
   const brushRadiusRef = useRef(Math.max(1, Math.floor(brushRadius || 1)))
   const selectPointsModeRef = useRef(!!selectPointsMode)
   const pointBrushRadiusPxRef = useRef(Math.max(4, Math.floor(pointBrushRadiusPx || 14)))
+  const animatedTrailLengthPxRef = useRef(Math.max(20, Number(animatedTrailLengthPx) || 140))
   const selectedPointIndicesRef = useRef(Array.isArray(selectedPointIndices) ? selectedPointIndices : [])
   const staticTrailSeedsRef = useRef([])
   const staticTrailsRef = useRef([])
@@ -158,6 +156,7 @@ export default function CanvasWind({
   useEffect(() => { brushRadiusRef.current = Math.max(1, Math.floor(brushRadius || 1)) }, [brushRadius])
   useEffect(() => { selectPointsModeRef.current = !!selectPointsMode }, [selectPointsMode])
   useEffect(() => { pointBrushRadiusPxRef.current = Math.max(4, Math.floor(pointBrushRadiusPx || 14)) }, [pointBrushRadiusPx])
+  useEffect(() => { animatedTrailLengthPxRef.current = Math.max(20, Number(animatedTrailLengthPx) || 140) }, [animatedTrailLengthPx])
   useEffect(() => { selectedPointIndicesRef.current = Array.isArray(selectedPointIndices) ? selectedPointIndices : [] }, [selectedPointIndices])
   useEffect(() => { staticTrailsCbRef.current = onStaticTrailsChange }, [onStaticTrailsChange])
   useEffect(() => { viewStateCbRef.current = onViewStateChange }, [onViewStateChange])
@@ -229,21 +228,11 @@ export default function CanvasWind({
   const uSum = useMemo(() => sumSelectedGrid(uAll, indices), [uAll, indices])
   const vSum = useMemo(() => sumSelectedGrid(vAll, indices), [vAll, indices])
 
-  // Precompute min/max for selected feature column to color points
+  // Use a shared normalized [0,1] hue scale for all features in Point Color By mode.
   const pointColorStats = useMemo(() => {
     const idx = (typeof pointColorFeatureIndex === 'number') ? pointColorFeatureIndex : null
     if (!Array.isArray(feature_values) || idx === null) return null
-    let min = Infinity, max = -Infinity
-    for (let r = 0; r < feature_values.length; r++) {
-      const row = feature_values[r]
-      if (!row || idx < 0 || idx >= row.length) continue
-      const v = Number(row[idx])
-      if (!Number.isFinite(v)) continue
-      if (v < min) min = v
-      if (v > max) max = v
-    }
-    if (!Number.isFinite(min) || !Number.isFinite(max)) return null
-    return { idx, min, max }
+    return { idx }
   }, [feature_values, pointColorFeatureIndex])
 
   const pointDrawOrder = useMemo(() => {
@@ -363,11 +352,9 @@ export default function CanvasWind({
     const FIELD_EPS = 1e-8
     const FIXED_ADVECTION_STEP_SEC = 1 / 60
     const DISPLAY_SPEED_PX = Math.max(1, 120 * (Number(speedScale) || 1))
-    const TAIL_DURATION_SEC = Math.max(0.1, Number(tailDurationSec) || 1.2)
-    const TRAIL_TAIL_MIN = Math.max(0, Math.min(1, trailTailMin))
-    const TRAIL_TAIL_EXP = Math.max(0.5, trailTailExp)
-    const LIFETIME_TAIL_MULTIPLIER = Math.max(0.5, Number(lifetimeTailMultiplier) || 3.0)
-    const MAX_LIFETIME_SEC = LIFETIME_TAIL_MULTIPLIER * TAIL_DURATION_SEC
+    const TRAIL_TAIL_MIN = 0.12
+    const TRAIL_TAIL_EXP = 1.35
+    const MAX_PARTICLE_LIFETIME_SEC = 8.0
 
     // Optional mask helpers
     let hasMask = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
@@ -382,6 +369,35 @@ export default function CanvasWind({
       const m = hex.match(/^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i)
       if (!m) return [20, 20, 20]
       return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+    }
+
+    function sampleViridis(t) {
+      const stops = [
+        [0.000, [68, 1, 84]],
+        [0.125, [71, 45, 123]],
+        [0.250, [59, 82, 139]],
+        [0.375, [44, 114, 142]],
+        [0.500, [33, 145, 140]],
+        [0.625, [40, 174, 128]],
+        [0.750, [94, 201, 98]],
+        [0.875, [173, 220, 48]],
+        [1.000, [253, 231, 37]],
+      ]
+      const value = Math.max(0, Math.min(1, Number(t) || 0))
+      for (let idx = 1; idx < stops.length; idx++) {
+        const [rightT, rightRgb] = stops[idx]
+        if (value <= rightT) {
+          const [leftT, leftRgb] = stops[idx - 1]
+          const span = Math.max(1e-9, rightT - leftT)
+          const a = (value - leftT) / span
+          return [
+            Math.round(leftRgb[0] + (rightRgb[0] - leftRgb[0]) * a),
+            Math.round(leftRgb[1] + (rightRgb[1] - leftRgb[1]) * a),
+            Math.round(leftRgb[2] + (rightRgb[2] - leftRgb[2]) * a),
+          ]
+        }
+      }
+      return stops[stops.length - 1][1]
     }
 
     function worldToCell(x, y) {
@@ -411,6 +427,27 @@ export default function CanvasWind({
         x: v.xmin + (cx / Wpx) * (v.xmax - v.xmin),
         y: v.ymin + ((Hpx - cy) / Hpx) * (v.ymax - v.ymin),
       }
+    }
+
+    function getAnimatedTrailLengthPx() {
+      return Math.max(20, Number(animatedTrailLengthPxRef.current) || 140)
+    }
+
+    function trimParticleHistoryByScreenLength(hist) {
+      if (!Array.isArray(hist) || hist.length <= 2) return
+      const maxTrailPx = getAnimatedTrailLengthPx()
+      let cumulativePx = 0
+      let keepLength = hist.length
+      for (let idx = 0; idx < hist.length - 1; idx++) {
+        const [sx0, sy0] = worldToScreen(hist[idx].x, hist[idx].y)
+        const [sx1, sy1] = worldToScreen(hist[idx + 1].x, hist[idx + 1].y)
+        cumulativePx += Math.hypot(sx1 - sx0, sy1 - sy0)
+        if (cumulativePx > maxTrailPx) {
+          keepLength = Math.max(2, idx + 2)
+          break
+        }
+      }
+      if (hist.length > keepLength) hist.length = keepLength
     }
 
     function clampView(nextXmin, nextXmax, nextYmin, nextYmax) {
@@ -1175,13 +1212,11 @@ export default function CanvasWind({
         p.y = advected.y
         p.ageSec += FIXED_ADVECTION_STEP_SEC
         p.hist.unshift({ x: p.x, y: p.y, t: simTimeSec })
-        while (p.hist.length > 2 && (simTimeSec - p.hist[p.hist.length - 1].t) > TAIL_DURATION_SEC) {
-          p.hist.pop()
-        }
+        trimParticleHistoryByScreenLength(p.hist)
 
         // Respawn if out of bounds, over-age, or in masked region
         const outOfBounds = p.x < xmin || p.x > xmax || p.y < ymin || p.y > ymax
-        const overAge = p.ageSec > MAX_LIFETIME_SEC
+        const overAge = p.ageSec > MAX_PARTICLE_LIFETIME_SEC
         const inMasked = isMaskedAt(p.x, p.y, particleFeatureIndex)
         if (outOfBounds || overAge || inMasked) {
           const { x: nx, y: ny } = randomSpawn(particleFeatureIndex)
@@ -1227,7 +1262,7 @@ export default function CanvasWind({
         lineWidth = 1.8,
         outlineWidth = lineWidth + 2.0,
         outlineColor = 'rgba(255,255,255,0.94)',
-        headLen = 10,
+        headLen = 12,
         phi = Math.PI / 7,
       } = {}) {
         if (!Number.isFinite(sx) || !Number.isFinite(sy) || !Number.isFinite(ex) || !Number.isFinite(ey)) return
@@ -1569,17 +1604,24 @@ export default function CanvasWind({
         }
       }
 
-      function drawPointGlyph(cx, cy, fillColor) {
-        const rgb = fillColor.startsWith('#') ? hexToRgb(fillColor) : [180, 180, 180]
+      function drawPointGlyph(cx, cy, fillColor, fillRgb = null, options = {}) {
+        const rgb = Array.isArray(fillRgb) && fillRgb.length >= 3
+          ? fillRgb
+          : (fillColor.startsWith('#') ? hexToRgb(fillColor) : [180, 180, 180])
+        const solidHalo = !!options.solidHalo
 
         // Outer soft bloom
-        ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.15)`
+        ctx.fillStyle = solidHalo
+          ? `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`
+          : `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.15)`
         ctx.beginPath()
         ctx.arc(cx, cy, shapeSize * 3.5, 0, Math.PI * 2)
         ctx.fill()
 
         // Inner tighter bloom
-        ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.30)`
+        ctx.fillStyle = solidHalo
+          ? `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`
+          : `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.30)`
         ctx.beginPath()
         ctx.arc(cx, cy, shapeSize * 2.0, 0, Math.PI * 2)
         ctx.fill()
@@ -1604,7 +1646,7 @@ export default function CanvasWind({
 
       if (!showParticleInitsRef.current) {
         // Resolve point fill color in priority order:
-        //   1. pointColorStats (grayscale-by-feature, explicit user selection) → overrides label
+        //   1. pointColorStats (shared hue-by-feature-value, explicit user selection) → overrides label
         //   2. labelColorMap   (category color from label palette)
         //   3. default gray
         const hasLabels = Array.isArray(point_labels) && point_labels.length === positions.length
@@ -1614,25 +1656,28 @@ export default function CanvasWind({
           const [x, y] = positions[idx]
           const [sx, sy] = worldToScreen(x, y)
           let pointFill = '#d9d9d9'
+          let pointFillRgb = null
+          let solidHalo = false
 
           if (pointColorStats && Array.isArray(feature_values)) {
-            // Grayscale-by-feature mode
+            // Feature-value mode: use one shared normalized hue map for every feature.
             const col = pointColorStats.idx
             const row = feature_values[idx]
             const v = (row && col >= 0 && col < row.length) ? Number(row[col]) : NaN
             let t = 0.5
-            if (Number.isFinite(v) && pointColorStats.max > pointColorStats.min) {
-              t = Math.max(0, Math.min(1, (v - pointColorStats.min) / (pointColorStats.max - pointColorStats.min)))
+            if (Number.isFinite(v)) {
+              t = Math.max(0, Math.min(1, v))
             }
-            const g = Math.round(255 * (1 - t))
-            pointFill = `rgb(${g},${g},${g})`
+            pointFillRgb = sampleViridis(t)
+            pointFill = `rgb(${pointFillRgb[0]},${pointFillRgb[1]},${pointFillRgb[2]})`
+            solidHalo = true
           } else if (hasLabels && activeLabelMap) {
             // Label color mode — one consistent circle per label category
             const labelKey = String(point_labels[idx])
             pointFill = activeLabelMap[labelKey] || '#d9d9d9'
           }
 
-          drawPointGlyph(sx, sy, pointFill)
+          drawPointGlyph(sx, sy, pointFill, pointFillRgb, { solidHalo })
         }
       }
 
@@ -1659,7 +1704,7 @@ export default function CanvasWind({
         const p99 = magInfo?.p99 || 1.0
         const sxScale = Wpx / (xmax - xmin)
         const syScale = Hpx / (ymax - ymin)
-        const headLen = Math.max(10, Math.min(20, Math.floor(Math.min(Wpx, Hpx) * 0.024)))
+        const headLen = Math.max(11, Math.min(22, Math.floor(Math.min(Wpx, Hpx) * 0.026)))
         const baseLen = Math.max(20, Math.min(64, Math.min(Wpx, Hpx) * 0.085))
         const phi = Math.PI / 7
         for (let pIdx = 0; pIdx < positions.length; pIdx++) {
@@ -1700,7 +1745,7 @@ export default function CanvasWind({
         if (Array.isArray(featList) && featList.length > 0) {
           const sxScale = Wpx / (xmax - xmin)
           const syScale = Hpx / (ymax - ymin)
-          const headLen = Math.max(10, Math.min(18, Math.floor(Math.min(Wpx, Hpx) * 0.022)))
+          const headLen = Math.max(11, Math.min(20, Math.floor(Math.min(Wpx, Hpx) * 0.024)))
           const phi = Math.PI / 7 // ~25.7 degrees
           const baseLen = Math.max(18, Math.min(60, Math.min(Wpx, Hpx) * 0.078))
           for (let pIdx = 0; pIdx < positions.length; pIdx++) {
@@ -1746,7 +1791,7 @@ export default function CanvasWind({
         if (Array.isArray(featList) && featList.length > 0) {
           const sxScale = Wpx / (xmax - xmin)
           const syScale = Hpx / (ymax - ymin)
-          const headLen = Math.max(8, Math.min(14, Math.floor(Math.min(Wpx, Hpx) * 0.019)))
+          const headLen = Math.max(9, Math.min(16, Math.floor(Math.min(Wpx, Hpx) * 0.021)))
           const phi = Math.PI / 7
           const dx = (xmax - xmin) / W
           const dy = (ymax - ymin) / H
@@ -1794,7 +1839,7 @@ export default function CanvasWind({
         const p99 = magInfo?.p99 || 1.0
         const sxScale = Wpx / (xmax - xmin)
         const syScale = Hpx / (ymax - ymin)
-        const headLen = Math.max(10, Math.min(16, Math.floor(Math.min(Wpx, Hpx) * 0.02)))
+        const headLen = Math.max(11, Math.min(18, Math.floor(Math.min(Wpx, Hpx) * 0.022)))
         const phi = Math.PI / 7
         const dx = (xmax - xmin) / W
         const dy = (ymax - ymin) / H
@@ -1852,11 +1897,24 @@ export default function CanvasWind({
           p._headRgb = undefined
           p._headWidth = undefined
           if (!Array.isArray(p.hist) || p.hist.length < 2) continue
-          for (let t = p.hist.length - 2; t >= 0; t--) {
+          const trailLengthPx = getAnimatedTrailLengthPx()
+          const screenHist = p.hist.map((point) => {
+            const [sx, sy] = worldToScreen(point.x, point.y)
+            return { ...point, sx, sy }
+          })
+          const distanceFromHeadPx = new Float32Array(screenHist.length)
+          let cumulativePx = 0
+          for (let idx = 1; idx < screenHist.length; idx++) {
+            const prev = screenHist[idx - 1]
+            const curr = screenHist[idx]
+            cumulativePx += Math.hypot(curr.sx - prev.sx, curr.sy - prev.sy)
+            distanceFromHeadPx[idx] = cumulativePx
+          }
+          for (let t = screenHist.length - 2; t >= 0; t--) {
           // Fade from tail (low alpha) to head (high alpha)
-          const head = p.hist[t]
-          const tail = p.hist[t + 1]
-          const relHead = Math.max(0, Math.min(1, 1 - ((simTimeSec - head.t) / TAIL_DURATION_SEC)))
+          const head = screenHist[t]
+          const tail = screenHist[t + 1]
+          const relHead = Math.max(0, Math.min(1, 1 - (distanceFromHeadPx[t] / Math.max(trailLengthPx, 1))))
           const aTail = TRAIL_TAIL_MIN + (1 - TRAIL_TAIL_MIN) * Math.pow(relHead, TRAIL_TAIL_EXP)
           const x1 = tail.x
           const y1 = tail.y
@@ -1912,8 +1970,10 @@ export default function CanvasWind({
             p._headWidth = baseParticleWidth
           }
           if (alpha <= 0.01) continue
-          const [sx0, sy0] = worldToScreen(x0, y0)
-          const [sx1, sy1] = worldToScreen(x1, y1)
+          const sx0 = head.sx
+          const sy0 = head.sy
+          const sx1 = tail.sx
+          const sy1 = tail.sy
           ctx.lineWidth = baseParticleWidth
           ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha.toFixed(3)})`
           ctx.beginPath()
@@ -1937,7 +1997,7 @@ export default function CanvasWind({
             const [sx0, sy0] = worldToScreen(x0, y0)
             const [sx1, sy1] = worldToScreen(x1, y1)
             const ang = Math.atan2(sy0 - sy1, sx0 - sx1)
-            const headLen = Math.max(8, Math.min(18, 6 + headWidth * 3.0))
+            const headLen = Math.max(9, Math.min(20, 7 + headWidth * 3.4))
             ctx.lineWidth = Math.max(1.0, headWidth * 0.95)
             ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha.toFixed(3)})`
             const hx1 = sx0 - headLen * Math.cos(ang - phi)
@@ -2018,7 +2078,7 @@ export default function CanvasWind({
             const [sx0, sy0] = worldToScreen(lastSeg.x0, lastSeg.y0)
             const [sx1, sy1] = worldToScreen(lastSeg.x1, lastSeg.y1)
             const ang = Math.atan2(sy1 - sy0, sx1 - sx0)
-            const headLen = Math.max(8, Math.min(18, 6 + staticStrokeWidth * 2.4))
+            const headLen = Math.max(9, Math.min(20, 7 + staticStrokeWidth * 2.7))
             const phi = Math.PI / 7
             ctx.lineWidth = Math.max(1.8, staticOutlineWidth * 0.95)
             ctx.strokeStyle = `rgba(${outlineRgb[0]},${outlineRgb[1]},${outlineRgb[2]},0.9)`
@@ -2063,7 +2123,7 @@ export default function CanvasWind({
       if (showParticleInitsRef.current) {
         const sxScale = Wpx / (xmax - xmin)
         const syScale = Hpx / (ymax - ymin)
-        const headLen = Math.max(7, Math.min(12, Math.floor(Math.min(Wpx, Hpx) * 0.015)))
+        const headLen = Math.max(8, Math.min(14, Math.floor(Math.min(Wpx, Hpx) * 0.017)))
         const phi = Math.PI / 7
         const baseLen = Math.max(12, Math.min(34, Math.min(Wpx, Hpx) * 0.055))
         for (const p of particles) {
@@ -2471,10 +2531,6 @@ export default function CanvasWind({
     pointColorStats,
     pointDrawOrder,
     particleCount,
-    tailDurationSec,
-    trailTailMin,
-    trailTailExp,
-    lifetimeTailMultiplier,
     speedScale,
     trailLineWidth,
     pointSize,

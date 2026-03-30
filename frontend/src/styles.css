@@ -8,7 +8,7 @@
   --muted: #6b7280;
   --accent: #2563eb;
   --sidebar-width: 460px;
-  --features-width: 320px;
+  --features-width: 440px;
   --workspace-gap: 20px;
   --app-chrome-height: 98px;
   --map-panel-chrome: 88px;
@@ -54,7 +54,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
 .workspace { display: flex; gap: var(--workspace-gap); align-items: stretch; justify-content: center; height: 100%; min-height: 0; }
 .main-column { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; }
 .sidebar-column { flex: 0 0 var(--sidebar-width); width: min(100%, var(--sidebar-width)); min-width: 320px; max-width: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--workspace-gap); align-items: stretch; height: 100%; }
-.features-column { flex: 0 0 var(--features-width); width: min(100%, var(--features-width)); min-width: 260px; max-width: 100%; min-height: 0; display: flex; flex-direction: column; height: 100%; }
+.features-column { flex: 0 0 var(--features-width); width: min(100%, var(--features-width)); min-width: 340px; max-width: 100%; min-height: 0; display: flex; flex-direction: column; height: 100%; }
 .panel-section { min-width: 0; min-height: 0; }
 .sidebar-panel { display: flex; flex-direction: column; }
 .map-panel { padding: 12px; display: flex; flex-direction: column; height: 100%; min-height: 0; }
@@ -158,6 +158,12 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
   color: var(--text);
   cursor: pointer;
 }
+.feature-row-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  gap: 8px;
+  align-items: stretch;
+}
 .feature-row {
   display: flex;
   align-items: center;
@@ -196,6 +202,35 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
   font-size: 12px;
   color: var(--muted);
   font-weight: 600;
+}
+.feature-color-control {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+.feature-color-control-label {
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.feature-color-select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.feature-color-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .feature-open-indicator {
   display: inline-flex;
@@ -258,6 +293,12 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
 }
 
 @media (max-width: 900px) {
+  .feature-row-shell {
+    grid-template-columns: 1fr;
+  }
+  .feature-color-select {
+    min-height: 32px;
+  }
   .app { padding: 16px; }
   .workspace { gap: 16px; }
   .controls-grid,

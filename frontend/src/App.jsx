@@ -4,13 +4,13 @@ import { uploadFile, compute, exportStaticTrailFigures } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
 import WindVane from './components/WindVane.jsx'
 import ColorLegend from './components/ColorLegend.jsx'
-import { DEFAULT_FEATURE_HUE, FEATURE_PALETTE, buildFeatureColorMap, buildLabelColorMap } from './utils/colors.js'
+import { DEFAULT_FEATURE_HUE, FEATURE_COLOR_AUTO, FEATURE_COLOR_OPTIONS, FEATURE_PALETTE, buildFeatureColorMap, buildLabelColorMap } from './utils/colors.js'
 
 const MODE_DEFAULT = 'default'
 const MODE_AGGREGATE = 'aggregate'
 const MODE_COMPARE = 'compare'
 const MODE_OVERVIEW = 'overview'
-const COMPARE_MAX = 4
+const COMPARE_MAX = 9
 const COMPARE_PALETTE = FEATURE_PALETTE
 const OVERVIEW_NEUTRAL = '#4b5563'
 const WIND_MAP_TOOL_PAN = 'pan'
@@ -77,6 +77,7 @@ function sanitizePointIndices(indices, count) {
 export default function App() {
   const fileInputRef = useRef(null)
   const lastDatasetIdRef = useRef(null)
+  const allowedFeatureColorSet = useMemo(() => new Set(FEATURE_PALETTE.map((color) => String(color).toLowerCase())), [])
   const [file, setFile] = useState(null)
   const [dataset, setDataset] = useState(null)
   const [gridRes, setGridRes] = useState(25)
@@ -96,6 +97,7 @@ export default function App() {
   const [mode, setMode] = useState(MODE_DEFAULT)
   const [defaultFeatureIndex, setDefaultFeatureIndex] = useState(null)
   const [compareFeatureIndices, setCompareFeatureIndices] = useState([])
+  const [featureColorOverrides, setFeatureColorOverrides] = useState({})
   const [featureMessage, setFeatureMessage] = useState('')
   const [advancedControlsOpen, setAdvancedControlsOpen] = useState(false)
 
@@ -104,11 +106,8 @@ export default function App() {
   const [showMaskOverlay, setShowMaskOverlay] = useState(false)
   const [particleCount, setParticleCount] = useState(100)
   const [speedScale, setSpeedScale] = useState(1.0)
-  const [tailDurationSec, setTailDurationSec] = useState(1.2)
-  const [trailTailMin, setTrailTailMin] = useState(0.10)
-  const [trailTailExp, setTrailTailExp] = useState(2.0)
+  const [animatedTrailLengthPx, setAnimatedTrailLengthPx] = useState(140)
   const [trailLineWidth, setTrailLineWidth] = useState(3.2)
-  const [lifetimeTailMultiplier, setLifetimeTailMultiplier] = useState(3.0)
   const [maskDilateRadiusCells, setMaskDilateRadiusCells] = useState(1)
   const [showHull, setShowHull] = useState(false)
   const [showVectorLabels, setShowVectorLabels] = useState(false)
@@ -147,6 +146,11 @@ export default function App() {
   const pointCount = Array.isArray(payload?.positions) ? payload.positions.length : 0
   const allFeatureIndices = useMemo(() => [...Array(featureCount).keys()], [featureCount])
   const featureRanking = useMemo(() => resolveFeatureRanking(payload, featureCount), [payload, featureCount])
+  const alphabeticalFeatureIndices = useMemo(() => {
+    const ordered = [...Array(featureCount).keys()]
+    ordered.sort((a, b) => String(payload?.col_labels?.[a] || '').localeCompare(String(payload?.col_labels?.[b] || '')))
+    return ordered
+  }, [featureCount, payload?.col_labels])
 
   const effectiveDefaultFeatureIndex = useMemo(() => {
     if (Number.isInteger(defaultFeatureIndex) && defaultFeatureIndex >= 0 && defaultFeatureIndex < featureCount) {
@@ -184,8 +188,14 @@ export default function App() {
     visualizedFeatureIndices.forEach((featureIdx, order) => {
       out[featureIdx] = COMPARE_PALETTE[order % COMPARE_PALETTE.length] || DEFAULT_FEATURE_HUE
     })
+    for (const [rawIdx, rawColor] of Object.entries(featureColorOverrides || {})) {
+      const idx = Number(rawIdx)
+      const color = String(rawColor || '').trim().toLowerCase()
+      if (!Number.isInteger(idx) || idx < 0 || idx >= featureCount || !allowedFeatureColorSet.has(color)) continue
+      out[idx] = color
+    }
     return out
-  }, [featureCount, visualizedFeatureIndices])
+  }, [featureCount, visualizedFeatureIndices, featureColorOverrides, allowedFeatureColorSet])
 
   // Label color map — stable per dataset, never derived from payload.colors
   const labelColorMap = useMemo(() => buildLabelColorMap(payload?.point_labels), [payload?.point_labels])
@@ -306,6 +316,29 @@ export default function App() {
     if (!Array.isArray(selectedPointIndices) || selectedPointIndices.length > 0) return
     setStaticTrailData([])
   }, [selectedPointIndices])
+
+  useEffect(() => {
+    setFeatureColorOverrides({})
+  }, [payload?.datasetId])
+
+  useEffect(() => {
+    setFeatureColorOverrides((prev) => {
+      if (!prev || typeof prev !== 'object') return {}
+      const next = {}
+      let changed = false
+      for (const [rawIdx, rawColor] of Object.entries(prev)) {
+        const idx = Number(rawIdx)
+        const color = String(rawColor || '').trim().toLowerCase()
+        if (!Number.isInteger(idx) || idx < 0 || idx >= featureCount || !allowedFeatureColorSet.has(color)) {
+          changed = true
+          continue
+        }
+        next[idx] = color
+      }
+      if (!changed && Object.keys(next).length === Object.keys(prev).length) return prev
+      return next
+    })
+  }, [featureCount, allowedFeatureColorSet])
 
   function toggleCell(i, j) {
     setSelectedCells((prev) => {
@@ -440,6 +473,26 @@ export default function App() {
     setFeatureMessage('')
     setCompareFeatureIndices([])
     setMode((prevMode) => (prevMode === MODE_AGGREGATE ? MODE_AGGREGATE : MODE_COMPARE))
+  }
+
+  function handleSetFeatureColor(idx, value) {
+    const featureIdx = Number(idx)
+    const nextValue = String(value || '').trim().toLowerCase()
+    if (!Number.isInteger(featureIdx) || featureIdx < 0 || featureIdx >= featureCount) return
+    if (nextValue === FEATURE_COLOR_AUTO) {
+      setFeatureColorOverrides((prev) => {
+        if (!Object.prototype.hasOwnProperty.call(prev, featureIdx)) return prev
+        const next = { ...prev }
+        delete next[featureIdx]
+        return next
+      })
+      return
+    }
+    if (!allowedFeatureColorSet.has(nextValue)) return
+    setFeatureColorOverrides((prev) => {
+      if (prev[featureIdx] === nextValue) return prev
+      return { ...prev, [featureIdx]: nextValue }
+    })
   }
 
   const vaneFocus = (() => {
@@ -648,10 +701,7 @@ export default function App() {
                     selectedPointIndices={selectedPointIndices}
                     particleCount={particleCount}
                     speedScale={speedScale}
-                    tailDurationSec={tailDurationSec}
-                    trailTailMin={trailTailMin}
-                    trailTailExp={trailTailExp}
-                    lifetimeTailMultiplier={lifetimeTailMultiplier}
+                    animatedTrailLengthPx={animatedTrailLengthPx}
                     showParticles={!hideParticles}
                     pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
                     showPointGradients={showPointGradients}
@@ -797,8 +847,8 @@ export default function App() {
                         disabled={!payload || !Array.isArray(payload.feature_values)}
                       >
                         <option value="">None</option>
-                        {Array.isArray(payload?.col_labels) && payload.col_labels.map((name, idx) => (
-                          <option key={idx} value={String(idx)}>{name}</option>
+                        {alphabeticalFeatureIndices.map((idx) => (
+                          <option key={idx} value={String(idx)}>{payload?.col_labels?.[idx]}</option>
                         ))}
                       </select>
 
@@ -845,10 +895,10 @@ export default function App() {
                         <span className="control-val">{Math.round(120 * speedScale)} px/s</span>
                       </div>
 
-                      <label>Tail Duration</label>
+                      <label>Animated Trail Length</label>
                       <div className="slider-row">
-                        <input type="range" min={0.8} max={1.8} step={0.1} value={tailDurationSec} onChange={(e) => setTailDurationSec(Number(e.target.value))} />
-                        <span className="control-val">{tailDurationSec.toFixed(1)} s</span>
+                        <input type="range" min={40} max={320} step={10} value={animatedTrailLengthPx} onChange={(e) => setAnimatedTrailLengthPx(Number(e.target.value))} />
+                        <span className="control-val">{Math.round(animatedTrailLengthPx)} px</span>
                       </div>
 
                       <label>Trail Width</label>
@@ -863,23 +913,6 @@ export default function App() {
                         <span className="control-val">{pointSize.toFixed(1)} px</span>
                       </div>
 
-                      <label>Tail Min Alpha</label>
-                      <div className="slider-row">
-                        <input type="range" min={0} max={1} step={0.01} value={trailTailMin} onChange={(e) => setTrailTailMin(Number(e.target.value))} />
-                        <span className="control-val">{trailTailMin.toFixed(2)}</span>
-                      </div>
-
-                      <label>Tail Exp</label>
-                      <div className="slider-row">
-                        <input type="range" min={0.5} max={6} step={0.1} value={trailTailExp} onChange={(e) => setTrailTailExp(Number(e.target.value))} />
-                        <span className="control-val">{trailTailExp.toFixed(1)}</span>
-                      </div>
-
-                      <label>Lifetime</label>
-                      <div className="slider-row">
-                        <input type="range" min={2} max={4} step={0.25} value={lifetimeTailMultiplier} onChange={(e) => setLifetimeTailMultiplier(Number(e.target.value))} />
-                        <span className="control-val">{lifetimeTailMultiplier.toFixed(2)}x tail</span>
-                      </div>
                     </div>
                   )}
                 </div>
@@ -908,6 +941,9 @@ export default function App() {
                   compareCap={COMPARE_MAX}
                   message={featureMessage}
                   activeFeatureColorMap={activeFeatureColorMap}
+                  featureColorOverrides={featureColorOverrides}
+                  featureColorOptions={FEATURE_COLOR_OPTIONS}
+                  onSetFeatureColor={handleSetFeatureColor}
                   labelColorMap={labelColorMap}
                 />
               ) : (
