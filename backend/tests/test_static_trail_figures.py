@@ -12,6 +12,7 @@ import numpy as np
 
 from featurewind.visualization.static_trail_figures import (
     export_static_trail_figures,
+    resolve_export_feature_colors,
     sample_trail_points,
     select_target_and_controls,
 )
@@ -78,6 +79,14 @@ class StaticTrailFigureExportTest(unittest.TestCase):
         self.assertEqual(control_indices, [2, 1])
         self.assertGreater(scores[0], scores[1])
         self.assertGreater(scores[0], scores[2])
+
+    def test_resolve_export_feature_colors_overrides_kernel_length(self) -> None:
+        colors = resolve_export_feature_colors(
+            ["kernel_width", "kernel_length", "area"],
+            ["#111111", "#222222", "#333333"],
+        )
+
+        self.assertEqual(colors, ["#111111", "#96360e", "#333333"])
 
     def test_export_static_trail_figures_writes_png_and_pdf(self) -> None:
         positions = np.asarray(

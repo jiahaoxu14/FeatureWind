@@ -15,6 +15,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+TRAIL_EXPORT_FEATURE_COLOR_OVERRIDES = {
+    "kernel_length": "#96360e",
+}
+
+
 def _safe_slug(text: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(text or "").strip())
     cleaned = cleaned.strip("._")
@@ -268,6 +273,20 @@ def _format_rho(values: Any) -> str:
     return f"{_signed_monotonicity(values):+.2f}"
 
 
+def resolve_export_feature_colors(feature_names: list[str], feature_colors: list[str]) -> list[str]:
+    colors = list(feature_colors or [])
+    if len(colors) < len(feature_names):
+        colors.extend(["#1f2937"] * (len(feature_names) - len(colors)))
+    elif len(colors) > len(feature_names):
+        colors = colors[:len(feature_names)]
+
+    for idx, feature_name in enumerate(feature_names):
+        override = TRAIL_EXPORT_FEATURE_COLOR_OVERRIDES.get(str(feature_name).strip().lower())
+        if override is not None:
+            colors[idx] = override
+    return colors
+
+
 def render_static_trail_figure(
     *,
     dataset_name: str,
@@ -439,6 +458,7 @@ def export_static_trail_figures(
     if not isinstance(trails, list) or len(trails) == 0:
         raise ValueError("At least one static trail is required.")
 
+    resolved_feature_colors = resolve_export_feature_colors(feature_names, feature_colors)
     output_dir = Path(output_root) / "static_trails" / _safe_slug(Path(dataset_name).stem)
     exported: list[dict[str, Any]] = []
 
@@ -454,7 +474,7 @@ def export_static_trail_figures(
         target_idx, control_indices, monotonic_scores = select_target_and_controls(
             sampled_values,
             feature_names,
-            feature_colors,
+            resolved_feature_colors,
             active_feature_indices=active_feature_indices,
             preferred_feature_index=preferred_feature_index,
             max_controls=2,
@@ -474,7 +494,7 @@ def export_static_trail_figures(
             sampled_feature_values=sampled_values,
             positions=all_positions,
             feature_names=feature_names,
-            feature_colors=feature_colors,
+            feature_colors=resolved_feature_colors,
             trail_feature_index=None if trail.get("featureIndex") is None else int(trail["featureIndex"]),
             target_idx=target_idx,
             control_indices=control_indices,
