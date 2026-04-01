@@ -32,9 +32,13 @@ DATASET_FEATURE_COLOR_OVERRIDES = {
     (
         "horizontal_signal",
         "vertical_signal",
+        "random_signal_a",
+        "random_signal_b",
     ): [
         "#0f766e",  # Teal
         "#c2410c",  # Orange
+        "#be185d",  # Magenta
+        "#4d7c0f",  # Olive green
     ],
     (
         "radius1",

@@ -91,11 +91,11 @@ class RoutesCsvLabelsTest(unittest.TestCase):
 
     def test_apply_dataset_feature_color_overrides_uses_non_blue_simple2d_palette(self) -> None:
         colors = apply_dataset_feature_color_overrides(
-            ["horizontal_signal", "vertical_signal"],
-            ["#4477AA", "#EE6677"],
+            ["horizontal_signal", "vertical_signal", "random_signal_a", "random_signal_b"],
+            ["#4477AA", "#EE6677", "#228833", "#CCBB44"],
         )
 
-        self.assertEqual(colors, ["#0f766e", "#c2410c"])
+        self.assertEqual(colors, ["#0f766e", "#c2410c", "#be185d", "#4d7c0f"])
 
     def test_apply_dataset_feature_color_overrides_uses_dark_breast_cancer_family_palette(self) -> None:
         col_labels = [
