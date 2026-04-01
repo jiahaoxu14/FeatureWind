@@ -23,6 +23,7 @@ PANEL_ORDER = [
     "grid_15",
     "grid_20",
     "grid_30",
+    "linear_nearest",
     "nearest",
     "radius_0",
     "radius_2",
@@ -33,10 +34,11 @@ PANEL_CAPTIONS = {
     "grid_15": "(B) Grid 15",
     "grid_20": "(C) Grid 20",
     "grid_30": "(D) Grid 30",
-    "nearest": "(E) Nearest",
-    "radius_0": "(F) Radius 0",
-    "radius_2": "(G) Radius 2",
-    "radius_3": "(H) Radius 3",
+    "linear_nearest": "(E) Linear+Nearest",
+    "nearest": "(F) Nearest",
+    "radius_0": "(G) Radius 0",
+    "radius_2": "(H) Radius 2",
+    "radius_3": "(I) Radius 3",
 }
 TEXT_FONT_FAMILY = "Georgia"
 TITLE_CROP_PX = 96
@@ -99,40 +101,40 @@ def compose_figure(*, input_dir: Path, metrics_csv: Path, output_png: Path, outp
         raise FileNotFoundError(f"Missing metrics rows for: {names}")
 
     images = [mpimg.imread(path)[TITLE_CROP_PX:, ...] for path in image_paths]
-    fig, axes = plt.subplots(2, 4, figsize=(15.8, 9.0), constrained_layout=False)
+    fig, axes = plt.subplots(3, 3, figsize=(12.2, 15.8), constrained_layout=False)
     fig.patch.set_facecolor("white")
-    fig.subplots_adjust(left=0.012, right=0.988, top=0.965, bottom=0.055, wspace=0.035, hspace=0.30)
+    fig.subplots_adjust(left=0.001, right=0.999, top=0.995, bottom=0.008, wspace=0.0012, hspace=0.085)
 
     for ax, image, condition_id in zip(axes.ravel(), images, PANEL_ORDER):
         ax.imshow(image)
         ax.set_axis_off()
         ax.text(
             0.5,
-            1.095,
+            1.038,
             PANEL_CAPTIONS[condition_id],
             transform=ax.transAxes,
             ha="center",
             va="bottom",
-            fontsize=13.0,
+            fontsize=22.1,
             color="#1f1b17",
             fontfamily=TEXT_FONT_FAMILY,
             fontweight="normal",
         )
         ax.text(
             0.5,
-            1.025,
+            0.994,
             _metric_line(metrics_by_id[condition_id]),
             transform=ax.transAxes,
             ha="center",
             va="bottom",
-            fontsize=11.2,
+            fontsize=19.0,
             color="#1f1b17",
             fontfamily=TEXT_FONT_FAMILY,
         )
 
     output_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_png, dpi=220, facecolor="white", bbox_inches="tight", pad_inches=0.02)
-    fig.savefig(output_pdf, dpi=300, facecolor="white", bbox_inches="tight", pad_inches=0.02)
+    fig.savefig(output_png, dpi=220, facecolor="white", bbox_inches="tight", pad_inches=0.001)
+    fig.savefig(output_pdf, dpi=300, facecolor="white", bbox_inches="tight", pad_inches=0.001)
     plt.close(fig)
 
 

@@ -33,6 +33,7 @@ POINT_EDGE = "#334155"
 STATIC_COLOR = "#96360e"
 ANIM_COLOR = "#2563eb"
 RESPAWN_COLOR = "#d97706"
+COMPARE_FEATURE_COLORS = ("#96360e", "#2563eb")
 BACKGROUND_COLOR = "#ffffff"
 GRIDLINE_COLOR = "#000000"
 MASKED_CELL_COLOR = "#d4d4d8"
@@ -42,7 +43,8 @@ FIXED_ADVECTION_STEP_SEC = 1.0 / 60.0
 MAX_PARTICLE_LIFETIME_SEC = 8.0
 ANIMATED_TRAIL_LENGTH_PX = 140.0
 PARTICLE_COUNT = 18
-CAPTURE_STEPS = (0, 18, 54)
+CAPTURE_STEPS = (0, 12, 30, 54)
+STATIC_PROGRESS_FRACTIONS = (0.0, 0.28, 0.62, 1.0)
 
 
 @dataclass
@@ -125,6 +127,78 @@ def choose_demo_point(case, context) -> tuple[int, np.ndarray]:
     return best_index, best_trail
 
 
+def build_all_valid_trails(case, context) -> list[np.ndarray]:
+    trails: list[np.ndarray] = []
+    for point_index, (x, y) in enumerate(case.positions):
+        trail = build_static_trail(
+            context,
+            start_x=float(x),
+            start_y=float(y),
+            point_index=point_index,
+            max_steps=120,
+        )
+        if not trail.valid or trail.point_count < 2:
+            continue
+        trails.append(np.asarray(trail.points, dtype=float))
+    return trails
+
+
+def choose_comparison_point(case, contexts: list) -> tuple[int, list[np.ndarray]]:
+    center = np.asarray(
+        [
+            0.5 * (case.bbox[0] + case.bbox[1]),
+            0.5 * (case.bbox[2] + case.bbox[3]),
+        ],
+        dtype=float,
+    )
+    best_index = 0
+    best_trails: list[np.ndarray] | None = None
+    best_score = None
+
+    for point_index, (x, y) in enumerate(case.positions):
+        trails: list[np.ndarray] = []
+        lengths: list[float] = []
+        valid = True
+        for context in contexts:
+            trail = build_static_trail(
+                context,
+                start_x=float(x),
+                start_y=float(y),
+                point_index=point_index,
+                max_steps=120,
+            )
+            if not trail.valid or trail.point_count < 8:
+                valid = False
+                break
+            path = np.asarray(trail.points, dtype=float)
+            trails.append(path)
+            lengths.append(_path_length(path))
+        if not valid:
+            continue
+        distance_to_center = float(np.linalg.norm(np.asarray([x, y], dtype=float) - center))
+        score = (min(lengths), sum(lengths), -distance_to_center)
+        if best_score is None or score > best_score:
+            best_index = point_index
+            best_trails = trails
+            best_score = score
+
+    if best_trails is None:
+        x, y = case.positions[0]
+        fallback_trails = []
+        for context in contexts:
+            trail = build_static_trail(
+                context,
+                start_x=float(x),
+                start_y=float(y),
+                point_index=0,
+                max_steps=120,
+            )
+            fallback_trails.append(np.asarray(trail.points, dtype=float))
+        return 0, fallback_trails
+
+    return best_index, best_trails
+
+
 def _add_arrowhead(ax, start: np.ndarray, end: np.ndarray, color: str, linewidth: float, mutation_scale: float, zorder: int) -> None:
     patch = FancyArrowPatch(
         posA=(float(start[0]), float(start[1])),
@@ -140,7 +214,7 @@ def _add_arrowhead(ax, start: np.ndarray, end: np.ndarray, color: str, linewidth
     ax.add_patch(patch)
 
 
-def draw_field_background(ax, case, context) -> None:
+def draw_field_background(ax, case, context, show_vectors: bool = True) -> None:
     ax.set_facecolor(BACKGROUND_COLOR)
     xmin, xmax, ymin, ymax = case.bbox
     dx = (xmax - xmin) / context.grid_res
@@ -176,7 +250,7 @@ def draw_field_background(ax, case, context) -> None:
         zorder=2,
     )
     qx, qy, qu, qv = _sample_quiver(context)
-    if qx.size > 0:
+    if show_vectors and qx.size > 0:
         ax.quiver(
             qx,
             qy,
@@ -203,74 +277,101 @@ def draw_field_background(ax, case, context) -> None:
         spine.set_visible(False)
 
 
-def render_static_generation(case, context, trail: np.ndarray, point_index: int, output_path: Path) -> None:
-    fig, axes = plt.subplots(1, 3, figsize=(15.6, 5.0), constrained_layout=False)
-    fig.patch.set_facecolor("white")
-    fig.subplots_adjust(left=0.03, right=0.99, top=0.99, bottom=0.03, wspace=0.08)
-
+def _get_static_sampling(trail: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     sample_indices = np.unique(
         np.linspace(0, trail.shape[0] - 1, min(7, trail.shape[0]), dtype=int)
     )
     sampled = trail[sample_indices]
     segment_colors = np.linspace(0.35, 0.95, max(1, sampled.shape[0] - 1))
+    return sampled, segment_colors
 
-    draw_field_background(axes[0], case, context)
-    axes[0].scatter(
-        [trail[0, 0]],
-        [trail[0, 1]],
-        s=190,
-        facecolors="white",
-        edgecolors=STATIC_COLOR,
-        linewidths=2.2,
-        zorder=5,
-    )
 
-    draw_field_background(axes[1], case, context)
-    for idx in range(sampled.shape[0] - 1):
-        a = sampled[idx]
-        b = sampled[idx + 1]
-        alpha = float(segment_colors[idx])
-        axes[1].plot(
-            [a[0], b[0]],
-            [a[1], b[1]],
-            color=STATIC_COLOR,
-            linewidth=3.0,
-            alpha=alpha,
-            zorder=5,
-            solid_capstyle="round",
-        )
-        _add_arrowhead(
-            axes[1],
-            a,
-            b,
-            STATIC_COLOR,
-            linewidth=1.8,
-            mutation_scale=11.5,
-            zorder=6,
-        )
-        axes[1].scatter(
-            [a[0]],
-            [a[1]],
-            s=110,
-            color=(1.0, 1.0, 1.0, 0.98),
+def draw_static_panel(ax, case, context, trail: np.ndarray, stage_index: int) -> None:
+    sampled, segment_colors = _get_static_sampling(trail)
+    draw_field_background(ax, case, context)
+    if stage_index == 0:
+        ax.scatter(
+            [trail[0, 0]],
+            [trail[0, 1]],
+            s=190,
+            facecolors="white",
             edgecolors=STATIC_COLOR,
-            linewidths=1.6,
-            zorder=6,
+            linewidths=2.2,
+            zorder=5,
         )
-    axes[1].scatter(
-        [sampled[-1, 0]],
-        [sampled[-1, 1]],
-        s=100,
+        return
+
+    if stage_index in (1, 2):
+        progress_fraction = STATIC_PROGRESS_FRACTIONS[stage_index]
+        keep_count = max(stage_index + 1, int(math.ceil(sampled.shape[0] * progress_fraction)))
+        stage_sampled = sampled[:keep_count]
+        for idx in range(stage_sampled.shape[0] - 1):
+            a = stage_sampled[idx]
+            b = stage_sampled[idx + 1]
+            alpha = float(segment_colors[min(idx, len(segment_colors) - 1)])
+            ax.plot(
+                [a[0], b[0]],
+                [a[1], b[1]],
+                color=STATIC_COLOR,
+                linewidth=3.0,
+                alpha=alpha,
+                zorder=5,
+                solid_capstyle="round",
+            )
+            _add_arrowhead(
+                ax,
+                a,
+                b,
+                STATIC_COLOR,
+                linewidth=1.8,
+                mutation_scale=11.5,
+                zorder=6,
+            )
+            ax.scatter(
+                [a[0]],
+                [a[1]],
+                s=110,
+                color=(1.0, 1.0, 1.0, 0.98),
+                edgecolors=STATIC_COLOR,
+                linewidths=1.6,
+                zorder=6,
+            )
+        ax.scatter(
+            [stage_sampled[-1, 0]],
+            [stage_sampled[-1, 1]],
+            s=100,
+            color=STATIC_COLOR,
+            edgecolors="white",
+            linewidths=1.0,
+            zorder=7,
+        )
+        return
+
+    ax.plot(trail[:, 0], trail[:, 1], color="white", linewidth=6.0, zorder=5, solid_capstyle="round")
+    ax.plot(trail[:, 0], trail[:, 1], color=STATIC_COLOR, linewidth=3.1, zorder=6, solid_capstyle="round")
+    sample_marker_indices = np.unique(
+        np.linspace(0, trail.shape[0] - 1, min(6, trail.shape[0]), dtype=int)
+    )
+    sample_markers = trail[sample_marker_indices]
+    ax.scatter(
+        sample_markers[:, 0],
+        sample_markers[:, 1],
+        s=96,
+        color=(1.0, 1.0, 1.0, 0.98),
+        edgecolors=STATIC_COLOR,
+        linewidths=1.5,
+        zorder=7,
+    )
+    ax.scatter(
+        [sample_markers[-1, 0]],
+        [sample_markers[-1, 1]],
+        s=102,
         color=STATIC_COLOR,
         edgecolors="white",
         linewidths=1.0,
-        zorder=7,
+        zorder=8,
     )
-
-    draw_field_background(axes[2], case, context)
-    axes[2].plot(trail[:, 0], trail[:, 1], color="white", linewidth=6.0, zorder=5, solid_capstyle="round")
-    axes[2].plot(trail[:, 0], trail[:, 1], color=STATIC_COLOR, linewidth=3.1, zorder=6, solid_capstyle="round")
-    axes[2].scatter(
+    ax.scatter(
         [trail[0, 0]],
         [trail[0, 1]],
         s=190,
@@ -280,11 +381,134 @@ def render_static_generation(case, context, trail: np.ndarray, point_index: int,
         zorder=7,
     )
     if trail.shape[0] >= 2:
-        _add_arrowhead(axes[2], trail[-2], trail[-1], STATIC_COLOR, linewidth=2.4, mutation_scale=16.0, zorder=8)
+        _add_arrowhead(ax, trail[-2], trail[-1], STATIC_COLOR, linewidth=2.4, mutation_scale=16.0, zorder=9)
+
+
+def _render_single_panel(case, context, draw_panel_fn, output_path: Path, *panel_args) -> None:
+    fig, ax = plt.subplots(1, 1, figsize=(5.1, 5.0), constrained_layout=False)
+    fig.patch.set_facecolor("white")
+    fig.subplots_adjust(left=0.03, right=0.99, top=0.99, bottom=0.03)
+    draw_panel_fn(ax, case, context, *panel_args)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
+def render_all_static_trails(case, context, trails: list[np.ndarray], output_path: Path) -> None:
+    fig, ax = plt.subplots(1, 1, figsize=(6.6, 6.3), constrained_layout=False)
+    fig.patch.set_facecolor("white")
+    fig.subplots_adjust(left=0.03, right=0.99, top=0.99, bottom=0.03)
+
+    draw_field_background(ax, case, context)
+    for trail in trails:
+        ax.plot(
+            trail[:, 0],
+            trail[:, 1],
+            color="white",
+            linewidth=3.8,
+            alpha=0.92,
+            zorder=4,
+            solid_capstyle="round",
+        )
+        ax.plot(
+            trail[:, 0],
+            trail[:, 1],
+            color=STATIC_COLOR,
+            linewidth=1.9,
+            alpha=0.85,
+            zorder=5,
+            solid_capstyle="round",
+        )
+        ax.scatter(
+            [trail[0, 0]],
+            [trail[0, 1]],
+            s=30,
+            facecolors="white",
+            edgecolors=STATIC_COLOR,
+            linewidths=1.0,
+            zorder=6,
+        )
+        if trail.shape[0] >= 2:
+            _add_arrowhead(
+                ax,
+                trail[-2],
+                trail[-1],
+                STATIC_COLOR,
+                linewidth=1.3,
+                mutation_scale=10.5,
+                zorder=7,
+            )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=220, bbox_inches="tight")
     plt.close(fig)
+
+
+def render_static_feature_comparison(case, contexts: list, trails: list[np.ndarray], output_path: Path) -> None:
+    fig, ax = plt.subplots(1, 1, figsize=(6.6, 6.3), constrained_layout=False)
+    fig.patch.set_facecolor("white")
+    fig.subplots_adjust(left=0.03, right=0.99, top=0.99, bottom=0.03)
+
+    draw_field_background(ax, case, contexts[0], show_vectors=False)
+    for trail, color in zip(trails, COMPARE_FEATURE_COLORS):
+        ax.plot(trail[:, 0], trail[:, 1], color="white", linewidth=6.0, zorder=5, solid_capstyle="round")
+        ax.plot(trail[:, 0], trail[:, 1], color=color, linewidth=3.0, zorder=6, solid_capstyle="round")
+        marker_indices = np.unique(
+            np.linspace(0, trail.shape[0] - 1, min(5, trail.shape[0]), dtype=int)
+        )
+        markers = trail[marker_indices]
+        ax.scatter(
+            markers[:, 0],
+            markers[:, 1],
+            s=78,
+            color=(1.0, 1.0, 1.0, 0.98),
+            edgecolors=color,
+            linewidths=1.3,
+            zorder=7,
+        )
+        ax.scatter(
+            [markers[-1, 0]],
+            [markers[-1, 1]],
+            s=84,
+            color=color,
+            edgecolors="white",
+            linewidths=0.9,
+            zorder=8,
+        )
+        if trail.shape[0] >= 2:
+            _add_arrowhead(ax, trail[-2], trail[-1], color, linewidth=2.2, mutation_scale=14.0, zorder=9)
+
+    start = trails[0][0]
+    ax.scatter(
+        [start[0]],
+        [start[1]],
+        s=210,
+        facecolors="white",
+        edgecolors="#111827",
+        linewidths=2.2,
+        zorder=10,
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
+def render_static_generation(case, context, trail: np.ndarray, point_index: int, output_path: Path) -> None:
+    fig, axes = plt.subplots(1, 4, figsize=(20.6, 5.0), constrained_layout=False)
+    fig.patch.set_facecolor("white")
+    fig.subplots_adjust(left=0.02, right=0.995, top=0.99, bottom=0.03, wspace=0.04)
+
+    for stage_index, ax in enumerate(axes):
+        draw_static_panel(ax, case, context, trail, stage_index)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+    for stage_index in range(4):
+        panel_path = output_path.with_name(f"{output_path.stem}_stage_{stage_index + 1}{output_path.suffix}")
+        _render_single_panel(case, context, draw_static_panel, panel_path, trail, stage_index)
 
 
 def build_valid_spawn_cells(context) -> list[tuple[int, int]]:
@@ -465,16 +689,41 @@ def draw_particles(ax, particles: list[Particle], color: str, emphasize_respawn:
         )
 
 
+def draw_animated_panel(ax, case, context, snapshots: dict[int, list[Particle]], stage_index: int) -> None:
+    draw_field_background(ax, case, context)
+    step = CAPTURE_STEPS[stage_index]
+    particles = snapshots[step]
+    draw_particles(ax, particles, ANIM_COLOR, emphasize_respawn=(step == CAPTURE_STEPS[-1]))
+
+
 def render_animated_generation(case, context, output_path: Path) -> None:
     snapshots = simulate_particle_snapshots(context)
-    fig, axes = plt.subplots(1, 3, figsize=(15.6, 5.0), constrained_layout=False)
+    fig, axes = plt.subplots(1, 4, figsize=(20.6, 5.0), constrained_layout=False)
     fig.patch.set_facecolor("white")
-    fig.subplots_adjust(left=0.03, right=0.99, top=0.99, bottom=0.03, wspace=0.08)
+    fig.subplots_adjust(left=0.02, right=0.995, top=0.99, bottom=0.03, wspace=0.04)
 
-    for ax, step in zip(axes, CAPTURE_STEPS):
-        draw_field_background(ax, case, context)
-        particles = snapshots[step]
-        draw_particles(ax, particles, ANIM_COLOR, emphasize_respawn=(step == CAPTURE_STEPS[-1]))
+    for stage_index, ax in enumerate(axes):
+        draw_animated_panel(ax, case, context, snapshots, stage_index)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+    for stage_index in range(4):
+        panel_path = output_path.with_name(f"{output_path.stem}_stage_{stage_index + 1}{output_path.suffix}")
+        _render_single_panel(case, context, draw_animated_panel, panel_path, snapshots, stage_index)
+
+
+def render_animated_feature_comparison(case, contexts: list, output_path: Path) -> None:
+    fig, ax = plt.subplots(1, 1, figsize=(6.6, 6.3), constrained_layout=False)
+    fig.patch.set_facecolor("white")
+    fig.subplots_adjust(left=0.03, right=0.99, top=0.99, bottom=0.03)
+
+    draw_field_background(ax, case, contexts[0], show_vectors=False)
+    for context, color in zip(contexts, COMPARE_FEATURE_COLORS):
+        snapshots = simulate_particle_snapshots(context)
+        particles = snapshots[CAPTURE_STEPS[-1]]
+        draw_particles(ax, particles, color, emphasize_respawn=False)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=220, bbox_inches="tight")
     plt.close(fig)
@@ -484,7 +733,6 @@ def main() -> None:
     tmap_path = BACKEND_ROOT / "datasets/examples/simple2d/simple2d_tsne.tmap"
     output_dir = BACKEND_ROOT.parent / "output/paper_figures/trail_generation"
     case = _load_featurewind_case(tmap_path)
-    feature_index = case.feature_names.index("horizontal_signal")
     condition = SensitivityCondition(
         condition_id="reference",
         label="reference",
@@ -493,16 +741,32 @@ def main() -> None:
         mask_radius=0,
         is_reference=True,
     )
-    context = build_condition_context(case, feature_idx=feature_index, condition=condition)
+    feature_names = ["horizontal_signal", "vertical_signal"]
+    contexts = [
+        build_condition_context(case, feature_idx=case.feature_names.index(feature_name), condition=condition)
+        for feature_name in feature_names
+    ]
+    context = contexts[0]
     point_index, trail = choose_demo_point(case, context)
+    all_trails = build_all_valid_trails(case, context)
+    comparison_point_index, comparison_trails = choose_comparison_point(case, contexts)
 
     static_path = output_dir / "simple_2d_tsne_static_trail_generation.png"
     animated_path = output_dir / "simple_2d_tsne_animated_trail_generation.png"
+    static_all_points_path = output_dir / "simple_2d_tsne_static_trail_generation_all_points.png"
+    static_comparison_path = output_dir / "simple_2d_tsne_static_trail_feature_comparison.png"
+    animated_comparison_path = output_dir / "simple_2d_tsne_animated_trail_feature_comparison.png"
     render_static_generation(case, context, trail, point_index, static_path)
     render_animated_generation(case, context, animated_path)
+    render_all_static_trails(case, context, all_trails, static_all_points_path)
+    render_static_feature_comparison(case, contexts, comparison_trails, static_comparison_path)
+    render_animated_feature_comparison(case, contexts, animated_comparison_path)
 
     print(f"Static trail figure: {static_path}")
     print(f"Animated trail figure: {animated_path}")
+    print(f"All-points static trail figure: {static_all_points_path}")
+    print(f"Static feature comparison figure: {static_comparison_path} (point {comparison_point_index})")
+    print(f"Animated feature comparison figure: {animated_comparison_path}")
 
 
 if __name__ == "__main__":

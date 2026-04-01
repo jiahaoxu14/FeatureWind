@@ -46,7 +46,7 @@ COMMON_LATTICE_RES = 100
 TRAIL_SAMPLE_COUNT = 50
 DEFAULT_CANVAS_PX = 600
 DEFAULT_SPEED_SCALE = 1.0
-DEFAULT_MAX_FIGURES = 8
+DEFAULT_MAX_FIGURES = 9
 
 
 @dataclass(frozen=True)
@@ -320,6 +320,13 @@ def build_oat_conditions(
             label="grid 30",
             grid_res=30,
             interpolation_method=str(reference_interpolation),
+            mask_radius=int(reference_mask_radius),
+        ),
+        SensitivityCondition(
+            condition_id="linear_nearest",
+            label="linear+nearest",
+            grid_res=int(reference_grid_res),
+            interpolation_method="linear-nearest",
             mask_radius=int(reference_mask_radius),
         ),
         SensitivityCondition(
@@ -1183,7 +1190,10 @@ def render_visual_stability_figure(
     reference_trail = trails_by_id["reference"].points
 
     n_panels = len(contexts)
-    ncols = 4 if n_panels > 4 else min(4, max(1, n_panels))
+    if n_panels == 9:
+        ncols = 3
+    else:
+        ncols = 4 if n_panels > 4 else min(4, max(1, n_panels))
     nrows = int(math.ceil(n_panels / ncols))
     fig_width = 5.0 * ncols
     fig_height = 4.2 * nrows + 0.8
@@ -1312,13 +1322,14 @@ def write_summary_markdown(
     moderate = [
         metric
         for metric in non_reference
-        if metric.condition_id in {"grid_20", "grid_30", "radius_0", "radius_2"}
+        if metric.condition_id in {"grid_20", "grid_30", "linear_nearest", "radius_0", "radius_2"}
     ]
     extended = [
         metric
         for metric in non_reference
         if metric.condition_id in {"grid_15", "radius_3"}
     ]
+    linear_nearest = next((metric for metric in non_reference if metric.condition_id == "linear_nearest"), None)
     nearest = next((metric for metric in non_reference if metric.condition_id == "nearest"), None)
     largest_trail_shift = max(non_reference, key=lambda metric: metric.trail_mean_deviation)
 
@@ -1369,6 +1380,13 @@ def write_summary_markdown(
         if extended
         else ""
     )
+    linear_nearest_clause = (
+        f"Linear interpolation with nearest fallback stayed close to the pure-linear reference "
+        f"(support IoU {linear_nearest.support_iou:.3f}, field cosine "
+        f"{linear_nearest.field_cosine_mean:.3f}, trail deviation {linear_nearest.trail_mean_deviation:.3f}). "
+        if linear_nearest is not None
+        else ""
+    )
 
     lines = [
         "# Seeds Visual Stability Sensitivity",
@@ -1399,6 +1417,7 @@ def write_summary_markdown(
                 "Discussion-ready summary: "
                 f"{moderate_clause}"
                 f"{extended_clause}"
+                f"{linear_nearest_clause}"
                 + nearest_clause
             ),
             "",

@@ -41,6 +41,7 @@ class SeedsVisualSensitivityTest(unittest.TestCase):
             "grid_15",
             "grid_20",
             "grid_30",
+            "linear_nearest",
             "nearest",
             "radius_0",
             "radius_2",
@@ -50,10 +51,11 @@ class SeedsVisualSensitivityTest(unittest.TestCase):
         self.assertEqual(conditions[0].grid_res, 25)
         self.assertEqual(conditions[0].interpolation_method, "linear")
         self.assertEqual(conditions[0].mask_radius, 1)
-        self.assertEqual(conditions[4].interpolation_method, "nearest")
-        self.assertEqual(conditions[5].mask_radius, 0)
-        self.assertEqual(conditions[6].mask_radius, 2)
-        self.assertEqual(conditions[7].mask_radius, 3)
+        self.assertEqual(conditions[4].interpolation_method, "linear-nearest")
+        self.assertEqual(conditions[5].interpolation_method, "nearest")
+        self.assertEqual(conditions[6].mask_radius, 0)
+        self.assertEqual(conditions[7].mask_radius, 2)
+        self.assertEqual(conditions[8].mask_radius, 3)
 
     def test_reference_metrics_are_identity_and_shifted_trail_increases_distance(self) -> None:
         support = np.asarray([True, False, True, True], dtype=bool)
@@ -138,20 +140,21 @@ class SeedsVisualSensitivityTest(unittest.TestCase):
             self.assertIsNone(result.figure_pdf)
             self.assertTrue(result.metrics_csv.exists())
             self.assertTrue(result.summary_md.exists())
-            self.assertEqual(len(result.panel_pngs), 8)
-            self.assertEqual(len(result.panel_pdfs), 8)
+            self.assertEqual(len(result.panel_pngs), 9)
+            self.assertEqual(len(result.panel_pdfs), 9)
             self.assertTrue(all(path.exists() for path in result.panel_pngs))
             self.assertTrue(all(path.exists() for path in result.panel_pdfs))
 
             with result.metrics_csv.open() as handle:
                 rows = list(csv.DictReader(handle))
 
-            self.assertEqual(len(rows), 8)
+            self.assertEqual(len(rows), 9)
             self.assertEqual([row["condition_id"] for row in rows], [
                 "reference",
                 "grid_15",
                 "grid_20",
                 "grid_30",
+                "linear_nearest",
                 "nearest",
                 "radius_0",
                 "radius_2",

@@ -63,14 +63,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Optional directory of per-condition UI snapshot images named "
             "`reference.png`, `grid_15.png`, `grid_20.png`, `grid_30.png`, "
-            "`nearest.png`, `radius_0.png`, `radius_2.png`, and `radius_3.png`."
+            "`linear_nearest.png`, `nearest.png`, `radius_0.png`, `radius_2.png`, "
+            "and `radius_3.png`."
         ),
     )
     parser.add_argument(
         "--max-figures",
         type=int,
-        default=8,
-        help="Maximum number of separate condition figures to export. Clamped to 8.",
+        default=9,
+        help="Maximum number of separate condition figures to export. Clamped to 9.",
     )
     parser.add_argument(
         "--include-combined",
