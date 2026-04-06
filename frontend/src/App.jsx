@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo, useRef } from 'react'
 import './styles.css'
 import { uploadFile, compute, exportStaticTrailFigures } from './services/api'
 import CanvasWind from './components/CanvasWind.jsx'
-import WindVane from './components/WindVane.jsx'
 import ColorLegend from './components/ColorLegend.jsx'
 import { DEFAULT_FEATURE_HUE, FEATURE_COLOR_AUTO, FEATURE_COLOR_OPTIONS, FEATURE_PALETTE, buildFeatureColorMap, buildLabelColorMap } from './utils/colors.js'
 
@@ -13,10 +12,6 @@ const MODE_OVERVIEW = 'overview'
 const COMPARE_MAX = 9
 const COMPARE_PALETTE = FEATURE_PALETTE
 const OVERVIEW_NEUTRAL = '#4b5563'
-const WIND_MAP_TOOL_PAN = 'pan'
-const WIND_MAP_TOOL_BRUSH = 'brush'
-const BRUSH_SELECTION_MODE_DRAG = 'drag'
-const BRUSH_SELECTION_MODE_SELECT = 'select'
 const MAX_MASK_DILATE_RADIUS_CELLS = 10
 const INTERPOLATION_OPTIONS = [
   { value: 'linear-nearest', label: 'Linear + Nearest Fallback' },
@@ -87,13 +82,9 @@ export default function App() {
   const [exportBusy, setExportBusy] = useState(false)
   const [error, setError] = useState('')
   const [exportMessage, setExportMessage] = useState('')
-  const [hoverPos, setHoverPos] = useState(null)
-  const [selectedCells, setSelectedCells] = useState([])
   const [selectedPointIndices, setSelectedPointIndices] = useState([])
   const [staticTrailData, setStaticTrailData] = useState([])
   const [windMapView, setWindMapView] = useState(null)
-  const [windMapTool, setWindMapTool] = useState(WIND_MAP_TOOL_PAN)
-  const [brushSelectionMode, setBrushSelectionMode] = useState(BRUSH_SELECTION_MODE_DRAG)
   const [mode, setMode] = useState(MODE_DEFAULT)
   const [defaultFeatureIndex, setDefaultFeatureIndex] = useState(null)
   const [compareFeatureIndices, setCompareFeatureIndices] = useState([])
@@ -109,9 +100,6 @@ export default function App() {
   const [animatedTrailLengthPx, setAnimatedTrailLengthPx] = useState(140)
   const [trailLineWidth, setTrailLineWidth] = useState(3.2)
   const [maskDilateRadiusCells, setMaskDilateRadiusCells] = useState(1)
-  const [showHull, setShowHull] = useState(false)
-  const [showVectorLabels, setShowVectorLabels] = useState(false)
-  const [showAllVectors, setShowAllVectors] = useState(false)
   const [hideParticles, setHideParticles] = useState(false)
   const [pointColorFeature, setPointColorFeature] = useState('')
   const [showPointGradients, setShowPointGradients] = useState(false)
@@ -122,12 +110,10 @@ export default function App() {
   const [uniformPointShape, setUniformPointShape] = useState(false)
   const [showParticleArrowheads, setShowParticleArrowheads] = useState(false)
   const [pointSize, setPointSize] = useState(4.4)
-  const [restrictSpawnToSelection, setRestrictSpawnToSelection] = useState(false)
   const [autoRespawnEnabled, setAutoRespawnEnabled] = useState(false)
   const [assessAllCells, setAssessAllCells] = useState(false)
 
   const windMapCanvasRef = useRef(null)
-  const windVaneCanvasRef = useRef(null)
 
   function saveCanvasAsPng(canvas, filename) {
     try {
@@ -203,11 +189,6 @@ export default function App() {
     const raw = file?.name || payload?.datasetId || dataset?.datasetId || 'dataset'
     return String(raw).replace(/\.(tmap|json|csv)$/i, '')
   }, [file?.name, payload?.datasetId, dataset?.datasetId])
-
-  const vaneFeatureIndices = useMemo(() => {
-    if (mode === MODE_OVERVIEW) return allFeatureIndices
-    return activeFeatureIndices
-  }, [mode, activeFeatureIndices, allFeatureIndices])
 
   const gradientFeatureIndices = useMemo(() => {
     if (mode === MODE_OVERVIEW) return []
@@ -340,31 +321,9 @@ export default function App() {
     })
   }, [featureCount, allowedFeatureColorSet])
 
-  function toggleCell(i, j) {
-    setSelectedCells((prev) => {
-      const exists = prev.some((c) => c.i === i && c.j === j)
-      if (exists) return prev.filter((c) => !(c.i === i && c.j === j))
-      return [...prev, { i, j }]
-    })
-  }
-
-  function setSingleCell(i, j) {
-    setSelectedCells([{ i, j }])
-  }
-
   function clearSelection() {
-    setSelectedCells([])
     setSelectedPointIndices([])
     setStaticTrailData([])
-  }
-
-  function handleWindMapToolChange(nextTool) {
-    if (nextTool === windMapTool) return
-    setSelectedCells([])
-    setSelectedPointIndices([])
-    setStaticTrailData([])
-    setHoverPos(null)
-    setWindMapTool(nextTool)
   }
 
   async function handleExportStaticTrailFigureBundle() {
@@ -495,20 +454,6 @@ export default function App() {
     })
   }
 
-  const vaneFocus = (() => {
-    const bbox = payload?.bbox || [0, 1, 0, 1]
-    const [xmin, xmax, ymin, ymax] = bbox
-    const H = payload?.grid_res || 25
-    const W = H
-    if (selectedCells.length > 0) {
-      const { i, j } = selectedCells[selectedCells.length - 1]
-      const x = xmin + (j + 0.5) * (xmax - xmin) / W
-      const y = ymin + (i + 0.5) * (ymax - ymin) / H
-      return { x, y }
-    }
-    return hoverPos || null
-  })()
-
   const avgActiveFeatures = useMemo(() => {
     try {
       if (!payload || activeFeatureIndices.length === 0) return null
@@ -569,42 +514,6 @@ export default function App() {
               <div className="panel-header">
                 <p className="panel-title">Wind Map</p>
                 <div className="toolbar-group">
-                  <button
-                    className={`toolbar-btn${windMapTool === WIND_MAP_TOOL_PAN ? ' active' : ''}`}
-                    type="button"
-                    onClick={() => handleWindMapToolChange(WIND_MAP_TOOL_PAN)}
-                    title="Pan and zoom the wind map"
-                  >
-                    Pan
-                  </button>
-                  <button
-                    className={`toolbar-btn${windMapTool === WIND_MAP_TOOL_BRUSH ? ' active' : ''}`}
-                    type="button"
-                    onClick={() => handleWindMapToolChange(WIND_MAP_TOOL_BRUSH)}
-                    title="Drag a rectangle to select grid cells"
-                  >
-                    Brush
-                  </button>
-                  {payload && windMapTool === WIND_MAP_TOOL_BRUSH && (
-                    <>
-                      <button
-                        className={`toolbar-btn${brushSelectionMode === BRUSH_SELECTION_MODE_DRAG ? ' active' : ''}`}
-                        type="button"
-                        onClick={() => setBrushSelectionMode(BRUSH_SELECTION_MODE_DRAG)}
-                        title="Drag across the map to paint selected grid cells"
-                      >
-                        Drag
-                      </button>
-                      <button
-                        className={`toolbar-btn${brushSelectionMode === BRUSH_SELECTION_MODE_SELECT ? ' active' : ''}`}
-                        type="button"
-                        onClick={() => setBrushSelectionMode(BRUSH_SELECTION_MODE_SELECT)}
-                        title="Click individual grid cells to select them"
-                      >
-                        Select
-                      </button>
-                    </>
-                  )}
                   {payload && (
                     <button
                       className="btn"
@@ -623,15 +532,8 @@ export default function App() {
                   )}
                 </div>
               </div>
-              {payload && windMapTool === WIND_MAP_TOOL_PAN && (
-                <div className="panel-note">Pan mode: click points to toggle static trails. Click empty space to clear the current point selection.</div>
-              )}
-              {payload && windMapTool === WIND_MAP_TOOL_BRUSH && (
-                <div className="panel-note">
-                  {brushSelectionMode === BRUSH_SELECTION_MODE_DRAG
-                    ? 'Brush mode (Drag): drag to paint grid cells. Hold Shift to add to the current selection.'
-                    : 'Brush mode (Select): click a grid cell to select it. Hold Shift to add or remove cells from the current selection.'}
-                </div>
+              {payload && (
+                <div className="panel-note">Click points to toggle static trails. Click empty space to clear the current point selection.</div>
               )}
               {payload && exportMessage && (
                 <div className="panel-note">{exportMessage}</div>
@@ -641,50 +543,8 @@ export default function App() {
                   <CanvasWind
                     payload={payload}
                     mode={mode}
-                    interactionMode={windMapTool}
-                    brushSelectionMode={brushSelectionMode}
                     featureColorMap={activeFeatureColorMap}
                     neutralColor={OVERVIEW_NEUTRAL}
-                    onHover={setHoverPos}
-                    onSelectCell={({ i, j, shift }) => shift ? toggleCell(i, j) : setSingleCell(i, j)}
-                    onBrushCell={(brushPayload) => {
-                      if (brushPayload && Array.isArray(brushPayload.cells)) {
-                        const cells = brushPayload.cells
-                        const replace = !!brushPayload.replace
-                        setSelectedCells((prev) => {
-                          const key = (c) => `${c.i}:${c.j}`
-                          const base = replace ? [] : prev
-                          const setPrev = new Set(base.map(key))
-                          const out = base.slice()
-                          for (const c of cells) {
-                            const k = key(c)
-                            if (!setPrev.has(k)) {
-                              setPrev.add(k)
-                              out.push({ i: c.i, j: c.j })
-                            }
-                          }
-                          return out
-                        })
-                        return
-                      }
-                      const { i, j } = brushPayload || {}
-                      if (typeof i === 'number' && typeof j === 'number') {
-                        setSelectedCells((prev) => {
-                          const exists = prev.some((c) => c.i === i && c.j === j)
-                          if (exists) return prev
-                          return [...prev, { i, j }]
-                        })
-                      }
-                    }}
-                    onBrushPoints={(brushPayload) => {
-                      const replace = brushPayload?.replace !== false
-                      const nextIndices = sanitizePointIndices(brushPayload?.indices, pointCount)
-                      setSelectedPointIndices((prev) => {
-                        if (replace) return nextIndices
-                        const merged = sanitizePointIndices([...(Array.isArray(prev) ? prev : []), ...nextIndices], pointCount)
-                        return merged
-                      })
-                    }}
                     showGrid={showGrid}
                     showMaskOverlay={showMaskOverlay}
                     onSelectPoint={({ idx, indices }) => {
@@ -710,12 +570,9 @@ export default function App() {
                     showCellAggregatedGradients={showCellAggGradients}
                     showParticleInits={showParticleInits}
                     gradientFeatureIndices={gradientFeatureIndices}
-                    selectedCells={selectedCells}
                     featureIndices={activeFeatureIndices}
                     uniformPointShape={uniformPointShape}
                     showParticleArrowheads={showParticleArrowheads}
-                    allowGridSelection={restrictSpawnToSelection}
-                    restrictSpawnToSelection={restrictSpawnToSelection}
                     autoRespawnRate={autoRespawnEnabled ? 0.3 : 0.0}
                     trailLineWidth={trailLineWidth}
                     pointSize={pointSize}
@@ -733,38 +590,6 @@ export default function App() {
           </div>
 
           <div className="sidebar-column">
-            <div className="panel panel-section sidebar-panel vane-panel">
-              <div className="panel-header">
-                <p className="panel-title">Wind Vane{selectedCells.length > 0 ? ` (${selectedCells.length} cells)` : ''}</p>
-                {payload && (
-                  <button
-                    className="btn"
-                    title="Save Wind Vane as PNG"
-                    onClick={() => saveCanvasAsPng(windVaneCanvasRef.current, 'wind_vane.png')}
-                  >Save PNG</button>
-                )}
-              </div>
-              {payload ? (
-                <div className="wind-vane-shell">
-                  <WindVane
-                    payload={payload}
-                    mode={mode}
-                    focus={vaneFocus}
-                    selectedCells={selectedCells}
-                    useConvexHull={mode === MODE_COMPARE ? !showAllVectors : false}
-                    showHull={mode === MODE_COMPARE ? showHull : false}
-                    showLabels={mode === MODE_COMPARE ? showVectorLabels : false}
-                    featureIndices={vaneFeatureIndices}
-                    featureColorMap={activeFeatureColorMap}
-                    neutralColor={OVERVIEW_NEUTRAL}
-                    onCanvasElement={(el) => { windVaneCanvasRef.current = el }}
-                  />
-                </div>
-              ) : (
-                <div className="placeholder wind-vane-placeholder">Wind Vane</div>
-              )}
-            </div>
-
             <div className="panel padded panel-section sidebar-panel controls-panel">
               <div className="panel-header">
                 <p className="panel-title">Controls</p>
@@ -801,18 +626,14 @@ export default function App() {
                     <label>Hide Particles</label>
                     <input type="checkbox" checked={hideParticles} onChange={(e) => setHideParticles(e.target.checked)} />
 
-                    <label>Restrict Spawns</label>
-                    <input type="checkbox" checked={restrictSpawnToSelection} onChange={(e) => setRestrictSpawnToSelection(e.target.checked)} />
-
-                    <label>Selection</label>
+                    <label>Points</label>
                     <div className="selection-row">
-                      <span className="selection-count">{selectedCells.length} cells</span>
-                      <span className="selection-count">{selectedPointIndices.length} points</span>
+                      <span className="selection-count">{selectedPointIndices.length} selected</span>
                       <button
                         className="btn btn-small"
                         type="button"
                         onClick={clearSelection}
-                        disabled={selectedCells.length === 0 && selectedPointIndices.length === 0}
+                        disabled={selectedPointIndices.length === 0}
                       >
                         Clear
                       </button>
@@ -831,15 +652,6 @@ export default function App() {
                   </button>
                   {advancedControlsOpen && (
                     <div className="controls-grid">
-                      <label>Show Convex Hull</label>
-                      <input type="checkbox" checked={showHull} onChange={(e) => setShowHull(e.target.checked)} disabled={mode !== MODE_COMPARE} />
-
-                      <label>Show Vector Labels</label>
-                      <input type="checkbox" checked={showVectorLabels} onChange={(e) => setShowVectorLabels(e.target.checked)} disabled={mode !== MODE_COMPARE} />
-
-                      <label>Show All Vectors</label>
-                      <input type="checkbox" checked={showAllVectors} onChange={(e) => setShowAllVectors(e.target.checked)} disabled={mode !== MODE_COMPARE} />
-
                       <label>Point Color By</label>
                       <select
                         value={pointColorFeature}
