@@ -72,7 +72,6 @@ export default function CanvasWind({
   onStaticTrailsChange = null,
   trailLineWidth = 2.0,
   pointSize = 4.4,
-  autoRespawnRate = 0.0,
   restrictSpawnToSelection = false,
   brushRadius = 1,
   gradientFeatureIndices = null,
@@ -103,7 +102,6 @@ export default function CanvasWind({
   const showParticleArrowheadsRef = useRef(!!showParticleArrowheads)
   const allowGridSelectionRef = useRef(!!allowGridSelection)
   const restrictSpawnToSelectionRef = useRef(!!restrictSpawnToSelection)
-  const autoRespawnRateRef = useRef(Number(autoRespawnRate) || 0)
   const brushRadiusRef = useRef(Math.max(1, Math.floor(brushRadius || 1)))
   const selectPointsModeRef = useRef(!!selectPointsMode)
   const pointBrushRadiusPxRef = useRef(Math.max(4, Math.floor(pointBrushRadiusPx || 14)))
@@ -152,7 +150,6 @@ export default function CanvasWind({
   useEffect(() => { showParticleArrowheadsRef.current = !!showParticleArrowheads }, [showParticleArrowheads])
   useEffect(() => { allowGridSelectionRef.current = !!allowGridSelection }, [allowGridSelection])
   useEffect(() => { restrictSpawnToSelectionRef.current = !!restrictSpawnToSelection }, [restrictSpawnToSelection])
-  useEffect(() => { autoRespawnRateRef.current = Number(autoRespawnRate) || 0 }, [autoRespawnRate])
   useEffect(() => { brushRadiusRef.current = Math.max(1, Math.floor(brushRadius || 1)) }, [brushRadius])
   useEffect(() => { selectPointsModeRef.current = !!selectPointsMode }, [selectPointsMode])
   useEffect(() => { pointBrushRadiusPxRef.current = Math.max(4, Math.floor(pointBrushRadiusPx || 14)) }, [pointBrushRadiusPx])
@@ -1190,9 +1187,6 @@ export default function CanvasWind({
       return { x, y, ageSec: 0, hist: [{ x, y, t: simTimeSec }], initX: x, initY: y, featureIndex: particleFeatureIndex }
     })
 
-    // Frame counter for periodic behaviors
-    let frameCounter = 0
-
     const selectedPointSeeds = buildStaticTrailSeedsFromPointIndices(selectedPointIndices)
     staticTrailSeedsRef.current = selectedPointSeeds
     staticTrailsRef.current = buildStaticTrailsFromSeeds(selectedPointSeeds)
@@ -1224,20 +1218,6 @@ export default function CanvasWind({
         }
       }
 
-      // Optional automatic respawn in bursts every N frames: respawn ~fraction of particles
-      const frac = Math.max(0, Math.min(1, autoRespawnRateRef.current || 0))
-      const EVERY_N_FRAMES = 15
-      frameCounter += 1
-      if (frac > 0 && (frameCounter % EVERY_N_FRAMES === 0)) {
-        const count = Math.max(1, Math.floor(frac * particles.length))
-        for (let k = 0; k < count; k++) {
-          const idx = Math.floor(Math.random() * particles.length)
-          const p = particles[idx]
-          const particleFeatureIndex = Number.isInteger(p.featureIndex) ? p.featureIndex : null
-          const { x: nx, y: ny } = randomSpawn(particleFeatureIndex)
-          resetParticle(p, nx, ny, simTimeSec)
-        }
-      }
     }
 
     let last = performance.now()

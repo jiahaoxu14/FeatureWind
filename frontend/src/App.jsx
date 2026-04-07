@@ -14,10 +14,9 @@ const COMPARE_PALETTE = FEATURE_PALETTE
 const OVERVIEW_NEUTRAL = '#4b5563'
 const MAX_MASK_DILATE_RADIUS_CELLS = 10
 const INTERPOLATION_OPTIONS = [
-  { value: 'linear-nearest', label: 'Linear + Nearest Fallback' },
   { value: 'linear', label: 'Linear' },
   { value: 'nearest', label: 'Nearest' },
-  { value: 'cubic-nearest', label: 'Cubic + Nearest Fallback' },
+  { value: 'linear-nearest', label: 'Linear + Nearest Fallback' },
 ]
 
 function sanitizeFeatureIndices(indices, count, cap = Infinity) {
@@ -76,7 +75,7 @@ export default function App() {
   const [file, setFile] = useState(null)
   const [dataset, setDataset] = useState(null)
   const [gridRes, setGridRes] = useState(25)
-  const [interpolationMethod, setInterpolationMethod] = useState('linear-nearest')
+  const [interpolationMethod, setInterpolationMethod] = useState('linear')
   const [payload, setPayload] = useState(null)
   const [busy, setBusy] = useState(false)
   const [exportBusy, setExportBusy] = useState(false)
@@ -90,14 +89,12 @@ export default function App() {
   const [compareFeatureIndices, setCompareFeatureIndices] = useState([])
   const [featureColorOverrides, setFeatureColorOverrides] = useState({})
   const [featureMessage, setFeatureMessage] = useState('')
-  const [advancedControlsOpen, setAdvancedControlsOpen] = useState(false)
 
   // Interactive config (frontend + backend overrides)
   const [showGrid, setShowGrid] = useState(true)
   const [showMaskOverlay, setShowMaskOverlay] = useState(false)
   const [particleCount, setParticleCount] = useState(100)
   const [speedScale, setSpeedScale] = useState(1.0)
-  const [animatedTrailLengthPx, setAnimatedTrailLengthPx] = useState(140)
   const [trailLineWidth, setTrailLineWidth] = useState(3.2)
   const [maskDilateRadiusCells, setMaskDilateRadiusCells] = useState(1)
   const [hideParticles, setHideParticles] = useState(false)
@@ -106,12 +103,9 @@ export default function App() {
   const [showPointAggGradients, setShowPointAggGradients] = useState(false)
   const [showCellGradients, setShowCellGradients] = useState(false)
   const [showCellAggGradients, setShowCellAggGradients] = useState(false)
-  const [showParticleInits, setShowParticleInits] = useState(false)
   const [uniformPointShape, setUniformPointShape] = useState(false)
   const [showParticleArrowheads, setShowParticleArrowheads] = useState(false)
   const [pointSize, setPointSize] = useState(4.4)
-  const [autoRespawnEnabled, setAutoRespawnEnabled] = useState(false)
-  const [assessAllCells, setAssessAllCells] = useState(false)
 
   const windMapCanvasRef = useRef(null)
 
@@ -454,35 +448,6 @@ export default function App() {
     })
   }
 
-  const avgActiveFeatures = useMemo(() => {
-    try {
-      if (!payload || activeFeatureIndices.length === 0) return null
-      const { uAll = [], vAll = [], grid_res = 25, unmasked = null } = payload
-      const H = grid_res
-      const W = grid_res
-      let total = 0
-      let cells = 0
-      const eps = 1e-9
-      for (let i = 0; i < H; i++) {
-        for (let j = 0; j < W; j++) {
-          if (Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W && !unmasked[i][j]) continue
-          cells += 1
-          let cnt = 0
-          for (const fi of activeFeatureIndices) {
-            const u = (uAll[fi]?.[i]?.[j] ?? 0)
-            const v = (vAll[fi]?.[i]?.[j] ?? 0)
-            if (u * u + v * v > eps) cnt += 1
-          }
-          total += cnt
-        }
-      }
-      if (cells === 0) return 0
-      return total / cells
-    } catch {
-      return null
-    }
-  }, [payload, activeFeatureIndices])
-
   return (
     <div className="app">
       <div className="header">
@@ -561,19 +526,16 @@ export default function App() {
                     selectedPointIndices={selectedPointIndices}
                     particleCount={particleCount}
                     speedScale={speedScale}
-                    animatedTrailLengthPx={animatedTrailLengthPx}
                     showParticles={!hideParticles}
                     pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
                     showPointGradients={showPointGradients}
                     showPointAggregatedGradients={showPointAggGradients}
                     showCellGradients={showCellGradients}
                     showCellAggregatedGradients={showCellAggGradients}
-                    showParticleInits={showParticleInits}
                     gradientFeatureIndices={gradientFeatureIndices}
                     featureIndices={activeFeatureIndices}
                     uniformPointShape={uniformPointShape}
                     showParticleArrowheads={showParticleArrowheads}
-                    autoRespawnRate={autoRespawnEnabled ? 0.3 : 0.0}
                     trailLineWidth={trailLineWidth}
                     pointSize={pointSize}
                     labelColorMap={labelColorMap}
@@ -596,7 +558,6 @@ export default function App() {
               </div>
               <div className="controls-stack">
                 <div className="controls-section">
-                  <div className="controls-section-title">Basic</div>
                   <div className="controls-grid controls-grid-compact">
                     <label>Grid Res</label>
                     <div className="slider-row">
@@ -638,95 +599,58 @@ export default function App() {
                         Clear
                       </button>
                     </div>
-                  </div>
-                </div>
 
-                <div className="controls-section controls-section-advanced">
-                  <button
-                    className={`section-toggle${advancedControlsOpen ? ' open' : ''}`}
-                    type="button"
-                    onClick={() => setAdvancedControlsOpen((prev) => !prev)}
-                  >
-                    <span>Advanced</span>
-                    <span>{advancedControlsOpen ? 'Hide' : 'Show'}</span>
-                  </button>
-                  {advancedControlsOpen && (
-                    <div className="controls-grid">
-                      <label>Point Color By</label>
-                      <select
-                        value={pointColorFeature}
-                        onChange={(e) => setPointColorFeature(e.target.value)}
-                        disabled={!payload || !Array.isArray(payload.feature_values)}
-                      >
-                        <option value="">None</option>
-                        {alphabeticalFeatureIndices.map((idx) => (
-                          <option key={idx} value={String(idx)}>{payload?.col_labels?.[idx]}</option>
-                        ))}
-                      </select>
+                    <label>Point Color By</label>
+                    <select
+                      value={pointColorFeature}
+                      onChange={(e) => setPointColorFeature(e.target.value)}
+                      disabled={!payload || !Array.isArray(payload.feature_values)}
+                    >
+                      <option value="">None</option>
+                      {alphabeticalFeatureIndices.map((idx) => (
+                        <option key={idx} value={String(idx)}>{payload?.col_labels?.[idx]}</option>
+                      ))}
+                    </select>
 
-                      <label>Particle Arrowheads</label>
-                      <input type="checkbox" checked={showParticleArrowheads} onChange={(e) => setShowParticleArrowheads(e.target.checked)} />
+                    <label>Particle Arrowheads</label>
+                    <input type="checkbox" checked={showParticleArrowheads} onChange={(e) => setShowParticleArrowheads(e.target.checked)} />
 
-                      <label>Show Point Gradients</label>
-                      <input type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
+                    <label>Show Point Gradients</label>
+                    <input type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
 
-                      <label>Show Aggregated Point Gradients</label>
-                      <input type="checkbox" checked={showPointAggGradients} onChange={(e) => setShowPointAggGradients(e.target.checked)} />
+                    <label>Show Aggregated Point Gradients</label>
+                    <input type="checkbox" checked={showPointAggGradients} onChange={(e) => setShowPointAggGradients(e.target.checked)} />
 
-                      <label>Show Cell Gradients</label>
-                      <input type="checkbox" checked={showCellGradients} onChange={(e) => setShowCellGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
+                    <label>Show Cell Gradients</label>
+                    <input type="checkbox" checked={showCellGradients} onChange={(e) => setShowCellGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
 
-                      <label>Show Aggregated Cell Gradients</label>
-                      <input type="checkbox" checked={showCellAggGradients} onChange={(e) => setShowCellAggGradients(e.target.checked)} />
+                    <label>Show Aggregated Cell Gradients</label>
+                    <input type="checkbox" checked={showCellAggGradients} onChange={(e) => setShowCellAggGradients(e.target.checked)} />
 
-                      <label>Show Particle Inits</label>
-                      <input type="checkbox" checked={showParticleInits} onChange={(e) => setShowParticleInits(e.target.checked)} />
-
-                      <label>Auto Respawn</label>
-                      <input type="checkbox" checked={autoRespawnEnabled} onChange={(e) => setAutoRespawnEnabled(e.target.checked)} />
-
-                      <label>Assess Coverage</label>
-                      <div className="slider-row">
-                        <input type="checkbox" checked={assessAllCells} onChange={(e) => setAssessAllCells(e.target.checked)} />
-                        {assessAllCells && (
-                          <span className="control-val">
-                            {typeof avgActiveFeatures === 'number' ? avgActiveFeatures.toFixed(2) : '-'}
-                          </span>
-                        )}
-                      </div>
-
-                      <label>Particles</label>
-                      <div className="slider-row">
-                        <input type="range" min={50} max={5000} step={50} value={particleCount} onChange={(e) => setParticleCount(Number(e.target.value))} />
-                        <span className="control-val">{particleCount}</span>
-                      </div>
-
-                      <label>Display Speed</label>
-                      <div className="slider-row">
-                        <input type="range" min={0.5} max={2.5} step={0.1} value={speedScale} onChange={(e) => setSpeedScale(Number(e.target.value))} />
-                        <span className="control-val">{Math.round(120 * speedScale)} px/s</span>
-                      </div>
-
-                      <label>Animated Trail Length</label>
-                      <div className="slider-row">
-                        <input type="range" min={40} max={320} step={10} value={animatedTrailLengthPx} onChange={(e) => setAnimatedTrailLengthPx(Number(e.target.value))} />
-                        <span className="control-val">{Math.round(animatedTrailLengthPx)} px</span>
-                      </div>
-
-                      <label>Trail Width</label>
-                      <div className="slider-row">
-                        <input type="range" min={1.0} max={6} step={0.1} value={trailLineWidth} onChange={(e) => setTrailLineWidth(Number(e.target.value))} />
-                        <span className="control-val">{trailLineWidth.toFixed(1)} px</span>
-                      </div>
-
-                      <label>Point Size</label>
-                      <div className="slider-row">
-                        <input type="range" min={2.5} max={7} step={0.1} value={pointSize} onChange={(e) => setPointSize(Number(e.target.value))} />
-                        <span className="control-val">{pointSize.toFixed(1)} px</span>
-                      </div>
-
+                    <label>Particles</label>
+                    <div className="slider-row">
+                      <input type="range" min={50} max={5000} step={50} value={particleCount} onChange={(e) => setParticleCount(Number(e.target.value))} />
+                      <span className="control-val">{particleCount}</span>
                     </div>
-                  )}
+
+                    <label>Display Speed</label>
+                    <div className="slider-row">
+                      <input type="range" min={0.5} max={2.5} step={0.1} value={speedScale} onChange={(e) => setSpeedScale(Number(e.target.value))} />
+                      <span className="control-val">{Math.round(120 * speedScale)} px/s</span>
+                    </div>
+
+                    <label>Trail Width</label>
+                    <div className="slider-row">
+                      <input type="range" min={1.0} max={6} step={0.1} value={trailLineWidth} onChange={(e) => setTrailLineWidth(Number(e.target.value))} />
+                      <span className="control-val">{trailLineWidth.toFixed(1)} px</span>
+                    </div>
+
+                    <label>Point Size</label>
+                    <div className="slider-row">
+                      <input type="range" min={2.5} max={7} step={0.1} value={pointSize} onChange={(e) => setPointSize(Number(e.target.value))} />
+                      <span className="control-val">{pointSize.toFixed(1)} px</span>
+                    </div>
+                  </div>
                 </div>
 
                 {error && <div className="hint controls-error">{error}</div>}
