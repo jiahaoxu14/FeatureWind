@@ -141,6 +141,38 @@ class GridComputationTest(unittest.TestCase):
         center_u = float(interp_u_sum(sample)[0])
         self.assertGreater(center_u, 0.5)
 
+    def test_apply_support_mask_to_visualization_fields_masks_all_feature_layers(self) -> None:
+        grid_u = np.asarray(
+            [
+                [[1.0, 2.0], [3.0, 4.0]],
+                [[5.0, 6.0], [7.0, 8.0]],
+            ],
+            dtype=float,
+        )
+        grid_v = np.asarray(
+            [
+                [[0.5, 1.5], [2.5, 3.5]],
+                [[4.5, 5.5], [6.5, 7.5]],
+            ],
+            dtype=float,
+        )
+        dominant = np.asarray([[0, 1], [1, 0]], dtype=int)
+        final_mask = np.asarray([[False, True], [True, False]], dtype=bool)
+
+        masked_u, masked_v, masked_dominant = grid_computation.apply_support_mask_to_visualization_fields(
+            grid_u,
+            grid_v,
+            dominant,
+            final_mask,
+        )
+
+        np.testing.assert_array_equal(masked_u[:, final_mask], 0.0)
+        np.testing.assert_array_equal(masked_v[:, final_mask], 0.0)
+        np.testing.assert_array_equal(masked_dominant[final_mask], -1)
+        np.testing.assert_array_equal(masked_u[:, ~final_mask], grid_u[:, ~final_mask])
+        np.testing.assert_array_equal(masked_v[:, ~final_mask], grid_v[:, ~final_mask])
+        np.testing.assert_array_equal(masked_dominant[~final_mask], dominant[~final_mask])
+
 
 if __name__ == "__main__":
     unittest.main()

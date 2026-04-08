@@ -63,9 +63,7 @@ export default function CanvasWind({
   showParticles = true,
   onViewStateChange = null,
   showPointGradients = false,
-  showPointAggregatedGradients = false,
   showCellGradients = false,
-  showCellAggregatedGradients = false,
   showParticleInits = false,
   uniformPointShape = false,
   showParticleArrowheads = false,
@@ -94,9 +92,7 @@ export default function CanvasWind({
   const showParticlesRef = useRef(!!showParticles)
   const showMaskOverlayRef = useRef(!!showMaskOverlay)
   const showPointGradientsRef = useRef(!!showPointGradients)
-  const showPointAggregatedGradientsRef = useRef(!!showPointAggregatedGradients)
   const showCellGradientsRef = useRef(!!showCellGradients)
-  const showCellAggregatedGradientsRef = useRef(!!showCellAggregatedGradients)
   const showParticleInitsRef = useRef(!!showParticleInits)
   const uniformPointShapeRef = useRef(!!uniformPointShape)
   const showParticleArrowheadsRef = useRef(!!showParticleArrowheads)
@@ -142,9 +138,7 @@ export default function CanvasWind({
   useEffect(() => { brushCbRef.current = onBrushCell }, [onBrushCell])
   useEffect(() => { showParticlesRef.current = !!showParticles }, [showParticles])
   useEffect(() => { showPointGradientsRef.current = !!showPointGradients }, [showPointGradients])
-  useEffect(() => { showPointAggregatedGradientsRef.current = !!showPointAggregatedGradients }, [showPointAggregatedGradients])
   useEffect(() => { showCellGradientsRef.current = !!showCellGradients }, [showCellGradients])
-  useEffect(() => { showCellAggregatedGradientsRef.current = !!showCellAggregatedGradients }, [showCellAggregatedGradients])
   useEffect(() => { showParticleInitsRef.current = !!showParticleInits }, [showParticleInits])
   useEffect(() => { uniformPointShapeRef.current = !!uniformPointShape }, [uniformPointShape])
   useEffect(() => { showParticleArrowheadsRef.current = !!showParticleArrowheads }, [showParticleArrowheads])
@@ -351,12 +345,13 @@ export default function CanvasWind({
     const DISPLAY_SPEED_PX = Math.max(1, 120 * (Number(speedScale) || 1))
     const TRAIL_TAIL_MIN = 0.12
     const TRAIL_TAIL_EXP = 1.35
-    const MAX_PARTICLE_LIFETIME_SEC = 8.0
+    const MAX_PARTICLE_LIFETIME_SEC = 3.0
 
     // Optional mask helpers
     let hasMask = Array.isArray(unmasked) && unmasked.length === H && unmasked[0].length === W
     const isOverviewMode = mode === 'overview'
     const isCompareMode = mode === 'compare'
+    const isAggregateMode = mode === 'aggregate'
 
     const dxWorld = (xmax - xmin) / W
     const dyWorld = (ymax - ymin) / H
@@ -1289,7 +1284,7 @@ export default function CanvasWind({
 
       // If aggregated cell gradients are shown, also color each cell by its dominant feature
       // Also apply when showing particle init overlays
-      if (!isOverviewMode && (showCellAggregatedGradientsRef.current || showParticleInitsRef.current)) {
+      if (!isOverviewMode && ((showCellGradientsRef.current && isAggregateMode) || showParticleInitsRef.current)) {
         const cellWpx = Wpx / W
         const cellHpx = Hpx / H
         for (let i = 0; i < H; i++) {
@@ -1676,44 +1671,6 @@ export default function CanvasWind({
           ctx.lineWidth = 1.5
           ctx.stroke()
         }
-      }
-      }
-
-      // Optional: aggregated gradients attached to each point (sum over selected features)
-      if (showPointAggregatedGradientsRef.current && positions && uSum && vSum) {
-        const p99 = magInfo?.p99 || 1.0
-        const sxScale = Wpx / (xmax - xmin)
-        const syScale = Hpx / (ymax - ymin)
-        const headLen = Math.max(11, Math.min(22, Math.floor(Math.min(Wpx, Hpx) * 0.026)))
-        const baseLen = Math.max(20, Math.min(64, Math.min(Wpx, Hpx) * 0.085))
-        const phi = Math.PI / 7
-        for (let pIdx = 0; pIdx < positions.length; pIdx++) {
-          const [wx, wy] = positions[pIdx]
-          const [sx, sy] = worldToScreen(wx, wy)
-          const [gx, gy] = worldToGrid(wx, wy)
-          const ux = bilinearSample(uSum, gx, gy)
-          const vy = bilinearSample(vSum, gx, gy)
-          const m = Math.hypot(ux, vy)
-          if (m <= 1e-12) continue
-          const aField = Math.max(0, Math.min(1, m / p99))
-          const ddx = ux * sxScale
-          const ddy = -vy * syScale
-          const dnorm = Math.hypot(ddx, ddy)
-          if (!Number.isFinite(dnorm) || dnorm <= 0) continue
-          const dirx = ddx / dnorm
-          const diry = ddy / dnorm
-          const len = baseLen * (0.35 + 0.65 * Math.max(0, Math.min(1, aField)))
-          const ex = sx + dirx * len
-          const ey = sy + diry * len
-          drawVisibleArrow(sx, sy, ex, ey, {
-            color: '#111111',
-            alpha: 0.88 + 0.12 * aField,
-            lineWidth: 2.9,
-            outlineWidth: 6.6,
-            outlineColor: 'rgba(255,255,255,0.98)',
-            headLen,
-            phi,
-          })
         }
       }
 
@@ -1764,8 +1721,8 @@ export default function CanvasWind({
         }
       }
 
-      // Optional: per-feature gradients at each grid cell center
-      if (showCellGradientsRef.current) {
+      // In single/compare modes, show per-feature gradients at each grid cell center.
+      if (showCellGradientsRef.current && !isAggregateMode) {
         const provided = gradientFeatureIndicesRef.current
         const featList = Array.isArray(provided) ? provided : indices
         if (Array.isArray(featList) && featList.length > 0) {
@@ -1814,8 +1771,8 @@ export default function CanvasWind({
         }
       }
 
-      // Optional: aggregated (summed) gradients at each grid cell center, colored black
-      if (showCellAggregatedGradientsRef.current) {
+      // In aggregate mode, show the summed gradient at each grid cell center.
+      if (showCellGradientsRef.current && isAggregateMode) {
         const p99 = magInfo?.p99 || 1.0
         const sxScale = Wpx / (xmax - xmin)
         const syScale = Hpx / (ymax - ymin)
@@ -2504,6 +2461,7 @@ export default function CanvasWind({
     datasetId,
     colors,
     dominant,
+    unmasked,
     featureColorMap,
     labelColorMap,
     neutralColor,
@@ -2515,10 +2473,8 @@ export default function CanvasWind({
     trailLineWidth,
     pointSize,
     selectedPointIndices,
-    showCellAggregatedGradients,
     showCellGradients,
     showPointGradients,
-    showPointAggregatedGradients,
   ])
 
   const canvasWidth = explicitWidth ?? fixedSize ?? canvasSize

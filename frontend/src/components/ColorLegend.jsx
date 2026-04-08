@@ -104,17 +104,17 @@ export default function ColorLegend({
         </button>
         <button
           type="button"
-          className={`mode-tab${aggregateTabActive ? ' active' : ''}`}
-          onClick={() => handleMode('aggregate')}
-        >
-          {MODE_META.aggregate.label}
-        </button>
-        <button
-          type="button"
           className={`mode-tab${isCompareMode ? ' active' : ''}`}
           onClick={() => handleMode('compare')}
         >
           {MODE_META.compare.label}
+        </button>
+        <button
+          type="button"
+          className={`mode-tab${aggregateTabActive ? ' active' : ''}`}
+          onClick={() => handleMode('aggregate')}
+        >
+          {MODE_META.aggregate.label}
         </button>
       </div>
 

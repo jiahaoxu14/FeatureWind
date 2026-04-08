@@ -169,6 +169,46 @@ def build_dilated_support_mask(positions, grid_res, radius_cells=None, bbox=None
     return occupied_cells, unmasked_cells, final_mask
 
 
+def apply_support_mask_to_visualization_fields(grid_u, grid_v, dominant, final_mask):
+    """
+    Apply the final support mask to visualization grids returned to the frontend.
+
+    The frontend renders cell and point overlays from per-feature grids (`uAll`,
+    `vAll`) plus the dominant-feature grid, so those arrays must reflect the same
+    support mask as the aggregated field.
+    """
+    masked_u = None if grid_u is None else np.asarray(grid_u).copy()
+    masked_v = None if grid_v is None else np.asarray(grid_v).copy()
+    masked_dominant = None if dominant is None else np.asarray(dominant).copy()
+
+    if final_mask is None:
+        return masked_u, masked_v, masked_dominant
+
+    mask = np.asarray(final_mask, dtype=bool)
+
+    def apply_zero_mask(grid):
+        if grid is None:
+            return None
+        if grid.ndim == 2:
+            grid[mask] = 0.0
+            return grid
+        if grid.ndim == 3:
+            grid[:, mask] = 0.0
+            return grid
+        raise ValueError(f"Expected 2D or 3D visualization grid, got shape {grid.shape!r}")
+
+    masked_u = apply_zero_mask(masked_u)
+    masked_v = apply_zero_mask(masked_v)
+    if masked_dominant is not None:
+        if masked_dominant.shape != mask.shape:
+            raise ValueError(
+                f"Dominant grid shape {masked_dominant.shape!r} does not match mask {mask.shape!r}"
+            )
+        masked_dominant[mask] = -1
+
+    return masked_u, masked_v, masked_dominant
+
+
 def interpolate_feature_onto_grid(positions, vectors, grid_x, grid_y, interpolation_method="linear-nearest"):
     """
     Interpolate a single feature's vectors onto the grid.

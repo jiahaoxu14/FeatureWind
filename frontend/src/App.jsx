@@ -100,9 +100,7 @@ export default function App() {
   const [hideParticles, setHideParticles] = useState(false)
   const [pointColorFeature, setPointColorFeature] = useState('')
   const [showPointGradients, setShowPointGradients] = useState(false)
-  const [showPointAggGradients, setShowPointAggGradients] = useState(false)
   const [showCellGradients, setShowCellGradients] = useState(false)
-  const [showCellAggGradients, setShowCellAggGradients] = useState(false)
   const [uniformPointShape, setUniformPointShape] = useState(false)
   const [showParticleArrowheads, setShowParticleArrowheads] = useState(false)
   const [pointSize, setPointSize] = useState(4.4)
@@ -529,9 +527,7 @@ export default function App() {
                     showParticles={!hideParticles}
                     pointColorFeatureIndex={pointColorFeature !== '' ? Number(pointColorFeature) : null}
                     showPointGradients={showPointGradients}
-                    showPointAggregatedGradients={showPointAggGradients}
                     showCellGradients={showCellGradients}
-                    showCellAggregatedGradients={showCellAggGradients}
                     gradientFeatureIndices={gradientFeatureIndices}
                     featureIndices={activeFeatureIndices}
                     uniformPointShape={uniformPointShape}
@@ -547,6 +543,36 @@ export default function App() {
                 </div>
               ) : (
                 <div className="placeholder wind-map-placeholder">Wind Map</div>
+              )}
+            </div>
+          </div>
+
+          <div className="features-column">
+            <div className="panel padded panel-section features-panel">
+              <div className="panel-header">
+                <p className="panel-title">Features</p>
+              </div>
+              {payload ? (
+                <ColorLegend
+                  payload={payload}
+                  mode={mode}
+                  onChangeMode={handleModeChange}
+                  defaultFeatureIndex={effectiveDefaultFeatureIndex}
+                  compareFeatureIndices={selectedMultiFeatureIndices}
+                  onSelectFeature={handleSelectFeature}
+                  onSelectAll={handleSelectAllFeatures}
+                  onToggleCompareFeature={handleToggleCompareFeature}
+                  onClearCompare={handleClearCompareFeatures}
+                  compareCap={COMPARE_MAX}
+                  message={featureMessage}
+                  activeFeatureColorMap={activeFeatureColorMap}
+                  featureColorOverrides={featureColorOverrides}
+                  featureColorOptions={FEATURE_COLOR_OPTIONS}
+                  onSetFeatureColor={handleSetFeatureColor}
+                  labelColorMap={labelColorMap}
+                />
+              ) : (
+                <div className="hint">Upload a dataset to browse features</div>
               )}
             </div>
           </div>
@@ -578,14 +604,14 @@ export default function App() {
                       <span className="control-val">{maskDilateRadiusCells} cell{maskDilateRadiusCells === 1 ? '' : 's'}</span>
                     </div>
 
-                    <label>Show Grid</label>
-                    <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+                    <label htmlFor="show-grid">Show Grid</label>
+                    <input id="show-grid" type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
 
-                    <label>Show Mask</label>
-                    <input type="checkbox" checked={showMaskOverlay} onChange={(e) => setShowMaskOverlay(e.target.checked)} />
+                    <label htmlFor="show-mask">Show Mask</label>
+                    <input id="show-mask" type="checkbox" checked={showMaskOverlay} onChange={(e) => setShowMaskOverlay(e.target.checked)} />
 
-                    <label>Hide Particles</label>
-                    <input type="checkbox" checked={hideParticles} onChange={(e) => setHideParticles(e.target.checked)} />
+                    <label htmlFor="hide-particles">Hide Particles</label>
+                    <input id="hide-particles" type="checkbox" checked={hideParticles} onChange={(e) => setHideParticles(e.target.checked)} />
 
                     <label>Points</label>
                     <div className="selection-row">
@@ -612,20 +638,14 @@ export default function App() {
                       ))}
                     </select>
 
-                    <label>Particle Arrowheads</label>
-                    <input type="checkbox" checked={showParticleArrowheads} onChange={(e) => setShowParticleArrowheads(e.target.checked)} />
+                    <label htmlFor="show-particle-arrowheads">Particle Arrowheads</label>
+                    <input id="show-particle-arrowheads" type="checkbox" checked={showParticleArrowheads} onChange={(e) => setShowParticleArrowheads(e.target.checked)} />
 
-                    <label>Show Point Gradients</label>
-                    <input type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
+                    <label htmlFor="show-point-gradients">Show Point Gradients</label>
+                    <input id="show-point-gradients" type="checkbox" checked={showPointGradients} onChange={(e) => setShowPointGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
 
-                    <label>Show Aggregated Point Gradients</label>
-                    <input type="checkbox" checked={showPointAggGradients} onChange={(e) => setShowPointAggGradients(e.target.checked)} />
-
-                    <label>Show Cell Gradients</label>
-                    <input type="checkbox" checked={showCellGradients} onChange={(e) => setShowCellGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
-
-                    <label>Show Aggregated Cell Gradients</label>
-                    <input type="checkbox" checked={showCellAggGradients} onChange={(e) => setShowCellAggGradients(e.target.checked)} />
+                    <label htmlFor="show-cell-gradients">Show Cell Gradients</label>
+                    <input id="show-cell-gradients" type="checkbox" checked={showCellGradients} onChange={(e) => setShowCellGradients(e.target.checked)} disabled={mode === MODE_OVERVIEW} />
 
                     <label>Particles</label>
                     <div className="slider-row">
@@ -655,36 +675,6 @@ export default function App() {
 
                 {error && <div className="hint controls-error">{error}</div>}
               </div>
-            </div>
-          </div>
-
-          <div className="features-column">
-            <div className="panel padded panel-section features-panel">
-              <div className="panel-header">
-                <p className="panel-title">Features</p>
-              </div>
-              {payload ? (
-                <ColorLegend
-                  payload={payload}
-                  mode={mode}
-                  onChangeMode={handleModeChange}
-                  defaultFeatureIndex={effectiveDefaultFeatureIndex}
-                  compareFeatureIndices={selectedMultiFeatureIndices}
-                  onSelectFeature={handleSelectFeature}
-                  onSelectAll={handleSelectAllFeatures}
-                  onToggleCompareFeature={handleToggleCompareFeature}
-                  onClearCompare={handleClearCompareFeatures}
-                  compareCap={COMPARE_MAX}
-                  message={featureMessage}
-                  activeFeatureColorMap={activeFeatureColorMap}
-                  featureColorOverrides={featureColorOverrides}
-                  featureColorOptions={FEATURE_COLOR_OPTIONS}
-                  onSetFeatureColor={handleSetFeatureColor}
-                  labelColorMap={labelColorMap}
-                />
-              ) : (
-                <div className="hint">Upload a dataset to browse features</div>
-              )}
             </div>
           </div>
         </div>

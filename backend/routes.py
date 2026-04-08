@@ -400,6 +400,39 @@ def compute():
     except Exception:
         pass
 
+    masked_grid_u_feats = grid_u_feats
+    masked_grid_v_feats = grid_v_feats
+    masked_grid_u_all_feats = grid_u_all_feats
+    masked_grid_v_all_feats = grid_v_all_feats
+    masked_cell_dominant_features = cell_dominant_features
+    unmasked = None
+    try:
+        if final_mask is not None:
+            masked_grid_u_feats, masked_grid_v_feats, _ = fw_grid.apply_support_mask_to_visualization_fields(
+                grid_u_feats,
+                grid_v_feats,
+                None,
+                final_mask,
+            )
+            (
+                masked_grid_u_all_feats,
+                masked_grid_v_all_feats,
+                masked_cell_dominant_features,
+            ) = fw_grid.apply_support_mask_to_visualization_fields(
+                grid_u_all_feats,
+                grid_v_all_feats,
+                cell_dominant_features,
+                final_mask,
+            )
+            unmasked = _np.logical_not(_np.asarray(final_mask, dtype=bool)).astype(_np.uint8)
+    except Exception:
+        masked_grid_u_feats = grid_u_feats
+        masked_grid_v_feats = grid_v_feats
+        masked_grid_u_all_feats = grid_u_all_feats
+        masked_grid_v_all_feats = grid_v_all_feats
+        masked_cell_dominant_features = cell_dominant_features
+        unmasked = None
+
     bbox = list(getattr(fw_config, "bounding_box", [0, 1, 0, 1]))
 
     # Convert to serializable lists
@@ -412,8 +445,8 @@ def compute():
     # Compute global max magnitude of the summed field across selected features (for vane dot alpha)
     try:
         import numpy as _np2
-        _sum_u = _np2.sum(grid_u_feats, axis=0) if isinstance(grid_u_feats, _np2.ndarray) else None
-        _sum_v = _np2.sum(grid_v_feats, axis=0) if isinstance(grid_v_feats, _np2.ndarray) else None
+        _sum_u = _np2.sum(masked_grid_u_feats, axis=0) if isinstance(masked_grid_u_feats, _np2.ndarray) else None
+        _sum_v = _np2.sum(masked_grid_v_feats, axis=0) if isinstance(masked_grid_v_feats, _np2.ndarray) else None
         if _sum_u is not None and _sum_v is not None:
             _sum_mag = _np2.sqrt(_sum_u**2 + _sum_v**2)
             global_sum_magnitude_max = float(_np2.nanmax(_sum_mag))
@@ -428,9 +461,9 @@ def compute():
         "col_labels": col_labels,
         "bbox": bbox,
         "grid_res": int(grid_res),
-        "uAll": tolist(grid_u_all_feats),
-        "vAll": tolist(grid_v_all_feats),
-        "dominant": tolist(cell_dominant_features),
+        "uAll": tolist(masked_grid_u_all_feats),
+        "vAll": tolist(masked_grid_v_all_feats),
+        "dominant": tolist(masked_cell_dominant_features),
         "colors": colors,
         "familyAssignments": tolist(family_assignments),
         "featureRanking": feature_ranking,
@@ -452,13 +485,8 @@ def compute():
         response["feature_values"] = tolist(feature_values)
 
     # Provide unmasked grid so the frontend can respect masking
-    try:
-        if final_mask is not None:
-            import numpy as _np
-            unmasked = _np.logical_not(final_mask).astype(_np.uint8)
-            response["unmasked"] = tolist(unmasked)
-    except Exception:
-        pass
+    if unmasked is not None:
+        response["unmasked"] = tolist(unmasked)
 
     if include_raw:
         response["gradVectors"] = tolist(all_grad_vectors)
